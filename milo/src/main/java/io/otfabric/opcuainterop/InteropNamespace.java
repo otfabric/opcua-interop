@@ -13,6 +13,7 @@ import org.eclipse.milo.opcua.sdk.server.nodes.UaFolderNode;
 import org.eclipse.milo.opcua.sdk.server.nodes.UaMethodNode;
 import org.eclipse.milo.opcua.sdk.server.nodes.UaNode;
 import org.eclipse.milo.opcua.sdk.server.nodes.UaVariableNode;
+import org.eclipse.milo.opcua.sdk.server.util.SubscriptionModel;
 import org.eclipse.milo.opcua.stack.core.Identifiers;
 import org.eclipse.milo.opcua.stack.core.UaException;
 import org.eclipse.milo.opcua.stack.core.types.builtin.*;
@@ -35,12 +36,21 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
 
     private final Map<String, UaNode> nodeByFixtureId = new LinkedHashMap<>();
 
+    private SubscriptionModel subscriptionModel;
+
     public InteropNamespace(OpcUaServer server, FixtureModel fixture) {
         super(server, fixture.namespaces.get(0).uri);
         this.fixture = fixture;
 
         getLifecycleManager().addStartupTask(this::buildAddressSpace);
         getLifecycleManager().addStartupTask(this::setupBehaviors);
+        getLifecycleManager().addStartupTask(() -> {
+            subscriptionModel = new SubscriptionModel(server, this);
+            subscriptionModel.startup();
+        });
+        getLifecycleManager().addShutdownTask(() -> {
+            if (subscriptionModel != null) subscriptionModel.shutdown();
+        });
         getLifecycleManager().addShutdownTask(scheduler::shutdownNow);
     }
 
@@ -579,14 +589,22 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
     }
 
     @Override
-    public void onDataItemsCreated(List<DataItem> dataItems) {}
+    public void onDataItemsCreated(List<DataItem> dataItems) {
+        subscriptionModel.onDataItemsCreated(dataItems);
+    }
 
     @Override
-    public void onDataItemsModified(List<DataItem> dataItems) {}
+    public void onDataItemsModified(List<DataItem> dataItems) {
+        subscriptionModel.onDataItemsModified(dataItems);
+    }
 
     @Override
-    public void onDataItemsDeleted(List<DataItem> dataItems) {}
+    public void onDataItemsDeleted(List<DataItem> dataItems) {
+        subscriptionModel.onDataItemsDeleted(dataItems);
+    }
 
     @Override
-    public void onMonitoringModeChanged(List<MonitoredItem> monitoredItems) {}
+    public void onMonitoringModeChanged(List<MonitoredItem> monitoredItems) {
+        subscriptionModel.onMonitoringModeChanged(monitoredItems);
+    }
 }
