@@ -2,7 +2,7 @@ ARG MAVEN_VERSION=3.9.8
 ARG MILO_VERSION=
 
 # Stage 1: build
-FROM eclipse-temurin:21-jdk-jammy AS builder
+FROM eclipse-temurin:25-jdk-jammy AS builder
 
 ARG MAVEN_VERSION
 ARG MILO_VERSION
@@ -26,7 +26,7 @@ RUN mvn -B package -DskipTests ${MILO_VERSION:+-Dmilo.version=${MILO_VERSION}} &
     cp target/opcua-interop-milo-*.jar target/opcua-interop-milo.jar
 
 # Stage 2: runtime
-FROM eclipse-temurin:21-jre-jammy AS runtime
+FROM eclipse-temurin:25-jre-jammy AS runtime
 
 RUN mkdir -p /app /run/opcua-interop
 
