@@ -15,7 +15,7 @@ jobs:
     name: Validate fixtures
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install check-jsonschema
         run: pip install check-jsonschema
@@ -34,13 +34,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: validate
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build open62541 (host arch)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: open62541
           file: open62541/Dockerfile
@@ -53,7 +53,7 @@ jobs:
       - name: Save image
         run: docker save ghcr.io/otfabric/opcua-interop-open62541:ci | gzip > /tmp/open62541.tar.gz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: image-open62541
           path: /tmp/open62541.tar.gz
@@ -64,13 +64,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: validate
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build Milo (host arch)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: milo
           file: milo/Dockerfile
@@ -83,7 +83,7 @@ jobs:
       - name: Save image
         run: docker save ghcr.io/otfabric/opcua-interop-milo:ci | gzip > /tmp/milo.tar.gz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: image-milo
           path: /tmp/milo.tar.gz
@@ -94,9 +94,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-open62541
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: image-open62541
           path: /tmp
@@ -116,9 +116,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-milo
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: image-milo
           path: /tmp
@@ -140,16 +140,16 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [unit-test-open62541, unit-test-milo]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build open62541 (multi-arch)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: open62541
           file: open62541/Dockerfile
@@ -159,7 +159,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build Milo (multi-arch)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: milo
           file: milo/Dockerfile
