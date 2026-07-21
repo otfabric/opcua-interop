@@ -49,7 +49,7 @@ static int cmd_print_capabilities(void) {
     printf("{\n");
     printf("  \"schemaVersion\": \"1.0\",\n");
     printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.1.0\"},\n");
-    printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.3.9\"},\n");
+    printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.5\"},\n");
     printf("  \"fixtureSchemaVersions\": [\"1.0\"],\n");
     printf("  \"roles\": [\"client\", \"server\"],\n");
     printf("  \"transports\": [\"opc.tcp\"],\n");

@@ -94,4 +94,5 @@ EXPOSE 4840
 HEALTHCHECK --interval=2s --timeout=2s --start-period=30s --retries=30 \
   CMD test -f /run/opcua-interop/ready
 
-ENTRYPOINT ["/usr/local/bin/opcua-interop-open62541", "server"]
+ENTRYPOINT ["/usr/local/bin/opcua-interop-open62541"]
+CMD ["server"]

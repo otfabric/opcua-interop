@@ -98,7 +98,7 @@ static UA_NodeId parse_nodeid(const char *s, UA_UInt16 nsuIndex) {
         if (!semi) return UA_NODEID_NULL;
         semi++; /* skip ';' */
         if (strncmp(semi, "s=", 2) == 0) {
-            return UA_NODEID_STRING(nsuIndex, (char*)(semi + 2));
+            return UA_NODEID_STRING_ALLOC(nsuIndex, semi + 2);
         }
         if (strncmp(semi, "i=", 2) == 0) {
             return UA_NODEID_NUMERIC(nsuIndex, (UA_UInt32)atoi(semi + 2));
@@ -113,7 +113,7 @@ static UA_NodeId parse_nodeid(const char *s, UA_UInt16 nsuIndex) {
         if (!semi) return UA_NODEID_NULL;
         semi++;
         if (strncmp(semi, "s=", 2) == 0) {
-            return UA_NODEID_STRING(ns, (char*)(semi + 2));
+            return UA_NODEID_STRING_ALLOC(ns, semi + 2);
         }
         if (strncmp(semi, "i=", 2) == 0) {
             return UA_NODEID_NUMERIC(ns, (UA_UInt32)atoi(semi + 2));
@@ -745,24 +745,64 @@ int server_run(const ServerArgs *args) {
     if (args->readyFile && *args->readyFile)
         unlink_ready_file(args->readyFile);
 
-    /* Create server */
-    UA_Server *server = UA_Server_new();
-    if (!server) {
-        fprintf(stderr, "[open62541] error: UA_Server_new failed\n");
-        fixture_free(fixture);
-        return 1;
-    }
-    UA_ServerConfig *cfg = UA_Server_getConfig(server);
-    UA_StatusCode cfgSc = UA_ServerConfig_setMinimal(cfg, (UA_UInt16)bind_port, NULL);
+    /* Create server using a pre-configured UA_ServerConfig so we control the
+     * bind URL before any internal EventLoop state is attached.
+     * UA_Server_new() would call UA_ServerConfig_setDefault(port=4840) internally,
+     * which makes it unsafe to later replace serverUrls via UA_Array_delete.
+     * By configuring serverUrls before passing to UA_Server_newWithConfig we own
+     * the entire lifecycle of the config. */
+    UA_ServerConfig cfg_val;
+    memset(&cfg_val, 0, sizeof(UA_ServerConfig));
+
+    /* UA_ServerConfig_setDefault sets up the EventLoop, security policies, etc. */
+    UA_StatusCode cfgSc = UA_ServerConfig_setDefault(&cfg_val);
     if (cfgSc != UA_STATUSCODE_GOOD) {
-        fprintf(stderr, "[open62541] error: UA_ServerConfig_setMinimal: 0x%08" PRIx32 "\n",
+        fprintf(stderr, "[open62541] error: UA_ServerConfig_setDefault: 0x%08" PRIx32 "\n",
                 (uint32_t)cfgSc);
-        UA_Server_delete(server);
         fixture_free(fixture);
         return 1;
     }
 
-    /* Override advertised endpoint URL */
+    /* Replace serverUrls now — before the server is created and the EventLoop
+     * registers anything.  setDefault leaves a "opc.tcp://:4840" entry; we
+     * replace it with the desired bind URL. */
+    {
+        char bind_srv_url[256];
+        /* Empty hostname = all interfaces in open62541 v1.5+ */
+        if (strcmp(bind_addr, "0.0.0.0") == 0)
+            snprintf(bind_srv_url, sizeof(bind_srv_url), "opc.tcp://:%d", bind_port);
+        else
+            snprintf(bind_srv_url, sizeof(bind_srv_url), "opc.tcp://%s:%d", bind_addr, bind_port);
+
+        /* Safe to free here: setDefault populated this via UA_Array_copy which
+         * produces normal heap allocations, and the EventLoop hasn't started. */
+        UA_Array_delete(cfg_val.serverUrls, cfg_val.serverUrlsSize,
+                        &UA_TYPES[UA_TYPES_STRING]);
+        cfg_val.serverUrls     = NULL;
+        cfg_val.serverUrlsSize = 0;
+
+        UA_String bind_str = UA_STRING_ALLOC(bind_srv_url);
+        UA_StatusCode scUrl =
+            UA_Array_copy(&bind_str, 1, (void **)&cfg_val.serverUrls,
+                          &UA_TYPES[UA_TYPES_STRING]);
+        if (scUrl == UA_STATUSCODE_GOOD)
+            cfg_val.serverUrlsSize = 1;
+        UA_String_clear(&bind_str);
+    }
+
+    UA_Server *server = UA_Server_newWithConfig(&cfg_val);
+    if (!server) {
+        fprintf(stderr, "[open62541] error: UA_Server_newWithConfig failed\n");
+        UA_ServerConfig_clean(&cfg_val);
+        fixture_free(fixture);
+        return 1;
+    }
+    UA_ServerConfig *cfg = UA_Server_getConfig(server);
+
+    /* In v1.5.5 endpoints are populated after startup from serverUrls.
+     * Override endpoint/discovery URLs now for any that are already set,
+     * and record adv_url so the startup hooks can apply it too.
+     * (Pre-startup arrays may be empty — the loops are no-ops in that case.) */
     for (size_t i = 0; i < cfg->endpointsSize; i++) {
         UA_String_clear(&cfg->endpoints[i].endpointUrl);
         cfg->endpoints[i].endpointUrl = UA_STRING_ALLOC(adv_url);
@@ -771,13 +811,6 @@ int server_run(const ServerArgs *args) {
         UA_String_clear(&cfg->applicationDescription.discoveryUrls[i]);
         cfg->applicationDescription.discoveryUrls[i] = UA_STRING_ALLOC(adv_url);
     }
-    /* serverUrls controls what open62541 binds/advertises in later versions */
-    for (size_t i = 0; i < cfg->serverUrlsSize; i++) {
-        UA_String_clear(&cfg->serverUrls[i]);
-        cfg->serverUrls[i] = UA_STRING_ALLOC(adv_url);
-    }
-
-    /* Application description */
     if (fixture->applicationUri) {
         UA_String_clear(&cfg->applicationDescription.applicationUri);
         cfg->applicationDescription.applicationUri =
