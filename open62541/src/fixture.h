@@ -17,7 +17,8 @@ typedef enum {
     BEH_RAMP,
     BEH_STATIC,
     BEH_TIMESTAMP,
-    BEH_STATUS_SEQUENCE
+    BEH_STATUS_SEQUENCE,
+    BEH_FIXED_STATUS
 } BehaviorKind;
 
 typedef struct {

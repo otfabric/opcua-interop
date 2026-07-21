@@ -436,7 +436,11 @@ static UA_Variant build_variant(const cJSON *jv, const char *dataType, int value
     const UA_DataType *dt = data_type_for_name(dataType);
 
     if (n == 0) {
-        UA_Variant_setArray(&var, NULL, 0, dt);
+        /* Empty array: UA_Array_new(0,…) returns UA_EMPTY_ARRAY_SENTINEL so
+         * open62541 encodes arrayLength=0 (empty), not the null variant that
+         * results from passing NULL directly to UA_Variant_setArray. */
+        void *empty = UA_Array_new(0, dt);
+        UA_Variant_setArray(&var, empty, 0, dt);
         return var;
     }
 
@@ -939,6 +943,50 @@ int server_run(const ServerArgs *args) {
         UA_String_clear(&bind_str);
     }
 
+    /* Allow username/password authentication over a None/None (unencrypted)
+     * channel. OPC UA Part 4 §5.6.3.1 permits this for test deployments.
+     * Without this flag open62541 silently drops every UserName token that
+     * arrives on a None/None SecureChannel. */
+    if (fixture->userCount > 0)
+        cfg_val.allowNonePolicyPassword = UA_TRUE;
+
+    /* Configure username/password access control BEFORE creating the server.
+     * UA_AccessControl_default propagates the UserName token policy into the
+     * endpoint descriptions during UA_Server_newWithConfig; calling it after
+     * server creation updates the callbacks but not the endpoint token arrays,
+     * causing clients to see no UserName policy in GetEndpoints. */
+    if (fixture->userCount > 0) {
+        UA_UsernamePasswordLogin *logins =
+            (UA_UsernamePasswordLogin *)calloc(fixture->userCount,
+                                               sizeof(UA_UsernamePasswordLogin));
+        if (!logins) {
+            fprintf(stderr, "[open62541] error: out of memory for user logins\n");
+            fixture_free(fixture);
+            return 1;
+        }
+        for (size_t i = 0; i < fixture->userCount; i++) {
+            logins[i].username = UA_STRING_ALLOC(fixture->users[i].username
+                                                  ? fixture->users[i].username : "");
+            logins[i].password = UA_STRING_ALLOC(fixture->users[i].password
+                                                  ? fixture->users[i].password : "");
+        }
+        UA_StatusCode acSc = UA_AccessControl_default(
+            &cfg_val, UA_TRUE /* allowAnonymous */, NULL,
+            fixture->userCount, logins);
+        for (size_t i = 0; i < fixture->userCount; i++) {
+            UA_String_clear(&logins[i].username);
+            UA_String_clear(&logins[i].password);
+        }
+        free(logins);
+        if (acSc != UA_STATUSCODE_GOOD) {
+            fprintf(stderr, "[open62541] warn: UA_AccessControl_default: 0x%08" PRIx32 "\n",
+                    (uint32_t)acSc);
+        } else {
+            fprintf(stderr, "[open62541] info: username/password auth enabled (%zu user(s))\n",
+                    fixture->userCount);
+        }
+    }
+
     UA_Server *server = UA_Server_newWithConfig(&cfg_val);
     if (!server) {
         fprintf(stderr, "[open62541] error: UA_Server_newWithConfig failed\n");
@@ -976,42 +1024,6 @@ int server_run(const ServerArgs *args) {
         UA_LocalizedText_clear(&cfg->applicationDescription.applicationName);
         cfg->applicationDescription.applicationName =
             UA_LOCALIZEDTEXT_ALLOC("en", fixture->applicationName);
-    }
-
-    /* Configure username/password access control when fixture defines users.
-     * UA_AccessControl_default always enables anonymous; we keep it since
-     * None/None endpoint must also be accessible. */
-    if (fixture->userCount > 0) {
-        UA_UsernamePasswordLogin *logins =
-            (UA_UsernamePasswordLogin *)calloc(fixture->userCount,
-                                               sizeof(UA_UsernamePasswordLogin));
-        if (!logins) {
-            fprintf(stderr, "[open62541] error: out of memory for user logins\n");
-            UA_Server_delete(server);
-            fixture_free(fixture);
-            return 1;
-        }
-        for (size_t i = 0; i < fixture->userCount; i++) {
-            logins[i].username = UA_STRING_ALLOC(fixture->users[i].username
-                                                  ? fixture->users[i].username : "");
-            logins[i].password = UA_STRING_ALLOC(fixture->users[i].password
-                                                  ? fixture->users[i].password : "");
-        }
-        UA_StatusCode acSc = UA_AccessControl_default(
-            cfg, UA_TRUE /* allowAnonymous */, NULL,
-            fixture->userCount, logins);
-        for (size_t i = 0; i < fixture->userCount; i++) {
-            UA_String_clear(&logins[i].username);
-            UA_String_clear(&logins[i].password);
-        }
-        free(logins);
-        if (acSc != UA_STATUSCODE_GOOD) {
-            fprintf(stderr, "[open62541] warn: UA_AccessControl_default: 0x%08" PRIx32 "\n",
-                    (uint32_t)acSc);
-        } else {
-            fprintf(stderr, "[open62541] info: username/password auth enabled (%zu user(s))\n",
-                    fixture->userCount);
-        }
     }
 
     /* Register namespaces */
@@ -1072,9 +1084,13 @@ int server_run(const ServerArgs *args) {
                 if (nd->initialValue) {
                     attr.value = build_variant(nd->initialValue, nd->dataType,
                                                nd->valueRank);
-                    /* For array/matrix nodes open62541 validates that the value's
-                     * own arrayDimensions match the node attribute's dimensions. */
-                    if (nd->arrayDimensions && nd->arrayDimensionsSize > 0
+                    /* Per OPC UA Part 6 §5.1.4, the Variant's ArrayDimensions
+                     * field is only encoded for multi-dimensional arrays
+                     * (ValueRank >= 2). Setting it for 1D arrays causes
+                     * open62541 to reject the encoding when the declared
+                     * dimension size (0 = variable) does not match the actual
+                     * element count. */
+                    if (nd->arrayDimensions && nd->arrayDimensionsSize > 1
                             && !UA_Variant_isEmpty(&attr.value)) {
                         attr.value.arrayDimensions =
                             (UA_UInt32 *)UA_Array_new(nd->arrayDimensionsSize,
@@ -1141,6 +1157,10 @@ int server_run(const ServerArgs *args) {
         for (size_t bi = 0; bi < fixture->behaviorCount; bi++) {
             Behavior   *beh = &fixture->behaviors[bi];
             BehaviorCtx *ctx = &behCtxs[bi];
+
+            /* fixed-status is applied once after startup; skip the scheduler. */
+            if (beh->kind == BEH_FIXED_STATUS) continue;
+
             ctx->server  = server;
             ctx->nodeId  = resolve_nodeid(server, beh->target);
             ctx->kind    = beh->kind;
@@ -1155,6 +1175,28 @@ int server_run(const ServerArgs *args) {
             UA_Server_addRepeatedCallback(server, behavior_callback, ctx,
                                           (UA_UInt32)beh->intervalMs, &cbId);
         }
+    }
+
+    /* Apply fixed-status behaviors: write a DataValue with the given status
+     * code to each target node.  Done before startup so the status is visible
+     * from the first read after the server becomes ready. */
+    for (size_t bi = 0; bi < fixture->behaviorCount; bi++) {
+        Behavior *beh = &fixture->behaviors[bi];
+        if (beh->kind != BEH_FIXED_STATUS) continue;
+        UA_NodeId nid = resolve_nodeid(server, beh->target);
+        /* Read the existing value to preserve it. */
+        UA_Variant existing; UA_Variant_init(&existing);
+        UA_Server_readValue(server, nid, &existing);
+        UA_DataValue dv;
+        UA_DataValue_init(&dv);
+        UA_Variant_copy(&existing, &dv.value);
+        dv.hasValue  = UA_TRUE;
+        dv.hasStatus = UA_TRUE;
+        dv.status    = (UA_StatusCode)(uint32_t)beh->initial;
+        UA_Server_writeDataValue(server, nid, dv);
+        UA_Variant_clear(&existing);
+        UA_DataValue_clear(&dv);
+        UA_NodeId_clear(&nid);
     }
 
     /* Signal handling */

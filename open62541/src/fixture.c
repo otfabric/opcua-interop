@@ -78,6 +78,7 @@ static BehaviorKind parse_behavior_kind(const char *s) {
     if (strcmp(s, "static")          == 0) return BEH_STATIC;
     if (strcmp(s, "timestamp")       == 0) return BEH_TIMESTAMP;
     if (strcmp(s, "status-sequence") == 0) return BEH_STATUS_SEQUENCE;
+    if (strcmp(s, "fixed-status")    == 0) return BEH_FIXED_STATUS;
     return BEH_STATIC;
 }
 

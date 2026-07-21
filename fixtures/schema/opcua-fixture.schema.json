@@ -295,7 +295,7 @@
         "kind": {
           "type": "string",
           "description": "Behavior type. Both adapters must implement the same semantics.",
-          "enum": ["counter", "toggle", "ramp", "status-sequence", "static", "timestamp"]
+          "enum": ["counter", "toggle", "ramp", "status-sequence", "static", "timestamp", "fixed-status"]
         },
         "initial": {
           "description": "Initial value for counter and ramp behaviors."

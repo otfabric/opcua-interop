@@ -23,7 +23,9 @@ import org.eclipse.milo.opcua.stack.transport.server.tcp.OpcTcpServerTransportCo
 import org.eclipse.milo.opcua.stack.core.types.builtin.DateTime;
 import org.eclipse.milo.opcua.stack.core.types.builtin.LocalizedText;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.MessageSecurityMode;
+import org.eclipse.milo.opcua.stack.core.types.enumerated.UserTokenType;
 import org.eclipse.milo.opcua.stack.core.types.structured.BuildInfo;
+import org.eclipse.milo.opcua.stack.core.types.structured.UserTokenPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -186,6 +188,19 @@ public class ServerCommand {
                 .setPath(endpointPath)
                 .setTransportProfile(TransportProfile.TCP_UASC_UABINARY)
                 .addTokenPolicy(OpcUaServerConfig.USER_TOKEN_POLICY_ANONYMOUS);
+
+        // When users are defined, also offer username auth on the None/None endpoint.
+        // Per OPC UA Part 4 §5.6.3.1: empty securityPolicyUri means no password
+        // encryption, which is acceptable for non-production test-only endpoints.
+        // WARNING: passwords are transmitted in plain text over an unencrypted channel;
+        // never enable this pattern in production deployments.
+        if (!fixture.users.isEmpty()) {
+            UserTokenPolicy usernameNonePolicy = new UserTokenPolicy(
+                    "username_none",
+                    UserTokenType.UserName,
+                    null, null, null);
+            baseBuilder.addTokenPolicy(usernameNonePolicy);
+        }
 
         // Always add None/None endpoint
         endpointSet.add(baseBuilder

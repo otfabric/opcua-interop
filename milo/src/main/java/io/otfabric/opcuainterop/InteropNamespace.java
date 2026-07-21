@@ -114,7 +114,7 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
                 .build();
 
         if (nd.value != null) {
-            Variant variant = buildVariant(nd.value, nd.dataType, nd.valueRank);
+            Variant variant = buildVariant(nd.value, nd.dataType, nd.valueRank, nd.arrayDimensions);
             node.setValue(new DataValue(variant));
         }
         return node;
@@ -245,6 +245,18 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
                     if (ramp[0] > max) ramp[0] = min;
                     node.setValue(new DataValue(new Variant(val)));
                 }, 0, beh.intervalMs, TimeUnit.MILLISECONDS);
+                break;
+            }
+            case "fixed-status": {
+                // Set a one-time DataValue with the specified status code.
+                // Preserve the current variant value; only override the status.
+                long sc = (long) beh.initial;
+                DataValue current = node.getValue();
+                node.setValue(new DataValue(
+                        current.getValue(),
+                        new StatusCode(sc),
+                        null,
+                        null));
                 break;
             }
             default:
@@ -425,13 +437,53 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
     // Value conversion
     // -------------------------------------------------------------------------
 
-    private Variant buildVariant(Object jsonValue, String dataType, int valueRank) {
+    private Variant buildVariant(Object jsonValue, String dataType, int valueRank, List<Integer> arrayDimensions) {
         if (jsonValue == null) return Variant.NULL_VALUE;
+        if (valueRank >= 2 && jsonValue instanceof List) {
+            return buildMatrixVariant((List<?>) jsonValue, dataType, arrayDimensions);
+        }
         if (valueRank >= 1 && jsonValue instanceof List) {
             return buildArrayVariant((List<?>) jsonValue, dataType);
         }
         Object scalar = convertScalar(jsonValue, dataType);
         return scalar != null ? new Variant(scalar) : Variant.NULL_VALUE;
+    }
+
+    private Variant buildMatrixVariant(List<?> list, String dataType, List<Integer> dims) {
+        if (dims == null || dims.size() < 2) {
+            return buildArrayVariant(list, dataType);
+        }
+        int[] intDims = dims.stream().mapToInt(Integer::intValue).toArray();
+        Object flatArray = buildTypedFlatArray(list, dataType);
+        if (flatArray == null) return Variant.NULL_VALUE;
+        org.eclipse.milo.opcua.stack.core.OpcUaDataType opcUaType = toOpcUaDataType(dataType);
+        Matrix matrix = opcUaType != null
+                ? new Matrix(flatArray, intDims, opcUaType)
+                : new Matrix(flatArray, intDims);
+        return new Variant(matrix);
+    }
+
+    private Object buildTypedFlatArray(List<?> list, String dataType) {
+        switch (dataType != null ? dataType : "") {
+            case "Double": { Double[]  a = new Double[list.size()];  for (int i=0;i<list.size();i++) a[i]=(Double)convertScalar(list.get(i),dataType); return a; }
+            case "Float":  { Float[]   a = new Float[list.size()];   for (int i=0;i<list.size();i++) a[i]=(Float)convertScalar(list.get(i),dataType);  return a; }
+            case "Int32":  { Integer[] a = new Integer[list.size()]; for (int i=0;i<list.size();i++) a[i]=(Integer)convertScalar(list.get(i),dataType); return a; }
+            case "Int64":  { Long[]    a = new Long[list.size()];    for (int i=0;i<list.size();i++) a[i]=(Long)convertScalar(list.get(i),dataType);    return a; }
+            default: {
+                Object[] a = new Object[list.size()];
+                for (int i=0;i<list.size();i++) a[i] = convertScalar(list.get(i), dataType);
+                return a;
+            }
+        }
+    }
+
+    private org.eclipse.milo.opcua.stack.core.OpcUaDataType toOpcUaDataType(String dataType) {
+        if (dataType == null) return null;
+        try {
+            return org.eclipse.milo.opcua.stack.core.OpcUaDataType.valueOf(dataType);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private Variant buildArrayVariant(List<?> list, String dataType) {
@@ -489,8 +541,8 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
                     return ULong.valueOf(((Number) jsonValue).longValue());
                 case "Float":   return ((Number) jsonValue).floatValue();
                 case "Double":  return ((Number) jsonValue).doubleValue();
-                case "String":
-                case "XmlElement": return jsonValue.toString();
+                case "String":     return jsonValue.toString();
+                case "XmlElement": return XmlElement.of(jsonValue.toString());
                 case "DateTime":   return parseDateTime(jsonValue.toString());
                 case "Guid":       return UUID.fromString(jsonValue.toString());
                 case "ByteString":
@@ -508,7 +560,7 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
     }
 
     private DateTime parseDateTime(String s) {
-        try { return new DateTime(Instant.parse(s).toEpochMilli()); }
+        try { return new DateTime(Instant.parse(s)); }
         catch (Exception e) { return DateTime.NULL_VALUE; }
     }
 

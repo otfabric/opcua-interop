@@ -510,6 +510,53 @@
     },
     {
       "nodeClass": "Variable",
+      "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Array.Boolean",
+      "browseName": "1:Array.Boolean",
+      "displayName": "Boolean Array",
+      "description": "A Boolean array with three elements.",
+      "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Arrays",
+      "referenceType": "Organizes",
+      "dataType": "Boolean",
+      "valueRank": 1,
+      "arrayDimensions": [
+        0
+      ],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
+      "initialValue": [
+        true,
+        false,
+        true
+      ]
+    },
+    {
+      "nodeClass": "Variable",
+      "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Array.Double",
+      "browseName": "1:Array.Double",
+      "displayName": "Double Array",
+      "description": "A Double array with four elements including a large value.",
+      "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Arrays",
+      "referenceType": "Organizes",
+      "dataType": "Double",
+      "valueRank": 1,
+      "arrayDimensions": [
+        0
+      ],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
+      "initialValue": [
+        0.0,
+        1.5,
+        -1.5,
+        3.141592653589793
+      ]
+    },
+    {
+      "nodeClass": "Variable",
       "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Array.Matrix2D",
       "browseName": "1:Array.Matrix2D",
       "displayName": "2D Matrix",
@@ -874,6 +921,11 @@
       "minimum": 0.0,
       "maximum": 100.0,
       "intervalMs": 100
+    },
+    {
+      "target": "nsu=urn:otfabric:opcua-interop:model;s=DataValues.Uncertain",
+      "kind": "fixed-status",
+      "initial": 1083834368
     }
   ],
   "users": [
