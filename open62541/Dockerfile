@@ -43,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       cmake \
       libcjson-dev \
+      pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy open62541 amalgam
