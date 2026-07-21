@@ -9,6 +9,12 @@
 
 #include <open62541.h>
 
+/* BadNamespaceUriInvalid (0x80530000) is defined in the OPC UA spec Part 4
+ * but not exposed by every open62541 version. Define it locally if absent. */
+#ifndef UA_STATUSCODE_BADNAMESPACEURIINVALID
+#define UA_STATUSCODE_BADNAMESPACEURIINVALID ((UA_StatusCode)0x80530000U)
+#endif
+
 /* -------------------------------------------------------------------------
  * Shared argument parsing helpers
  * ---------------------------------------------------------------------- */
