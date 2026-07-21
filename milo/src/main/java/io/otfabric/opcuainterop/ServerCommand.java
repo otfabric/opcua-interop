@@ -7,6 +7,8 @@ import org.eclipse.milo.opcua.sdk.server.EndpointConfig;
 import org.eclipse.milo.opcua.sdk.server.identity.AnonymousIdentityValidator;
 import org.eclipse.milo.opcua.stack.core.security.SecurityPolicy;
 import org.eclipse.milo.opcua.stack.core.transport.TransportProfile;
+import org.eclipse.milo.opcua.stack.transport.server.tcp.OpcTcpServerTransport;
+import org.eclipse.milo.opcua.stack.transport.server.tcp.OpcTcpServerTransportConfig;
 import org.eclipse.milo.opcua.stack.core.types.builtin.DateTime;
 import org.eclipse.milo.opcua.stack.core.types.builtin.LocalizedText;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.MessageSecurityMode;
@@ -99,7 +101,11 @@ public class ServerCommand {
                 .setIdentityValidator(AnonymousIdentityValidator.INSTANCE)
                 .build();
 
-        OpcUaServer server = new OpcUaServer(config);
+        OpcUaServer server = new OpcUaServer(config, transportProfile -> {
+            OpcTcpServerTransportConfig transportConfig =
+                    OpcTcpServerTransportConfig.newBuilder().build();
+            return new OpcTcpServerTransport(transportConfig);
+        });
 
         InteropNamespace namespace = new InteropNamespace(server, fixture);
         namespace.startup();

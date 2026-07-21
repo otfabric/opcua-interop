@@ -8,7 +8,6 @@ import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
 
 import java.util.Base64;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 /** Parses NodeId strings per CLIENT_CONTRACT §8. */
 public class NodeIdParser {
@@ -101,8 +100,7 @@ public class NodeIdParser {
     private static int lookupNamespaceIndex(OpcUaClient client, String uri, long timeoutMs)
             throws Exception {
         DataValue dv = client.readValue(0.0, TimestampsToReturn.Neither,
-                Identifiers.Server_NamespaceArray)
-                .get(timeoutMs, TimeUnit.MILLISECONDS);
+                Identifiers.Server_NamespaceArray);
         if (dv.getValue() != null && dv.getValue().getValue() instanceof String[]) {
             String[] ns = (String[]) dv.getValue().getValue();
             for (int i = 0; i < ns.length; i++) {
