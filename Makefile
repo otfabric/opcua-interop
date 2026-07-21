@@ -1,5 +1,8 @@
 # Self-documented Makefile (https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html)
 # Run 'make' or 'make help' to list targets.
+#
+# Pre-push gate:  make ci
+# Quick smoke:    make image smoke
 
 .DEFAULT_GOAL := help
 
@@ -16,16 +19,26 @@ MILO_PORT      ?= 4841
 FIXTURE_SCHEMA = fixtures/schema/opcua-fixture.schema.json
 FIXTURE_DIRS   = $(wildcard fixtures/*/fixture.json)
 
-.PHONY: help all image image-open62541 image-milo buildx buildx-open62541 buildx-milo \
+.PHONY: help all ci \
+        image image-open62541 image-milo \
+        buildx buildx-open62541 buildx-milo \
         validate validate-fixtures \
-        run-open62541 run-milo \
+        test test-open62541 test-milo \
         smoke smoke-open62541 smoke-milo smoke-cross-stack \
+        shutdown shutdown-open62541 shutdown-milo \
+        run-open62541 run-milo \
         certs release clean
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-26s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 all: validate image ## Validate fixtures and build local images
+
+# ── Full local CI (mirrors GitHub Actions) ────────────────────────────────────
+
+ci: validate image test smoke shutdown ## Full local CI: validate → build → unit-test → smoke → shutdown
+	@echo ""
+	@echo "✓ All local CI checks passed."
 
 # ── Local single-arch images (loaded into Docker, used for smoke/dev) ─────────
 
@@ -75,6 +88,52 @@ validate-fixtures: ## Validate all fixture files against schema
 	@echo "Validating fixture files..."
 	@scripts/validate-fixtures.sh
 
+# ── Unit tests (requires images to be built) ──────────────────────────────────
+
+test: test-open62541 test-milo ## Run unit tests for both adapters
+
+test-open62541: image-open62541 ## Build open62541 image and run unit tests
+	@echo "Running open62541 unit tests..."
+	docker run --rm \
+		-v "$(PWD)/fixtures:/fixtures:ro" \
+		$(IMAGE_OPEN62541):$(VERSION) \
+		test
+
+test-milo: image-milo ## Build Milo image and run unit tests
+	@echo "Running Milo unit tests..."
+	docker run --rm \
+		-v "$(PWD)/fixtures:/fixtures:ro" \
+		$(IMAGE_MILO):$(VERSION) \
+		test
+
+# ── Smoke tests ──────────────────────────────────────────────────────────────
+
+smoke: smoke-open62541 smoke-milo smoke-cross-stack ## Run all smoke tests (images must be built)
+
+smoke-open62541: ## Smoke test open62541 adapter (run 'make image-open62541' first)
+	@echo "Smoking open62541 adapter..."
+	@scripts/smoke.sh open62541 $(IMAGE_OPEN62541):$(VERSION)
+
+smoke-milo: ## Smoke test Milo adapter (run 'make image-milo' first)
+	@echo "Smoking Milo adapter..."
+	@scripts/smoke.sh milo $(IMAGE_MILO):$(VERSION)
+
+smoke-cross-stack: ## Cross-stack interop self-check (run 'make image' first)
+	@echo "Smoking cross-stack interop self-check..."
+	@scripts/smoke.sh cross $(IMAGE_OPEN62541):$(VERSION) $(IMAGE_MILO):$(VERSION)
+
+# ── Graceful shutdown tests ───────────────────────────────────────────────────
+
+shutdown: shutdown-open62541 shutdown-milo ## Test graceful shutdown for both adapters
+
+shutdown-open62541: ## Test open62541 graceful shutdown: SIGTERM must produce exit 0
+	@echo "Testing open62541 graceful shutdown..."
+	@scripts/shutdown-test.sh open62541 $(IMAGE_OPEN62541):$(VERSION)
+
+shutdown-milo: ## Test Milo graceful shutdown: SIGTERM must produce exit 0
+	@echo "Testing Milo graceful shutdown..."
+	@scripts/shutdown-test.sh milo $(IMAGE_MILO):$(VERSION)
+
 # ── Run ──────────────────────────────────────────────────────────────────────
 
 run-open62541: ## Start open62541 server on port $(OPEN62541_PORT)
@@ -102,22 +161,6 @@ run-milo: ## Start Milo server on port $(MILO_PORT)
 		--advertised-host localhost \
 		--pki-dir /pki \
 		--ready-file /run/opcua-interop/ready
-
-# ── Smoke tests ──────────────────────────────────────────────────────────────
-
-smoke: smoke-open62541 smoke-milo smoke-cross-stack ## Run all smoke tests
-
-smoke-open62541: ## Smoke test open62541 adapter
-	@echo "Smoking open62541 adapter..."
-	@scripts/smoke.sh open62541 $(IMAGE_OPEN62541):$(VERSION)
-
-smoke-milo: ## Smoke test Milo adapter
-	@echo "Smoking Milo adapter..."
-	@scripts/smoke.sh milo $(IMAGE_MILO):$(VERSION)
-
-smoke-cross-stack: ## Cross-stack interop self-check
-	@echo "Smoking cross-stack interop self-check..."
-	@scripts/smoke.sh cross $(IMAGE_OPEN62541):$(VERSION) $(IMAGE_MILO):$(VERSION)
 
 # ── Certificates ─────────────────────────────────────────────────────────────
 
@@ -156,7 +199,7 @@ endif
 
 # ── Clean ────────────────────────────────────────────────────────────────────
 
-clean: ## Remove containers and build artifacts
+clean: ## Remove containers and local build artifacts
 	@echo "Removing containers and build artifacts..."
 	docker compose down --remove-orphans 2>/dev/null || true
 	docker rmi $(IMAGE_OPEN62541):$(VERSION) 2>/dev/null || true

@@ -35,26 +35,7 @@ jobs:
         run: scripts/smoke.sh open62541 ghcr.io/otfabric/opcua-interop-open62541:smoke
 
       - name: Test graceful shutdown
-        run: |
-          cname=$(docker run -d \
-            -v "$PWD/fixtures:/fixtures:ro" \
-            ghcr.io/otfabric/opcua-interop-open62541:smoke \
-            server \
-            --fixture /fixtures/baseline/fixture.json \
-            --bind-address 0.0.0.0 \
-            --bind-port 4840 \
-            --advertised-host localhost \
-            --endpoint-path /opcua-interop \
-            --ready-file /run/opcua-interop/ready)
-          scripts/wait-ready.sh "${cname}" 60
-          docker stop --time=10 "${cname}"
-          exit_code=$(docker inspect --format='{{.State.ExitCode}}' "${cname}")
-          docker rm "${cname}"
-          if [[ "${exit_code}" -ne 0 ]]; then
-            echo "Error: open62541 container exited with code ${exit_code} on SIGTERM" >&2
-            exit 1
-          fi
-          echo "open62541: clean shutdown OK (exit code 0)"
+        run: scripts/shutdown-test.sh open62541 ghcr.io/otfabric/opcua-interop-open62541:smoke
 
   smoke-milo:
     name: Milo smoke
@@ -79,26 +60,7 @@ jobs:
         run: scripts/smoke.sh milo ghcr.io/otfabric/opcua-interop-milo:smoke
 
       - name: Test graceful shutdown
-        run: |
-          cname=$(docker run -d \
-            -v "$PWD/fixtures:/fixtures:ro" \
-            ghcr.io/otfabric/opcua-interop-milo:smoke \
-            server \
-            --fixture /fixtures/baseline/fixture.json \
-            --bind-address 0.0.0.0 \
-            --bind-port 4840 \
-            --advertised-host localhost \
-            --endpoint-path /opcua-interop \
-            --ready-file /run/opcua-interop/ready)
-          scripts/wait-ready.sh "${cname}" 60
-          docker stop --time=10 "${cname}"
-          exit_code=$(docker inspect --format='{{.State.ExitCode}}' "${cname}")
-          docker rm "${cname}"
-          if [[ "${exit_code}" -ne 0 ]]; then
-            echo "Error: Milo container exited with code ${exit_code} on SIGTERM" >&2
-            exit 1
-          fi
-          echo "Milo: clean shutdown OK (exit code 0)"
+        run: scripts/shutdown-test.sh milo ghcr.io/otfabric/opcua-interop-milo:smoke
 
   smoke-cross-stack:
     name: Cross-stack self-check
