@@ -48,7 +48,7 @@
 static int cmd_print_capabilities(void) {
     printf("{\n");
     printf("  \"schemaVersion\": \"1.0\",\n");
-    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.1.0\"},\n");
+    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.1.1\"},\n");
     printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.5\"},\n");
     printf("  \"fixtureSchemaVersions\": [\"1.0\"],\n");
     printf("  \"roles\": [\"client\", \"server\"],\n");
@@ -73,8 +73,14 @@ static int cmd_print_capabilities(void) {
     printf("    \"CreateMonitoredItems\",\n");
     printf("    \"Publish\"\n");
     printf("  ],\n");
-    printf("  \"securityProfiles\": [{\"policy\": \"None\", \"mode\": \"None\"}],\n");
-    printf("  \"userTokenTypes\": [\"Anonymous\"]\n");
+    printf("  \"securityProfiles\": [\n");
+    printf("    {\"policy\": \"None\",                  \"mode\": \"None\"},\n");
+    printf("    {\"policy\": \"Basic256Sha256\",        \"mode\": \"Sign\"},\n");
+    printf("    {\"policy\": \"Basic256Sha256\",        \"mode\": \"SignAndEncrypt\"},\n");
+    printf("    {\"policy\": \"Aes128_Sha256_RsaOaep\", \"mode\": \"SignAndEncrypt\"},\n");
+    printf("    {\"policy\": \"Aes256_Sha256_RsaPss\",  \"mode\": \"SignAndEncrypt\"}\n");
+    printf("  ],\n");
+    printf("  \"userTokenTypes\": [\"Anonymous\", \"UserName\"]\n");
     printf("}\n");
     return 0;
 }

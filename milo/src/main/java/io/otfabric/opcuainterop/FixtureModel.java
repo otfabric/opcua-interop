@@ -16,8 +16,10 @@ public class FixtureModel {
     @JsonProperty("endpoint")       public EndpointInfo endpoint;
     @JsonProperty("namespaces")     public List<NamespaceInfo> namespaces  = new ArrayList<>();
     @JsonProperty("nodes")          public List<NodeDef>       nodes       = new ArrayList<>();
-    @JsonProperty("behaviors")      public List<BehaviorDef>   behaviors   = new ArrayList<>();
-    @JsonProperty("methods")        public List<MethodDef>     methods     = new ArrayList<>();
+    @JsonProperty("behaviors")      public List<BehaviorDef>      behaviors   = new ArrayList<>();
+    @JsonProperty("methods")        public List<MethodDef>        methods     = new ArrayList<>();
+    @JsonProperty("securityProfiles") public List<SecurityProfileDef> securityProfiles = new ArrayList<>();
+    @JsonProperty("users")          public List<UserCredentialDef> users      = new ArrayList<>();
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ServerInfo {
@@ -92,5 +94,20 @@ public class FixtureModel {
         public String dataType;
         public String description;
         public int    valueRank = -1;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class SecurityProfileDef {
+        /** "None", "Basic256Sha256", "Aes128_Sha256_RsaOaep", "Aes256_Sha256_RsaPss", etc. */
+        public String securityPolicy;
+        /** "None", "Sign", "SignAndEncrypt" */
+        public String securityMode;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class UserCredentialDef {
+        public String   username;
+        public String   password;
+        public List<String> roles = new ArrayList<>();
     }
 }

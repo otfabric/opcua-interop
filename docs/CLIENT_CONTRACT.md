@@ -22,6 +22,8 @@ this contract. Changes that break it require a major schema version bump.
 | `read` | Read one or more node values |
 | `write` | Write a value to one node |
 | `browse` | Browse forward hierarchical references from a node |
+| `call` | Call a method node and collect output arguments |
+| `subscribe` | Create a subscription and collect a bounded number of data-change notifications |
 
 ### Global flags
 
@@ -33,6 +35,23 @@ this contract. Changes that break it require a major schema version bump.
 | `--disconnect-timeout <s>` | Disconnect timeout in seconds | 2 |
 | `--security-policy <name>` | Security policy name | `None` |
 | `--security-mode <mode>` | Message security mode | `None` |
+| `--certificate <path>` | Client application certificate (PEM or DER file) | — |
+| `--private-key <path>` | Client private key (PEM or DER file) | — |
+| `--trust-list <path>` | Trusted CA certificate (PEM or DER file); may be repeated | — |
+| `--username <name>` | Username for UserName identity token | — |
+| `--password <secret>` | Password for UserName identity token | — |
+
+Security policy names: `None`, `Basic128Rsa15`, `Basic256`, `Basic256Sha256`,
+`Aes128_Sha256_RsaOaep`, `Aes256_Sha256_RsaPss`.
+
+Security mode values: `None`, `Sign`, `SignAndEncrypt`.
+
+When `--certificate` and `--private-key` are supplied, the client uses them as its
+application instance certificate. When `--username` is supplied without `--password`,
+the password is treated as an empty string.
+
+When `--security-policy` is not `None`, `--certificate` and `--private-key` are
+required.
 
 ### `read` flags
 
@@ -355,6 +374,9 @@ When `--security-policy None --security-mode None` (the default), the client mus
 select exactly the endpoint matching `SecurityPolicy#None` and `None` mode. If no
 such endpoint exists, the client must fail with exit 3 and `error.category = "transport"`.
 
+When a non-None policy is requested, the client must select the endpoint that matches
+both the requested policy URI and mode. If no matching endpoint exists, exit 3.
+
 No arbitrary fallback to the first available endpoint.
 
 ---
@@ -398,3 +420,21 @@ supplied. The server must exit with code 6.
 | `--endpoint-path <path>` | URL path component | from fixture (`endpoint.path`) |
 | `--ready-file <path>` | Path to write readiness file | `/run/opcua-interop/ready` |
 | `--pki-dir <path>` | PKI directory for certificate stores | `/run/opcua-interop/pki` |
+| `--certificate <path>` | Server application certificate (PEM or DER file) | — |
+| `--private-key <path>` | Server private key (PEM or DER file) | — |
+
+When `--certificate` and `--private-key` are supplied and the fixture contains at
+least one non-None `securityProfile`, the server registers those secure endpoints in
+addition to the `None`/`None` endpoint that is always present.
+
+The `--pki-dir` directory layout must follow the OPC UA PKI store convention:
+```
+<pki-dir>/
+├── trusted/certs/    # Trusted CA certs and explicitly trusted client certs
+├── trusted/crl/      # Certificate revocation lists
+├── issuers/certs/    # Intermediate CA certs
+└── rejected/         # Auto-populated by the server when an untrusted cert connects
+```
+
+Clients presenting a certificate not signed by a CA in `trusted/certs` and not
+individually listed there are rejected with `BadCertificateUntrusted`.

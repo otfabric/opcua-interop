@@ -33,6 +33,31 @@ static void client_silence_logger(UA_ClientConfig *cfg) {
         cfg->eventLoop->logger = &g_silent_logger;
 }
 
+/* Load a binary (DER) file into a UA_ByteString.  Returns UA_BYTESTRING_NULL
+ * on any error. */
+static UA_ByteString load_cert_file(const char *path) {
+    UA_ByteString bs = UA_BYTESTRING_NULL;
+    if (!path || !*path) return bs;
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "[open62541] warn: cannot open %s: %s\n", path, strerror(errno));
+        return bs;
+    }
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz <= 0) { fclose(f); return bs; }
+    bs.data = (UA_Byte *)UA_malloc((size_t)sz);
+    if (!bs.data) { fclose(f); return bs; }
+    bs.length = (size_t)fread(bs.data, 1, (size_t)sz, f);
+    fclose(f);
+    if (bs.length != (size_t)sz) {
+        UA_ByteString_clear(&bs);
+        return UA_BYTESTRING_NULL;
+    }
+    return bs;
+}
+
 /* -------------------------------------------------------------------------
  * Shared argument parsing helpers
  * ---------------------------------------------------------------------- */
@@ -56,6 +81,49 @@ static int parse_int_flag(int argc, char **argv, const char *flag, int def) {
     if (!v) return def;
     int r = atoi(v);
     return (r > 0) ? r : def;
+}
+
+/* -------------------------------------------------------------------------
+ * Global security configuration (parsed once in client_run before dispatch)
+ * ---------------------------------------------------------------------- */
+
+typedef struct {
+    const char  *policyName;    /* "None", "Basic256Sha256", etc. */
+    const char  *modeName;      /* "None", "Sign", "SignAndEncrypt" */
+    const char  *certFile;      /* DER client application cert */
+    const char  *keyFile;       /* DER private key */
+    const char **trustFiles;    /* array of --trust-list values */
+    int          trustCount;
+    const char  *username;      /* NULL = anonymous */
+    const char  *password;      /* NULL = treat as empty string */
+} ClientSecurity;
+
+static ClientSecurity g_sec = { "None", "None", NULL, NULL, NULL, 0, NULL, NULL };
+
+static UA_MessageSecurityMode security_mode_enum(const char *s) {
+    if (!s || strcmp(s, "None") == 0)        return UA_MESSAGESECURITYMODE_NONE;
+    if (strcmp(s, "Sign") == 0)              return UA_MESSAGESECURITYMODE_SIGN;
+    if (strcmp(s, "SignAndEncrypt") == 0)    return UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+    return UA_MESSAGESECURITYMODE_NONE;
+}
+
+static const char *security_policy_uri(const char *name) {
+    static const struct { const char *n; const char *uri; } tbl[] = {
+        { "None",               "http://opcfoundation.org/UA/SecurityPolicy#None"               },
+        { "Basic128Rsa15",      "http://opcfoundation.org/UA/SecurityPolicy#Basic128Rsa15"      },
+        { "Basic256",           "http://opcfoundation.org/UA/SecurityPolicy#Basic256"           },
+        { "Basic256Sha256",     "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"     },
+        { "Aes128_Sha256_RsaOaep","http://opcfoundation.org/UA/SecurityPolicy#Aes128_Sha256_RsaOaep"},
+        { "Aes256_Sha256_RsaPss","http://opcfoundation.org/UA/SecurityPolicy#Aes256_Sha256_RsaPss" },
+    };
+    for (size_t i = 0; i < sizeof(tbl)/sizeof(tbl[0]); i++) {
+        if (name && strcmp(name, tbl[i].n) == 0) return tbl[i].uri;
+    }
+    return tbl[0].uri; /* fallback: None */
+}
+
+static UA_Boolean security_is_none(void) {
+    return security_mode_enum(g_sec.modeName) == UA_MESSAGESECURITYMODE_NONE;
 }
 
 /* -------------------------------------------------------------------------
@@ -298,14 +366,12 @@ static const char *type_name(const UA_DataType *dt) {
  * Endpoint security check
  * ---------------------------------------------------------------------- */
 
-static const char k_none_policy[] =
-    "http://opcfoundation.org/UA/SecurityPolicy#None";
-
 /*
- * Returns 1 if the server at url has a SecurityPolicy#None / None endpoint.
+ * Returns 1 if the server at url has an endpoint matching the globally
+ * configured security policy and mode.
  * Returns 0 on error or not found; fills *out_sc with the GetEndpoints result.
  */
-static int endpoint_has_none_security(const char *url, UA_StatusCode *out_sc) {
+static int endpoint_check_security(const char *url, UA_StatusCode *out_sc) {
     UA_Client *c = UA_Client_new();
     if (!c) { *out_sc = UA_STATUSCODE_BADOUTOFMEMORY; return 0; }
     UA_ClientConfig_setDefault(UA_Client_getConfig(c));
@@ -319,13 +385,16 @@ static int endpoint_has_none_security(const char *url, UA_StatusCode *out_sc) {
 
     if (sc != UA_STATUSCODE_GOOD) return 0;
 
+    const char *want_uri = security_policy_uri(g_sec.policyName);
+    UA_MessageSecurityMode want_mode = security_mode_enum(g_sec.modeName);
+    size_t want_uri_len = strlen(want_uri);
+
     int found = 0;
     for (size_t i = 0; i < epCount && !found; i++) {
-        if (eps[i].securityMode != UA_MESSAGESECURITYMODE_NONE) continue;
+        if (eps[i].securityMode != want_mode) continue;
         const UA_String *uri = &eps[i].securityPolicyUri;
-        size_t pol_len = sizeof(k_none_policy) - 1;
-        if (uri->length == pol_len &&
-            memcmp(uri->data, k_none_policy, pol_len) == 0)
+        if (uri->length == want_uri_len &&
+            memcmp(uri->data, want_uri, want_uri_len) == 0)
             found = 1;
     }
     if (eps) UA_Array_delete(eps, epCount, &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION]);
@@ -346,19 +415,25 @@ static UA_Client *make_client(const char *url,
                                int request_ms,
                                const char *op,
                                int *exit_code) {
-    /* Verify a None/None endpoint exists */
+    /* Verify a matching endpoint exists */
     UA_StatusCode ep_sc = UA_STATUSCODE_GOOD;
-    if (!endpoint_has_none_security(url, &ep_sc)) {
+    if (!endpoint_check_security(url, &ep_sc)) {
         UA_StatusCode err_sc = (ep_sc != UA_STATUSCODE_GOOD)
                                ? ep_sc
                                : UA_STATUSCODE_BADSECURITYPOLICYREJECTED;
-        const char *msg = (ep_sc != UA_STATUSCODE_GOOD)
-                          ? "GetEndpoints request failed"
-                          : "no SecurityPolicy#None/None endpoint available";
+        char msg_buf[256];
+        if (ep_sc != UA_STATUSCODE_GOOD) {
+            snprintf(msg_buf, sizeof(msg_buf), "GetEndpoints request failed");
+        } else {
+            snprintf(msg_buf, sizeof(msg_buf),
+                     "no %s/%s endpoint available",
+                     g_sec.policyName ? g_sec.policyName : "None",
+                     g_sec.modeName   ? g_sec.modeName   : "None");
+        }
         output_begin("open62541", op);
         output_success(0);
         output_service_result(err_sc);
-        output_error("transport", msg);
+        output_error("transport", msg_buf);
         output_end();
         *exit_code = 3;
         return NULL;
@@ -376,11 +451,77 @@ static UA_Client *make_client(const char *url,
     }
 
     UA_ClientConfig *cfg = UA_Client_getConfig(client);
+
+#ifdef UA_ENABLE_ENCRYPTION
+    if (!security_is_none()) {
+        UA_ByteString cert = load_cert_file(g_sec.certFile);
+        UA_ByteString key  = load_cert_file(g_sec.keyFile);
+
+        size_t trust_count = (size_t)g_sec.trustCount;
+        UA_ByteString *trust_list = NULL;
+        if (trust_count > 0) {
+            trust_list = (UA_ByteString *)calloc(trust_count, sizeof(UA_ByteString));
+            if (trust_list) {
+                for (size_t i = 0; i < trust_count; i++)
+                    trust_list[i] = load_cert_file(g_sec.trustFiles[i]);
+            }
+        }
+
+        UA_StatusCode sc = UA_ClientConfig_setDefaultEncryption(
+            cfg,
+            cert, key,
+            trust_list, trust_count,
+            NULL, 0);
+
+        UA_ByteString_clear(&cert);
+        UA_ByteString_clear(&key);
+        for (size_t i = 0; i < trust_count; i++)
+            UA_ByteString_clear(&trust_list[i]);
+        free(trust_list);
+
+        if (sc != UA_STATUSCODE_GOOD) {
+            UA_Client_delete(client);
+            output_begin("open62541", op);
+            output_success(0);
+            output_service_result(sc);
+            output_error("internal", "UA_ClientConfig_setDefaultEncryption failed");
+            output_end();
+            *exit_code = 6;
+            return NULL;
+        }
+
+        /* Select the requested security policy and mode */
+        cfg->securityPolicyUri =
+            UA_STRING_ALLOC(security_policy_uri(g_sec.policyName));
+        cfg->securityMode = security_mode_enum(g_sec.modeName);
+    } else {
+        UA_ClientConfig_setDefault(cfg);
+    }
+#else
     UA_ClientConfig_setDefault(cfg);
+    if (!security_is_none()) {
+        fprintf(stderr, "[open62541] warn: non-None security requested but binary built "
+                        "without UA_ENABLE_ENCRYPTION\n");
+    }
+#endif /* UA_ENABLE_ENCRYPTION */
+
     client_silence_logger(cfg);
     if (request_ms > 0)
         cfg->timeout = (UA_UInt32)request_ms;
     cfg->connectivityCheckInterval = 0;
+
+    /* Set user identity token */
+    if (g_sec.username) {
+        UA_UserNameIdentityToken token;
+        UA_UserNameIdentityToken_init(&token);
+        token.userName = UA_STRING_ALLOC(g_sec.username);
+        const char *pw = g_sec.password ? g_sec.password : "";
+        token.password = UA_BYTESTRING_ALLOC(pw);
+        UA_ExtensionObject_clear(&cfg->userIdentityToken);
+        UA_ExtensionObject_setValueCopy(&cfg->userIdentityToken,
+            &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN], &token);
+        UA_UserNameIdentityToken_clear(&token);
+    }
 
     UA_StatusCode sc = UA_Client_connect(client, url);
     if (sc != UA_STATUSCODE_GOOD) {
@@ -1375,6 +1516,44 @@ int client_run(int argc, char **argv) {
             "usage: client <endpoints|read|write|browse|call|subscribe> ...\n");
         return 2;
     }
+
+    /* Parse global security flags from the full argv array.
+     * Each subcommand receives the full argv so these flags are visible. */
+    {
+        const char *v;
+        if ((v = find_arg(argc, argv, "--security-policy")) != NULL)
+            g_sec.policyName = v;
+        if ((v = find_arg(argc, argv, "--security-mode")) != NULL)
+            g_sec.modeName = v;
+        if ((v = find_arg(argc, argv, "--certificate")) != NULL)
+            g_sec.certFile = v;
+        if ((v = find_arg(argc, argv, "--private-key")) != NULL)
+            g_sec.keyFile = v;
+        if ((v = find_arg(argc, argv, "--username")) != NULL)
+            g_sec.username = v;
+        if ((v = find_arg(argc, argv, "--password")) != NULL)
+            g_sec.password = v;
+
+        /* Collect all --trust-list values */
+        int tc = count_flag(argc, argv, "--trust-list");
+        if (tc > 0) {
+            static const char **trust_arr = NULL;
+            static int trust_cap = 0;
+            if (tc > trust_cap) {
+                free((void *)trust_arr);
+                trust_arr = (const char **)malloc((size_t)tc * sizeof(const char *));
+                trust_cap = tc;
+            }
+            int ti = 0;
+            for (int i = 0; i < argc - 1 && ti < tc; i++) {
+                if (strcmp(argv[i], "--trust-list") == 0)
+                    trust_arr[ti++] = argv[i + 1];
+            }
+            g_sec.trustFiles = trust_arr;
+            g_sec.trustCount = tc;
+        }
+    }
+
     const char *sub = argv[1];
     if (strcmp(sub, "endpoints")  == 0) return cmd_endpoints(argc - 1, argv + 1);
     if (strcmp(sub, "read")       == 0) return cmd_read(argc - 1, argv + 1);

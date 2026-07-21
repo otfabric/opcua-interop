@@ -3,11 +3,15 @@ package io.otfabric.opcuainterop;
 import org.eclipse.milo.opcua.sdk.client.DiscoveryClient;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClientConfig;
+import org.eclipse.milo.opcua.sdk.client.OpcUaClientConfigBuilder;
 import org.eclipse.milo.opcua.sdk.client.subscriptions.OpcUaMonitoredItem;
 import org.eclipse.milo.opcua.sdk.client.subscriptions.OpcUaSubscription;
 import org.eclipse.milo.opcua.stack.core.AttributeId;
 import org.eclipse.milo.opcua.stack.core.Identifiers;
 import org.eclipse.milo.opcua.stack.core.UaException;
+import org.eclipse.milo.opcua.stack.core.security.DefaultServerCertificateValidator;
+import org.eclipse.milo.opcua.stack.core.security.FileBasedCertificateQuarantine;
+import org.eclipse.milo.opcua.stack.core.security.FileBasedTrustListManager;
 import org.eclipse.milo.opcua.stack.core.security.SecurityPolicy;
 import org.eclipse.milo.opcua.stack.core.types.builtin.*;
 import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.*;
@@ -20,6 +24,17 @@ import org.eclipse.milo.opcua.stack.core.types.structured.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.PrivateKey;
+import java.security.Security;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
@@ -30,6 +45,12 @@ import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.
 public class ClientCommand {
 
     private static final Logger LOG = LoggerFactory.getLogger(ClientCommand.class);
+
+    static {
+        if (Security.getProvider(org.bouncycastle.jce.provider.BouncyCastleProvider.PROVIDER_NAME) == null) {
+            Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
+        }
+    }
 
     /** Thrown when no matching endpoint is found — maps to exit 3. */
     private static class TransportException extends Exception {
@@ -124,7 +145,7 @@ public class ClientCommand {
         long rto = requestTimeoutMs(args);
         long dto = disconnectTimeoutMs(args);
 
-        OpcUaClient client = connectClient(endpointUrl, cto, rto);
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
             List<NodeId> nodeIds = new ArrayList<>();
             for (String ns : nodeStrs) {
@@ -182,7 +203,7 @@ public class ClientCommand {
         long rto = requestTimeoutMs(args);
         long dto = disconnectTimeoutMs(args);
 
-        OpcUaClient client = connectClient(endpointUrl, cto, rto);
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
             NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
             Variant var   = buildWriteVariant(typeStr, valStr);
@@ -228,7 +249,7 @@ public class ClientCommand {
         long rto = requestTimeoutMs(args);
         long dto = disconnectTimeoutMs(args);
 
-        OpcUaClient client = connectClient(endpointUrl, cto, rto);
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
             NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
 
@@ -321,7 +342,7 @@ public class ClientCommand {
             }
         }
 
-        OpcUaClient client = connectClient(endpointUrl, cto, rto);
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
             NodeId objectNodeId = NodeIdParser.resolveWithClient(objectStr, client, rto);
             NodeId methodNodeId = NodeIdParser.resolveWithClient(methodStr, client, rto);
@@ -378,7 +399,7 @@ public class ClientCommand {
         int    nWanted = parseIntArg(args,   "--notifications", 5);
         long   toMs   = parseLongArg(args,   "--timeout-ms",   10000L);
 
-        OpcUaClient client = connectClient(endpointUrl, cto, rto);
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
             NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
 
@@ -459,24 +480,52 @@ public class ClientCommand {
 
     private static OpcUaClient connectClient(String endpointUrl, long connectTimeoutMs, long requestTimeoutMs)
             throws Exception {
+        return connectClient(endpointUrl, connectTimeoutMs, requestTimeoutMs,
+                             /* args */ null);
+    }
+
+    /**
+     * Connect to an OPC UA server, selecting an endpoint matching the requested
+     * security policy and mode.  When {@code args} contains --security-policy and
+     * --security-mode flags, they override the default None/None.
+     */
+    private static OpcUaClient connectClient(String endpointUrl,
+                                              long connectTimeoutMs,
+                                              long requestTimeoutMs,
+                                              String[] args) throws Exception {
+        String policyName = args != null ? findArg(args, "--security-policy") : null;
+        String modeName   = args != null ? findArg(args, "--security-mode")   : null;
+        String certFile   = args != null ? findArg(args, "--certificate")     : null;
+        String keyFile    = args != null ? findArg(args, "--private-key")     : null;
+        String username   = args != null ? findArg(args, "--username")        : null;
+        String password   = args != null ? findArg(args, "--password")        : null;
+        List<String> trustFiles = args != null ? findAllArgs(args, "--trust-list") : List.of();
+
+        if (policyName == null) policyName = "None";
+        if (modeName   == null) modeName   = "None";
+
+        SecurityPolicy       reqPolicy = toMiloSecurityPolicy(policyName);
+        MessageSecurityMode  reqMode   = toMiloSecurityMode(modeName);
+
         List<EndpointDescription> eps = DiscoveryClient.getEndpoints(endpointUrl)
                 .get(connectTimeoutMs, MILLISECONDS);
 
+        final SecurityPolicy  fPolicy = reqPolicy;
+        final MessageSecurityMode fMode = reqMode;
         EndpointDescription endpoint = eps.stream()
-                .filter(e -> SecurityPolicy.None.getUri().equals(e.getSecurityPolicyUri())
-                          && MessageSecurityMode.None.equals(e.getSecurityMode()))
+                .filter(e -> fPolicy.getUri().equals(e.getSecurityPolicyUri())
+                          && fMode.equals(e.getSecurityMode()))
                 .findFirst()
                 .orElse(null);
 
         if (endpoint == null) {
             throw new TransportException(
-                    "no endpoint with SecurityPolicy=None and MessageSecurityMode=None at " + endpointUrl);
+                    "no endpoint with SecurityPolicy=" + policyName +
+                    " and MessageSecurityMode=" + modeName + " at " + endpointUrl);
         }
 
-        // The server's advertised endpoint URL may not be reachable from inside a
-        // client container (e.g. it says "localhost" but that resolves to the client's
-        // own loopback). Replace it with the URL we actually used for discovery so
-        // the TCP connection goes to the right host.
+        // Replace the advertised URL with the discovery URL so the TCP connection
+        // reaches the right host (avoids container hostname resolution issues).
         endpoint = new EndpointDescription(
                 endpointUrl,
                 endpoint.getServer(),
@@ -487,14 +536,52 @@ public class ClientCommand {
                 endpoint.getTransportProfileUri(),
                 endpoint.getSecurityLevel());
 
-        OpcUaClientConfig config = OpcUaClientConfig.builder()
+        OpcUaClientConfigBuilder cfgBuilder = OpcUaClientConfig.builder()
                 .setEndpoint(endpoint)
-                .setApplicationUri("urn:otfabric:opcua-interop:milo-client")
+                .setApplicationUri("urn:otfabric:opcua-interop:client:milo")
                 .setApplicationName(LocalizedText.english("opcua-interop milo client"))
-                .setRequestTimeout(UInteger.valueOf(requestTimeoutMs))
-                .build();
+                .setRequestTimeout(UInteger.valueOf(requestTimeoutMs));
 
-        OpcUaClient client = OpcUaClient.create(config);
+        // Load client certificate and key when using a secure channel
+        if (certFile != null && keyFile != null && reqMode != MessageSecurityMode.None) {
+            try {
+                X509Certificate clientCert = loadCertificate(certFile);
+                PrivateKey      clientKey  = loadPrivateKey(keyFile);
+                cfgBuilder.setCertificate(clientCert)
+                          .setKeyPair(new KeyPair(clientCert.getPublicKey(), clientKey));
+
+                // Trust list for server certificate validation
+                if (!trustFiles.isEmpty()) {
+                    // Write trusted certs to a temp directory for FileBasedTrustListManager
+                    Path trustTempDir = Files.createTempDirectory("milo-client-trust-");
+                    Path trustedCertsDir = trustTempDir.resolve("trusted/certs");
+                    Files.createDirectories(trustedCertsDir);
+                    Files.createDirectories(trustTempDir.resolve("trusted/crl"));
+                    Files.createDirectories(trustTempDir.resolve("issuers/certs"));
+                    Files.createDirectories(trustTempDir.resolve("rejected/certs"));
+                    for (int i = 0; i < trustFiles.size(); i++) {
+                        byte[] certBytes = Files.readAllBytes(Paths.get(trustFiles.get(i)));
+                        Files.write(trustedCertsDir.resolve("trust-" + i + ".crt"), certBytes);
+                    }
+                    var tlm = FileBasedTrustListManager.createAndInitialize(trustTempDir);
+                    var quarantine = FileBasedCertificateQuarantine.create(
+                            trustTempDir.resolve("rejected/certs"));
+                    var validator = new DefaultServerCertificateValidator(tlm, quarantine);
+                    cfgBuilder.setCertificateValidator(validator);
+                }
+            } catch (Exception e) {
+                throw new TransportException("failed to load client certificate/key: " + e.getMessage());
+            }
+        }
+
+        // Set user identity token
+        if (username != null) {
+            cfgBuilder.setIdentityProvider(
+                    new org.eclipse.milo.opcua.sdk.client.identity.UsernameProvider(
+                            username, password != null ? password : ""));
+        }
+
+        OpcUaClient client = OpcUaClient.create(cfgBuilder.build());
         client.connect();
         return client;
     }
@@ -576,5 +663,95 @@ public class ClientCommand {
         if (id instanceof java.util.UUID)     return new NodeId(ns, (java.util.UUID) id);
         if (id instanceof ByteString)         return new NodeId(ns, (ByteString) id);
         return NodeId.NULL_VALUE;
+    }
+
+    // ── Security helpers (shared with ServerCommand logic) ────────────────
+
+    private static X509Certificate loadCertificate(String path) throws Exception {
+        byte[] raw = Files.readAllBytes(Paths.get(path));
+        String pem = new String(raw).trim();
+        if (pem.startsWith("-----")) {
+            String b64 = pem
+                    .replaceAll("-----BEGIN CERTIFICATE-----", "")
+                    .replaceAll("-----END CERTIFICATE-----", "")
+                    .replaceAll("\\s+", "");
+            raw = java.util.Base64.getDecoder().decode(b64);
+        }
+        return (X509Certificate) CertificateFactory.getInstance("X.509")
+                .generateCertificate(new ByteArrayInputStream(raw));
+    }
+
+    private static PrivateKey loadPrivateKey(String path) throws Exception {
+        byte[] raw = Files.readAllBytes(Paths.get(path));
+        String pem = new String(raw).trim();
+        if (pem.contains("BEGIN PRIVATE KEY")) {
+            String b64 = pem
+                    .replaceAll("-----BEGIN PRIVATE KEY-----", "")
+                    .replaceAll("-----END PRIVATE KEY-----", "")
+                    .replaceAll("\\s+", "");
+            return KeyFactory.getInstance("RSA").generatePrivate(
+                    new PKCS8EncodedKeySpec(java.util.Base64.getDecoder().decode(b64)));
+        }
+        if (pem.contains("BEGIN RSA PRIVATE KEY")) {
+            String b64 = pem
+                    .replaceAll("-----BEGIN RSA PRIVATE KEY-----", "")
+                    .replaceAll("-----END RSA PRIVATE KEY-----", "")
+                    .replaceAll("\\s+", "");
+            byte[] pkcs1 = java.util.Base64.getDecoder().decode(b64);
+            return KeyFactory.getInstance("RSA").generatePrivate(
+                    new PKCS8EncodedKeySpec(pkcs1ToPkcs8(pkcs1)));
+        }
+        return KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(raw));
+    }
+
+    private static byte[] pkcs1ToPkcs8(byte[] pkcs1) {
+        byte[] oid = new byte[]{ 0x06, 0x09,
+            0x2a, (byte)0x86, 0x48, (byte)0x86, (byte)0xf7, 0x0d, 0x01, 0x01, 0x01,
+            0x05, 0x00 };
+        byte[] alg     = encodeSeq(oid);
+        byte[] keyData = encodeTag((byte)0x04, pkcs1);
+        byte[] inner   = concat(new byte[]{0x02, 0x01, 0x00}, alg, keyData);
+        return encodeSeq(inner);
+    }
+
+    private static byte[] encodeSeq(byte[] c)          { return encodeTag((byte)0x30, c); }
+    private static byte[] encodeTag(byte tag, byte[] c) {
+        int len = c.length;
+        byte[] lb = len < 128 ? new byte[]{(byte)len}
+                  : len < 256 ? new byte[]{(byte)0x81, (byte)len}
+                  : new byte[]{(byte)0x82, (byte)(len >> 8), (byte)(len & 0xff)};
+        byte[] r = new byte[1 + lb.length + len];
+        r[0] = tag;
+        System.arraycopy(lb, 0, r, 1, lb.length);
+        System.arraycopy(c,  0, r, 1 + lb.length, len);
+        return r;
+    }
+
+    private static byte[] concat(byte[]... arrays) {
+        int total = 0; for (byte[] a : arrays) total += a.length;
+        byte[] r = new byte[total]; int pos = 0;
+        for (byte[] a : arrays) { System.arraycopy(a, 0, r, pos, a.length); pos += a.length; }
+        return r;
+    }
+
+    private static SecurityPolicy toMiloSecurityPolicy(String name) {
+        if (name == null) return SecurityPolicy.None;
+        switch (name) {
+            case "Basic128Rsa15":         return SecurityPolicy.Basic128Rsa15;
+            case "Basic256":              return SecurityPolicy.Basic256;
+            case "Basic256Sha256":        return SecurityPolicy.Basic256Sha256;
+            case "Aes128_Sha256_RsaOaep": return SecurityPolicy.Aes128_Sha256_RsaOaep;
+            case "Aes256_Sha256_RsaPss":  return SecurityPolicy.Aes256_Sha256_RsaPss;
+            default:                      return SecurityPolicy.None;
+        }
+    }
+
+    private static MessageSecurityMode toMiloSecurityMode(String name) {
+        if (name == null) return MessageSecurityMode.None;
+        switch (name) {
+            case "Sign":           return MessageSecurityMode.Sign;
+            case "SignAndEncrypt": return MessageSecurityMode.SignAndEncrypt;
+            default:               return MessageSecurityMode.None;
+        }
     }
 }

@@ -98,7 +98,6 @@
       "referenceType": "Organizes",
       "typeDefinition": "i=61"
     },
-
     {
       "nodeClass": "Variable",
       "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Scalar.Boolean",
@@ -108,7 +107,10 @@
       "referenceType": "Organizes",
       "dataType": "Boolean",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": true
     },
     {
@@ -120,7 +122,10 @@
       "referenceType": "Organizes",
       "dataType": "SByte",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": -100
     },
     {
@@ -132,7 +137,10 @@
       "referenceType": "Organizes",
       "dataType": "Byte",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": 200
     },
     {
@@ -144,7 +152,10 @@
       "referenceType": "Organizes",
       "dataType": "Int16",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": -12345
     },
     {
@@ -156,7 +167,10 @@
       "referenceType": "Organizes",
       "dataType": "UInt16",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": 54321
     },
     {
@@ -168,7 +182,10 @@
       "referenceType": "Organizes",
       "dataType": "Int32",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": -123456789
     },
     {
@@ -180,7 +197,10 @@
       "referenceType": "Organizes",
       "dataType": "UInt32",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": 3234567890
     },
     {
@@ -192,7 +212,10 @@
       "referenceType": "Organizes",
       "dataType": "Int64",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": "-1234567890123456789"
     },
     {
@@ -204,7 +227,10 @@
       "referenceType": "Organizes",
       "dataType": "UInt64",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": "12345678901234567890"
     },
     {
@@ -216,7 +242,10 @@
       "referenceType": "Organizes",
       "dataType": "Float",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": 12.5
     },
     {
@@ -228,7 +257,10 @@
       "referenceType": "Organizes",
       "dataType": "Double",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": -12345.6789
     },
     {
@@ -240,7 +272,10 @@
       "referenceType": "Organizes",
       "dataType": "String",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": "OPC UA \u2013 \u517c\u5bb9\u6027 \u2013 \u0394"
     },
     {
@@ -252,7 +287,10 @@
       "referenceType": "Organizes",
       "dataType": "DateTime",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": "2024-01-01T00:00:00Z"
     },
     {
@@ -264,7 +302,10 @@
       "referenceType": "Organizes",
       "dataType": "Guid",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": "72962b91-fa75-4ae6-8d28-b404dc7daf63"
     },
     {
@@ -276,7 +317,10 @@
       "referenceType": "Organizes",
       "dataType": "ByteString",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": "b3BjdWEtY29tcGF0"
     },
     {
@@ -288,7 +332,10 @@
       "referenceType": "Organizes",
       "dataType": "XmlElement",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": "<compat>test</compat>"
     },
     {
@@ -300,7 +347,10 @@
       "referenceType": "Organizes",
       "dataType": "NodeId",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": "i=85"
     },
     {
@@ -312,7 +362,10 @@
       "referenceType": "Organizes",
       "dataType": "QualifiedName",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": "0:Objects"
     },
     {
@@ -324,7 +377,10 @@
       "referenceType": "Organizes",
       "dataType": "LocalizedText",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": "en:OPC UA Compatibility"
     },
     {
@@ -336,10 +392,12 @@
       "referenceType": "Organizes",
       "dataType": "StatusCode",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": 0
     },
-
     {
       "nodeClass": "Variable",
       "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Array.Empty",
@@ -350,8 +408,13 @@
       "referenceType": "Organizes",
       "dataType": "Int32",
       "valueRank": 1,
-      "arrayDimensions": [0],
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "arrayDimensions": [
+        0
+      ],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": []
     },
     {
@@ -364,9 +427,16 @@
       "referenceType": "Organizes",
       "dataType": "Int32",
       "valueRank": 1,
-      "arrayDimensions": [0],
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
-      "initialValue": [42]
+      "arrayDimensions": [
+        0
+      ],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
+      "initialValue": [
+        42
+      ]
     },
     {
       "nodeClass": "Variable",
@@ -378,9 +448,21 @@
       "referenceType": "Organizes",
       "dataType": "Int32",
       "valueRank": 1,
-      "arrayDimensions": [0],
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
-      "initialValue": [0, 1, -1, 2147483647, -2147483648, -123456789]
+      "arrayDimensions": [
+        0
+      ],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
+      "initialValue": [
+        0,
+        1,
+        -1,
+        2147483647,
+        -2147483648,
+        -123456789
+      ]
     },
     {
       "nodeClass": "Variable",
@@ -391,9 +473,19 @@
       "referenceType": "Organizes",
       "dataType": "String",
       "valueRank": 1,
-      "arrayDimensions": [0],
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
-      "initialValue": ["alpha", "beta", "OPC UA \u2013 \u517c\u5bb9\u6027", ""]
+      "arrayDimensions": [
+        0
+      ],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
+      "initialValue": [
+        "alpha",
+        "beta",
+        "OPC UA \u2013 \u517c\u5bb9\u6027",
+        ""
+      ]
     },
     {
       "nodeClass": "Variable",
@@ -404,9 +496,17 @@
       "referenceType": "Organizes",
       "dataType": "ByteString",
       "valueRank": 1,
-      "arrayDimensions": [0],
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
-      "initialValue": ["AQID", "BAUG"]
+      "arrayDimensions": [
+        0
+      ],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
+      "initialValue": [
+        "AQID",
+        "BAUG"
+      ]
     },
     {
       "nodeClass": "Variable",
@@ -418,11 +518,23 @@
       "referenceType": "Organizes",
       "dataType": "Double",
       "valueRank": 2,
-      "arrayDimensions": [3, 2],
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
-      "initialValue": [1.1, 2.2, 3.3, 4.4, 5.5, 6.6]
+      "arrayDimensions": [
+        3,
+        2
+      ],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
+      "initialValue": [
+        1.1,
+        2.2,
+        3.3,
+        4.4,
+        5.5,
+        6.6
+      ]
     },
-
     {
       "nodeClass": "Variable",
       "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Access.ReadWrite",
@@ -432,7 +544,10 @@
       "referenceType": "Organizes",
       "dataType": "Int32",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead", "CurrentWrite"],
+      "accessLevel": [
+        "CurrentRead",
+        "CurrentWrite"
+      ],
       "initialValue": 0
     },
     {
@@ -444,7 +559,9 @@
       "referenceType": "Organizes",
       "dataType": "String",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead"],
+      "accessLevel": [
+        "CurrentRead"
+      ],
       "initialValue": "immutable"
     },
     {
@@ -457,10 +574,11 @@
       "referenceType": "Organizes",
       "dataType": "Int32",
       "valueRank": -1,
-      "accessLevel": ["CurrentWrite"],
+      "accessLevel": [
+        "CurrentWrite"
+      ],
       "initialValue": 0
     },
-
     {
       "nodeClass": "Variable",
       "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter",
@@ -471,7 +589,9 @@
       "referenceType": "Organizes",
       "dataType": "Int64",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead"],
+      "accessLevel": [
+        "CurrentRead"
+      ],
       "initialValue": "0"
     },
     {
@@ -484,7 +604,9 @@
       "referenceType": "Organizes",
       "dataType": "Boolean",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead"],
+      "accessLevel": [
+        "CurrentRead"
+      ],
       "initialValue": false
     },
     {
@@ -497,10 +619,11 @@
       "referenceType": "Organizes",
       "dataType": "Double",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead"],
+      "accessLevel": [
+        "CurrentRead"
+      ],
       "initialValue": 0.0
     },
-
     {
       "nodeClass": "Variable",
       "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=DataValues.GoodWithTimestamps",
@@ -511,7 +634,9 @@
       "referenceType": "Organizes",
       "dataType": "Double",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead"],
+      "accessLevel": [
+        "CurrentRead"
+      ],
       "initialValue": 3.14159
     },
     {
@@ -524,10 +649,11 @@
       "referenceType": "Organizes",
       "dataType": "Int32",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead"],
+      "accessLevel": [
+        "CurrentRead"
+      ],
       "initialValue": 0
     },
-
     {
       "nodeClass": "Method",
       "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Methods.Add",
@@ -681,7 +807,6 @@
       "inputArguments": [],
       "outputArguments": []
     },
-
     {
       "nodeClass": "Variable",
       "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Diagnostics.AdapterName",
@@ -692,7 +817,9 @@
       "referenceType": "Organizes",
       "dataType": "String",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead"],
+      "accessLevel": [
+        "CurrentRead"
+      ],
       "initialValue": ""
     },
     {
@@ -705,7 +832,9 @@
       "referenceType": "Organizes",
       "dataType": "String",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead"],
+      "accessLevel": [
+        "CurrentRead"
+      ],
       "initialValue": ""
     },
     {
@@ -718,7 +847,9 @@
       "referenceType": "Organizes",
       "dataType": "String",
       "valueRank": -1,
-      "accessLevel": ["CurrentRead"],
+      "accessLevel": [
+        "CurrentRead"
+      ],
       "initialValue": "baseline"
     }
   ],
@@ -749,8 +880,31 @@
     {
       "username": "test-user",
       "password": "test-password",
-      "roles": ["AuthenticatedUser"]
+      "roles": [
+        "AuthenticatedUser"
+      ]
     }
   ],
-  "securityProfiles": []
+  "securityProfiles": [
+    {
+      "securityPolicy": "None",
+      "securityMode": "None"
+    },
+    {
+      "securityPolicy": "Basic256Sha256",
+      "securityMode": "Sign"
+    },
+    {
+      "securityPolicy": "Basic256Sha256",
+      "securityMode": "SignAndEncrypt"
+    },
+    {
+      "securityPolicy": "Aes128_Sha256_RsaOaep",
+      "securityMode": "SignAndEncrypt"
+    },
+    {
+      "securityPolicy": "Aes256_Sha256_RsaPss",
+      "securityMode": "SignAndEncrypt"
+    }
+  ]
 }

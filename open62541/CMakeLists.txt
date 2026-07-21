@@ -16,10 +16,15 @@ if(NOT UA_AMALGAM_SOURCE)
 endif()
 
 # ---------------------------------------------------------------------------
-# cJSON
+# mbedTLS (required when open62541 is built with UA_ENABLE_ENCRYPTION=MBEDTLS)
 # ---------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CJSON REQUIRED libcjson)
+
+find_library(MBEDTLS_LIB    NAMES mbedtls    REQUIRED)
+find_library(MBEDX509_LIB   NAMES mbedx509   REQUIRED)
+find_library(MBEDCRYPTO_LIB NAMES mbedcrypto REQUIRED)
+find_path(MBEDTLS_INCLUDE_DIR NAMES mbedtls/ssl.h REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Adapter sources
@@ -39,10 +44,14 @@ target_include_directories(opcua-interop-open62541 PRIVATE
     "${UA_AMALGAM_INCLUDE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     ${CJSON_INCLUDE_DIRS}
+    "${MBEDTLS_INCLUDE_DIR}"
 )
 
 target_link_libraries(opcua-interop-open62541 PRIVATE
     ${CJSON_LIBRARIES}
+    "${MBEDTLS_LIB}"
+    "${MBEDX509_LIB}"
+    "${MBEDCRYPTO_LIB}"
     pthread
     m
 )

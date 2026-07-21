@@ -16,6 +16,8 @@ typedef struct {
 
     /* PKI and readiness */
     char *pkiDir;
+    char *certFile;     /* server application certificate (DER) */
+    char *keyFile;      /* server private key (DER) */
     char *readyFile;
     int   readyFileExplicit; /* 1 if --ready-file was given on the command line */
 } ServerArgs;

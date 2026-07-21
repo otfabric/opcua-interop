@@ -6,7 +6,7 @@
 
   <groupId>io.otfabric</groupId>
   <artifactId>opcua-interop-milo</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.1-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <name>opcua-interop-milo</name>

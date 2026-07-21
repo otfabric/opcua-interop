@@ -1,6 +1,7 @@
 #include "fixture.h"
 
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -231,6 +232,37 @@ Fixture *fixture_load(const char *path, char *errBuf, size_t errLen) {
             if (nd->nodeClass == NODE_VARIABLE) {
                 nd->dataType   = json_str_dup(el, "dataType");
                 nd->valueRank  = json_int(el, "valueRank", -1);
+                cJSON *ad = cJSON_GetObjectItemCaseSensitive(el, "arrayDimensions");
+                if (ad && cJSON_IsArray(ad)) {
+                    size_t adN = (size_t)cJSON_GetArraySize(ad);
+                    nd->arrayDimensions = calloc(adN, sizeof(uint32_t));
+                    if (!nd->arrayDimensions && adN > 0) {
+                        snprintf(errBuf, errLen,
+                                 "out of memory for arrayDimensions of '%s'",
+                                 nd->nodeId ? nd->nodeId : "(unknown)");
+                        cJSON_Delete(root);
+                        fixture_free(f);
+                        return NULL;
+                    }
+                    cJSON *dim;
+                    size_t di = 0;
+                    cJSON_ArrayForEach(dim, ad) {
+                        if (!cJSON_IsNumber(dim) ||
+                            dim->valuedouble < 0 ||
+                            dim->valuedouble > UINT32_MAX ||
+                            floor(dim->valuedouble) != dim->valuedouble) {
+                            snprintf(errBuf, errLen,
+                                     "invalid arrayDimensions entry at index %zu "
+                                     "for node '%s'",
+                                     di, nd->nodeId ? nd->nodeId : "(unknown)");
+                            cJSON_Delete(root);
+                            fixture_free(f);
+                            return NULL;
+                        }
+                        nd->arrayDimensions[di++] = (uint32_t)dim->valuedouble;
+                    }
+                    nd->arrayDimensionsSize = adN;
+                }
                 cJSON *al = cJSON_GetObjectItemCaseSensitive(el, "accessLevel");
                 nd->accessLevel = parse_access_level(al);
                 /* Keep a reference into the cJSON tree for initialValue; the
@@ -288,6 +320,50 @@ Fixture *fixture_load(const char *path, char *errBuf, size_t errLen) {
         }
     }
 
+    /* securityProfiles */
+    cJSON *sec_arr = cJSON_GetObjectItemCaseSensitive(root, "securityProfiles");
+    if (sec_arr && cJSON_IsArray(sec_arr)) {
+        size_t n = (size_t)cJSON_GetArraySize(sec_arr);
+        if (n > 0) {
+            f->securityProfiles = calloc(n, sizeof(SecurityProfile));
+            if (!f->securityProfiles) {
+                snprintf(errBuf, errLen, "out of memory");
+                cJSON_Delete(root);
+                fixture_free(f);
+                return NULL;
+            }
+            cJSON *el;
+            cJSON_ArrayForEach(el, sec_arr) {
+                SecurityProfile *sp = &f->securityProfiles[f->securityProfileCount];
+                sp->policy = json_str_dup(el, "securityPolicy");
+                sp->mode   = json_str_dup(el, "securityMode");
+                f->securityProfileCount++;
+            }
+        }
+    }
+
+    /* users */
+    cJSON *users_arr = cJSON_GetObjectItemCaseSensitive(root, "users");
+    if (users_arr && cJSON_IsArray(users_arr)) {
+        size_t n = (size_t)cJSON_GetArraySize(users_arr);
+        if (n > 0) {
+            f->users = calloc(n, sizeof(UserCredential));
+            if (!f->users) {
+                snprintf(errBuf, errLen, "out of memory");
+                cJSON_Delete(root);
+                fixture_free(f);
+                return NULL;
+            }
+            cJSON *el;
+            cJSON_ArrayForEach(el, users_arr) {
+                UserCredential *u = &f->users[f->userCount];
+                u->username = json_str_dup(el, "username");
+                u->password = json_str_dup(el, "password");
+                f->userCount++;
+            }
+        }
+    }
+
     cJSON_Delete(root);
     return f;
 }
@@ -319,6 +395,7 @@ void fixture_free(Fixture *f) {
         free(nd->referenceType);
         free(nd->typeDefinition);
         free(nd->dataType);
+        free(nd->arrayDimensions);
         cJSON_Delete(nd->initialValue);
         free(nd->methodBehavior);
         for (size_t j = 0; j < nd->inputArgCount; j++) {
@@ -340,6 +417,18 @@ void fixture_free(Fixture *f) {
         free(f->behaviors[i].target);
     }
     free(f->behaviors);
+
+    for (size_t i = 0; i < f->securityProfileCount; i++) {
+        free(f->securityProfiles[i].policy);
+        free(f->securityProfiles[i].mode);
+    }
+    free(f->securityProfiles);
+
+    for (size_t i = 0; i < f->userCount; i++) {
+        free(f->users[i].username);
+        free(f->users[i].password);
+    }
+    free(f->users);
 
     free(f);
 }

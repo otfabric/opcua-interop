@@ -35,19 +35,23 @@ make run-open62541
 
 # Milo server on port 4841
 make run-milo
-
-# Both servers
-docker compose up
 ```
 
 ### Run a reference client probe
 
 ```sh
-# Read a node from the open62541 server
+# Linux (--network host reaches the host's published port)
 docker run --rm --network host \
   ghcr.io/otfabric/opcua-interop-open62541:latest \
   client read \
   --endpoint opc.tcp://localhost:4840/opcua-interop \
+  --node 'nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32'
+
+# macOS / Docker Desktop (host.docker.internal instead of --network host)
+docker run --rm --add-host=host.docker.internal:host-gateway \
+  ghcr.io/otfabric/opcua-interop-open62541:latest \
+  client read \
+  --endpoint opc.tcp://host.docker.internal:4840/opcua-interop \
   --node 'nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32'
 
 # Browse from the Milo server
@@ -98,6 +102,7 @@ Each image supports the same command contract:
 |---|---|
 | `server` | Start an OPC UA server from a fixture |
 | `client` | Run composable client probe operations |
+| `test` | Run the adapter's built-in unit tests |
 | `validate-fixture` | Validate a fixture file against the schema |
 | `print-capabilities` | Print adapter capabilities as JSON |
 
@@ -111,24 +116,24 @@ Each image supports the same command contract:
 ### Server command
 
 ```sh
-/server \
-  --fixture /fixtures/baseline/fixture.json \
-  --endpoint opc.tcp://0.0.0.0:4840/opcua-interop \
-  --pki-dir /pki \
-  --ready-file /run/opcua-interop/ready
+server \
+  --fixture      /fixtures/baseline/fixture.json \
+  --bind-address 0.0.0.0 \
+  --bind-port    4840 \
+  --advertised-host localhost \
+  --endpoint-path /opcua-interop \
+  --ready-file   /run/opcua-interop/ready
 ```
-
-Environment variable equivalents: `OPCUA_FIXTURE`, `OPCUA_PORT`, `OPCUA_ENDPOINT_PATH`, `OPCUA_LOG_LEVEL`, `OPCUA_PKI_DIR`, `OPCUA_TRUST_MODE`.
 
 ### Client commands
 
 ```sh
-/client endpoints --endpoint opc.tcp://host:4840/opcua-interop
-/client read      --endpoint ... --node 'nsu=...;s=Scalar.Int32'
-/client write     --endpoint ... --node '...' --type Int32 --value 100
-/client browse    --endpoint ... --node 'i=85'
-/client call      --endpoint ... --object '...' --method '...' --input 'Int32:10' --input 'Int32:20'
-/client subscribe --endpoint ... --node '...' --notifications 5 --timeout 10s
+client endpoints --endpoint opc.tcp://host:4840/opcua-interop
+client read      --endpoint ... --node 'nsu=...;s=Scalar.Int32'
+client write     --endpoint ... --node '...' --type Int32 --value 100
+client browse    --endpoint ... --node 'i=85'
+client call      --endpoint ... --object '...' --method '...' --input 'Int32:10' --input 'Int32:20'
+client subscribe --endpoint ... --node '...' --notifications 5 --timeout-ms 10000
 ```
 
 All client operations write JSON to stdout and diagnostics to stderr.
@@ -162,22 +167,25 @@ Four test directions:
 ## Make targets
 
 ```sh
-make build               # Build both images
-make build-open62541     # Build open62541 image only
-make build-milo          # Build Milo image only
+make ci                  # Full local CI gate: validate → build → test → smoke → shutdown
+make image               # Build both images for host architecture
+make image-open62541     # Build open62541 image (host arch)
+make image-milo          # Build Milo image (host arch)
 make validate            # Validate fixtures and schema
 make validate-fixtures   # Validate all fixture files
-make smoke               # Run all smoke tests
+make test                # Run unit tests for both adapters
+make test-open62541      # Run open62541 unit tests
+make test-milo           # Run Milo unit tests
+make smoke               # Run all smoke tests (images must be built)
 make smoke-open62541     # Smoke test open62541 only
 make smoke-milo          # Smoke test Milo only
 make smoke-cross-stack   # Cross-stack interop self-check
-make run-open62541       # Start open62541 server (foreground)
-make run-milo            # Start Milo server (foreground)
+make shutdown            # Test graceful shutdown for both adapters
+make run-open62541       # Start open62541 server (foreground, port 4840)
+make run-milo            # Start Milo server (foreground, port 4841)
 make certs               # Generate test PKI
 make clean               # Remove build artifacts and containers
-make image-open62541     # Build and tag open62541 image
-make image-milo          # Build and tag Milo image
-make release VERSION=v0.1.0
+make release VERSION=v0.1.0  # Build and push multi-arch release images
 ```
 
 ## Versioning
@@ -192,8 +200,8 @@ make release VERSION=v0.1.0
 
 | Adapter | Language | Stack | Why included |
 |---|---|---|---|
-| open62541 | C | open62541 ≥ 1.3 | Native/embedded diversity, OPC UA Binary, certified example-server history |
-| Eclipse Milo | Java | Eclipse Milo ≥ 0.6 | JVM/enterprise diversity, independent serialization and security code paths |
+| open62541 | C | open62541 v1.5.5 | Native/embedded diversity, OPC UA Binary, certified example-server history |
+| Eclipse Milo | Java | Eclipse Milo v1.1.5 | JVM/enterprise diversity, independent serialization and security code paths |
 
 ## Security
 

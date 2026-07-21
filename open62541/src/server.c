@@ -61,6 +61,10 @@ int server_parse_args(int argc, char **argv, ServerArgs *out,
             free(out->endpointPath);   out->endpointPath   = strdup(argv[++i]);
         } else if (strcmp(argv[i], "--pki-dir") == 0 && i+1 < argc) {
             free(out->pkiDir);         out->pkiDir         = strdup(argv[++i]);
+        } else if (strcmp(argv[i], "--certificate") == 0 && i+1 < argc) {
+            free(out->certFile);       out->certFile       = strdup(argv[++i]);
+        } else if (strcmp(argv[i], "--private-key") == 0 && i+1 < argc) {
+            free(out->keyFile);        out->keyFile        = strdup(argv[++i]);
         } else if (strcmp(argv[i], "--ready-file") == 0 && i+1 < argc) {
             free(out->readyFile);      out->readyFile      = strdup(argv[++i]);
             out->readyFileExplicit = 1;
@@ -349,7 +353,7 @@ static UA_Variant build_variant_scalar(const cJSON *jv, const char *dataType) {
         UA_Int32 v = (UA_Int32)jv->valueint;
         UA_Variant_setScalarCopy(&var, &v, &UA_TYPES[UA_TYPES_INT32]);
     } else if (strcmp(dataType, "UInt32") == 0) {
-        UA_UInt32 v = (UA_UInt32)(uint32_t)jv->valueint;
+        UA_UInt32 v = (UA_UInt32)(uint32_t)jv->valuedouble;
         UA_Variant_setScalarCopy(&var, &v, &UA_TYPES[UA_TYPES_UINT32]);
     } else if (strcmp(dataType, "Int64") == 0) {
         UA_Int64 v;
@@ -367,11 +371,15 @@ static UA_Variant build_variant_scalar(const cJSON *jv, const char *dataType) {
     } else if (strcmp(dataType, "Double") == 0) {
         UA_Double v = jv->valuedouble;
         UA_Variant_setScalarCopy(&var, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
-    } else if (strcmp(dataType, "String") == 0 ||
-               strcmp(dataType, "XmlElement") == 0) {
+    } else if (strcmp(dataType, "String") == 0) {
         const char *s = cJSON_IsString(jv) ? jv->valuestring : "";
         UA_String v   = UA_STRING_ALLOC(s);
         UA_Variant_setScalarCopy(&var, &v, &UA_TYPES[UA_TYPES_STRING]);
+        UA_String_clear(&v);
+    } else if (strcmp(dataType, "XmlElement") == 0) {
+        const char *s = cJSON_IsString(jv) ? jv->valuestring : "";
+        UA_XmlElement v = UA_STRING_ALLOC(s);
+        UA_Variant_setScalarCopy(&var, &v, &UA_TYPES[UA_TYPES_XMLELEMENT]);
         UA_String_clear(&v);
     } else if (strcmp(dataType, "DateTime") == 0) {
         UA_DateTime v = parse_datetime(cJSON_IsString(jv) ? jv->valuestring : "");
@@ -407,7 +415,7 @@ static UA_Variant build_variant_scalar(const cJSON *jv, const char *dataType) {
         UA_Variant_setScalarCopy(&var, &v, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
         UA_LocalizedText_clear(&v);
     } else if (strcmp(dataType, "StatusCode") == 0) {
-        UA_StatusCode v = (UA_StatusCode)(uint32_t)jv->valueint;
+        UA_StatusCode v = (UA_StatusCode)(uint32_t)jv->valuedouble;
         UA_Variant_setScalarCopy(&var, &v, &UA_TYPES[UA_TYPES_STATUSCODE]);
     }
 
@@ -710,6 +718,88 @@ static int write_ready_file_atomic(const char *path, int explicit,
 }
 
 /* -------------------------------------------------------------------------
+ * Security helpers
+ * ---------------------------------------------------------------------- */
+
+/* Load a binary (DER) file into a UA_ByteString.  Returns UA_BYTESTRING_NULL
+ * on any error. */
+static UA_ByteString load_cert_file(const char *path) {
+    UA_ByteString bs = UA_BYTESTRING_NULL;
+    if (!path || !*path) return bs;
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "[open62541] warn: cannot open %s: %s\n", path, strerror(errno));
+        return bs;
+    }
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz <= 0) { fclose(f); return bs; }
+    bs.data = (UA_Byte *)UA_malloc((size_t)sz);
+    if (!bs.data) { fclose(f); return bs; }
+    bs.length = (size_t)fread(bs.data, 1, (size_t)sz, f);
+    fclose(f);
+    if (bs.length != (size_t)sz) {
+        UA_ByteString_clear(&bs);
+        return UA_BYTESTRING_NULL;
+    }
+    return bs;
+}
+
+#ifdef UA_ENABLE_ENCRYPTION
+
+#include <dirent.h>
+
+/* Load all *.crt / *.der files from a directory as DER byte-strings.
+ * Returns a heap-allocated array via *out; caller must UA_ByteString_clear
+ * each element and then free the array.  *count is set on success. */
+static UA_ByteString *load_trust_dir(const char *dir_path, size_t *count) {
+    *count = 0;
+    if (!dir_path || !*dir_path) return NULL;
+
+    DIR *d = opendir(dir_path);
+    if (!d) return NULL;
+
+    /* Two-pass: count then fill */
+    size_t cap = 0;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        const char *n = ent->d_name;
+        size_t l = strlen(n);
+        if (l > 4 && (strcmp(n + l - 4, ".crt") == 0 ||
+                       strcmp(n + l - 4, ".der") == 0))
+            cap++;
+    }
+
+    if (cap == 0) { closedir(d); return NULL; }
+
+    UA_ByteString *arr = (UA_ByteString *)calloc(cap, sizeof(UA_ByteString));
+    if (!arr) { closedir(d); return NULL; }
+
+    rewinddir(d);
+    size_t n_filled = 0;
+    char path_buf[1024];
+    while ((ent = readdir(d)) != NULL && n_filled < cap) {
+        const char *nm = ent->d_name;
+        size_t l = strlen(nm);
+        if (l > 4 && (strcmp(nm + l - 4, ".crt") == 0 ||
+                       strcmp(nm + l - 4, ".der") == 0)) {
+            snprintf(path_buf, sizeof(path_buf), "%s/%s", dir_path, nm);
+            arr[n_filled] = load_cert_file(path_buf);
+            if (arr[n_filled].length > 0) {
+                fprintf(stderr, "[open62541] info: trust: loaded %s\n", path_buf);
+                n_filled++;
+            }
+        }
+    }
+    closedir(d);
+    *count = n_filled;
+    return arr;
+}
+
+#endif /* UA_ENABLE_ENCRYPTION */
+
+/* -------------------------------------------------------------------------
  * server_run
  * ---------------------------------------------------------------------- */
 
@@ -754,6 +844,64 @@ int server_run(const ServerArgs *args) {
     UA_ServerConfig cfg_val;
     memset(&cfg_val, 0, sizeof(UA_ServerConfig));
 
+    /* Determine whether to enable security (cert + key required) */
+    UA_Boolean use_security = (args->certFile && *args->certFile &&
+                                args->keyFile  && *args->keyFile);
+
+#ifdef UA_ENABLE_ENCRYPTION
+    if (use_security) {
+        UA_ByteString cert = load_cert_file(args->certFile);
+        UA_ByteString key  = load_cert_file(args->keyFile);
+        if (cert.length == 0 || key.length == 0) {
+            fprintf(stderr, "[open62541] error: failed to load certificate or private key\n");
+            UA_ByteString_clear(&cert);
+            UA_ByteString_clear(&key);
+            fixture_free(fixture);
+            return 1;
+        }
+
+        /* Load trust list from pki_dir/trusted/certs/ */
+        char trust_dir[1024];
+        const char *pki_dir = (args->pkiDir && *args->pkiDir)
+                               ? args->pkiDir : "/run/opcua-interop/pki";
+        snprintf(trust_dir, sizeof(trust_dir), "%s/trusted/certs", pki_dir);
+        size_t trust_count = 0;
+        UA_ByteString *trust_list = load_trust_dir(trust_dir, &trust_count);
+
+        UA_StatusCode cfgSc = UA_ServerConfig_setDefaultWithSecurityPolicies(
+            &cfg_val, (UA_UInt16)bind_port,
+            &cert, &key,
+            trust_list, trust_count,
+            NULL, 0,
+            NULL, 0);
+
+        UA_ByteString_clear(&cert);
+        UA_ByteString_clear(&key);
+        for (size_t i = 0; i < trust_count; i++)
+            UA_ByteString_clear(&trust_list[i]);
+        free(trust_list);
+
+        if (cfgSc != UA_STATUSCODE_GOOD) {
+            fprintf(stderr, "[open62541] error: UA_ServerConfig_setDefaultWithSecurityPolicies: 0x%08" PRIx32 "\n",
+                    (uint32_t)cfgSc);
+            fixture_free(fixture);
+            return 1;
+        }
+        fprintf(stderr, "[open62541] info: security enabled from %s\n", args->certFile);
+    } else {
+        UA_StatusCode cfgSc = UA_ServerConfig_setDefault(&cfg_val);
+        if (cfgSc != UA_STATUSCODE_GOOD) {
+            fprintf(stderr, "[open62541] error: UA_ServerConfig_setDefault: 0x%08" PRIx32 "\n",
+                    (uint32_t)cfgSc);
+            fixture_free(fixture);
+            return 1;
+        }
+    }
+#else
+    if (use_security) {
+        fprintf(stderr, "[open62541] warn: --certificate/--private-key supplied but binary was "
+                        "built without UA_ENABLE_ENCRYPTION; ignoring security config\n");
+    }
     /* UA_ServerConfig_setDefault sets up the EventLoop, security policies, etc. */
     UA_StatusCode cfgSc = UA_ServerConfig_setDefault(&cfg_val);
     if (cfgSc != UA_STATUSCODE_GOOD) {
@@ -762,6 +910,7 @@ int server_run(const ServerArgs *args) {
         fixture_free(fixture);
         return 1;
     }
+#endif /* UA_ENABLE_ENCRYPTION */
 
     /* Replace serverUrls now — before the server is created and the EventLoop
      * registers anything.  setDefault leaves a "opc.tcp://:4840" entry; we
@@ -829,6 +978,42 @@ int server_run(const ServerArgs *args) {
             UA_LOCALIZEDTEXT_ALLOC("en", fixture->applicationName);
     }
 
+    /* Configure username/password access control when fixture defines users.
+     * UA_AccessControl_default always enables anonymous; we keep it since
+     * None/None endpoint must also be accessible. */
+    if (fixture->userCount > 0) {
+        UA_UsernamePasswordLogin *logins =
+            (UA_UsernamePasswordLogin *)calloc(fixture->userCount,
+                                               sizeof(UA_UsernamePasswordLogin));
+        if (!logins) {
+            fprintf(stderr, "[open62541] error: out of memory for user logins\n");
+            UA_Server_delete(server);
+            fixture_free(fixture);
+            return 1;
+        }
+        for (size_t i = 0; i < fixture->userCount; i++) {
+            logins[i].username = UA_STRING_ALLOC(fixture->users[i].username
+                                                  ? fixture->users[i].username : "");
+            logins[i].password = UA_STRING_ALLOC(fixture->users[i].password
+                                                  ? fixture->users[i].password : "");
+        }
+        UA_StatusCode acSc = UA_AccessControl_default(
+            cfg, UA_TRUE /* allowAnonymous */, NULL,
+            fixture->userCount, logins);
+        for (size_t i = 0; i < fixture->userCount; i++) {
+            UA_String_clear(&logins[i].username);
+            UA_String_clear(&logins[i].password);
+        }
+        free(logins);
+        if (acSc != UA_STATUSCODE_GOOD) {
+            fprintf(stderr, "[open62541] warn: UA_AccessControl_default: 0x%08" PRIx32 "\n",
+                    (uint32_t)acSc);
+        } else {
+            fprintf(stderr, "[open62541] info: username/password auth enabled (%zu user(s))\n",
+                    fixture->userCount);
+        }
+    }
+
     /* Register namespaces */
     UA_UInt16 *nsMap = calloc(fixture->namespaceCount + 1, sizeof(UA_UInt16));
     if (!nsMap) {
@@ -879,9 +1064,27 @@ int server_run(const ServerArgs *args) {
                 attr.accessLevel  = nd->accessLevel;
                 attr.userAccessLevel = nd->accessLevel;
 
+                if (nd->arrayDimensions && nd->arrayDimensionsSize > 0) {
+                    attr.arrayDimensions     = nd->arrayDimensions;
+                    attr.arrayDimensionsSize = nd->arrayDimensionsSize;
+                }
+
                 if (nd->initialValue) {
                     attr.value = build_variant(nd->initialValue, nd->dataType,
                                                nd->valueRank);
+                    /* For array/matrix nodes open62541 validates that the value's
+                     * own arrayDimensions match the node attribute's dimensions. */
+                    if (nd->arrayDimensions && nd->arrayDimensionsSize > 0
+                            && !UA_Variant_isEmpty(&attr.value)) {
+                        attr.value.arrayDimensions =
+                            (UA_UInt32 *)UA_Array_new(nd->arrayDimensionsSize,
+                                                      &UA_TYPES[UA_TYPES_UINT32]);
+                        if (attr.value.arrayDimensions) {
+                            memcpy(attr.value.arrayDimensions, nd->arrayDimensions,
+                                   nd->arrayDimensionsSize * sizeof(UA_UInt32));
+                            attr.value.arrayDimensionsSize = nd->arrayDimensionsSize;
+                        }
+                    }
                 }
 
                 UA_NodeId typeDefId = nd->typeDefinition

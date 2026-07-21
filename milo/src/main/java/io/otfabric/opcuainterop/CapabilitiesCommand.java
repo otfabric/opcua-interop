@@ -10,15 +10,25 @@ public class CapabilitiesCommand {
     public static void run() throws Exception {
         Map<String, Object> adapter = new LinkedHashMap<>();
         adapter.put("name",    "milo");
-        adapter.put("version", "0.1.0");
+        adapter.put("version", "0.1.1");
 
         Map<String, Object> stack = new LinkedHashMap<>();
         stack.put("name",    "eclipse-milo");
         stack.put("version", getMiloVersion());
 
-        Map<String, Object> secProfile = new LinkedHashMap<>();
-        secProfile.put("policy", "None");
-        secProfile.put("mode",   "None");
+        List<Map<String, String>> secProfiles = new ArrayList<>();
+        for (String[] entry : new String[][]{
+                {"None",                  "None"},
+                {"Basic256Sha256",        "Sign"},
+                {"Basic256Sha256",        "SignAndEncrypt"},
+                {"Aes128_Sha256_RsaOaep", "SignAndEncrypt"},
+                {"Aes256_Sha256_RsaPss",  "SignAndEncrypt"},
+        }) {
+            Map<String, String> sp = new LinkedHashMap<>();
+            sp.put("policy", entry[0]);
+            sp.put("mode",   entry[1]);
+            secProfiles.add(sp);
+        }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("schemaVersion",         "1.0");
@@ -32,8 +42,8 @@ public class CapabilitiesCommand {
         out.put("serverServices",        Arrays.asList(
                 "GetEndpoints", "Browse", "Read", "Write", "Call",
                 "CreateSubscription", "CreateMonitoredItems", "Publish"));
-        out.put("securityProfiles",      Collections.singletonList(secProfile));
-        out.put("userTokenTypes",        Collections.singletonList("Anonymous"));
+        out.put("securityProfiles",      secProfiles);
+        out.put("userTokenTypes",        Arrays.asList("Anonymous", "UserName"));
 
         System.out.println(new ObjectMapper().writeValueAsString(out));
     }

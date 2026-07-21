@@ -68,6 +68,19 @@ gen_cert() {
         2>/dev/null
 
     rm -f "${dir}/cert.csr"
+
+    # PKCS12 bundle for use with Java keystores (Milo KeyStoreCertificateStore)
+    # Fixed password for disposable interoperability-test identities only.
+    # Never reuse this password for external or production material.
+    # The .pfx file is a debug/inspection artifact; adapters load PEM directly.
+    openssl pkcs12 -export \
+        -in    "${dir}/cert.crt" \
+        -inkey "${dir}/cert.key" \
+        -name  "1" \
+        -passout pass:password \
+        -out   "${dir}/cert.pfx" \
+        2>/dev/null
+
     log "Cert: ${cn} (${app_uri})"
 }
 

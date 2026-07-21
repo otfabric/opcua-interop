@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       cmake \
       git \
+      libmbedtls-dev \
       python3 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,6 +33,7 @@ RUN cmake .. \
       -DUA_MULTITHREADING=0 \
       -DUA_BUILD_EXAMPLES=OFF \
       -DUA_BUILD_UNIT_TESTS=OFF \
+      -DUA_ENABLE_ENCRYPTION=MBEDTLS \
     && cmake --build . -- -j"$(nproc)"
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       cmake \
       libcjson-dev \
+      libmbedtls-dev \
       pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
@@ -70,6 +73,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       bash \
       ca-certificates \
       libcjson1 \
+      libmbedtls14 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home --home-dir /home/opcua \
          --shell /usr/sbin/nologin opcua

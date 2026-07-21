@@ -35,22 +35,21 @@ Deliverables:
 - `open62541/src/` — fixture parser, server, client, readiness, signal handling, output
 - `open62541/tests/` — fixture parser unit tests
 
-Status: complete. Client commands (endpoints, read, write, browse) implemented.
-Contract hardening deferred to Phase 4.
+Status: complete. All six client commands (endpoints, read, write, browse, call, subscribe)
+implemented. Contract hardening deferred to Phase 4.
 
 ---
 
 ## Phase 3 — Eclipse Milo adapter foundation ✓
 
 Deliverables:
-- `milo/Dockerfile` (multi-stage, JDK 21 + Maven)
+- `milo/Dockerfile` (multi-stage, JDK 25 + Maven 3.9)
 - `milo/pom.xml`
 - `milo/src/main/java/` — fixture loader, namespace, server, client, shutdown, readiness
 - `milo/src/test/java/` — fixture loading unit tests (8 tests, all pass)
 
-Status: complete. Methods and dynamic behaviors implemented ahead of original plan.
-Client commands (endpoints, read, write, browse) implemented.
-Contract hardening deferred to Phase 4.
+Status: complete. All six client commands (endpoints, read, write, browse, call, subscribe)
+implemented. Contract hardening deferred to Phase 4.
 
 ---
 

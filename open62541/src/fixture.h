@@ -38,10 +38,12 @@ typedef struct {
     char     *typeDefinition;
 
     /* Variable fields */
-    char    *dataType;
-    int      valueRank;
-    uint8_t  accessLevel;
-    cJSON   *initialValue;
+    char      *dataType;
+    int        valueRank;
+    uint32_t  *arrayDimensions;
+    size_t     arrayDimensionsSize;
+    uint8_t    accessLevel;
+    cJSON     *initialValue;
 
     /* Method fields */
     char     *methodBehavior;
@@ -65,6 +67,16 @@ typedef struct {
     char *alias;
     char *uri;
 } Namespace;
+
+typedef struct {
+    char *policy;   /* e.g. "None", "Basic256Sha256", "Aes128_Sha256_RsaOaep" */
+    char *mode;     /* "None", "Sign", "SignAndEncrypt" */
+} SecurityProfile;
+
+typedef struct {
+    char *username;
+    char *password;
+} UserCredential;
 
 typedef struct {
     char *schemaVersion;
@@ -91,6 +103,14 @@ typedef struct {
     /* behaviors */
     Behavior *behaviors;
     size_t    behaviorCount;
+
+    /* security */
+    SecurityProfile *securityProfiles;
+    size_t           securityProfileCount;
+
+    /* user credentials */
+    UserCredential *users;
+    size_t          userCount;
 } Fixture;
 
 /*
