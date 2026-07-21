@@ -466,7 +466,7 @@ static UA_Client *resolve_node_ids(const char **nodes, int n,
                     }
                     output_begin("open62541", op);
                     output_success(0);
-                    output_service_result(UA_STATUSCODE_BADNAMESPACEURIINVALID);
+                    output_service_result(UA_STATUSCODE_BADSERVERURIINVALID);
                     output_error("input", msg);
                     output_end();
                 } else {
@@ -779,7 +779,7 @@ static int cmd_write(int argc, char **argv) {
             }
             output_begin("open62541", "write");
             output_success(0);
-            output_service_result(UA_STATUSCODE_BADNAMESPACEURIINVALID);
+            output_service_result(UA_STATUSCODE_BADSERVERURIINVALID);
             output_error("input", msg);
             output_end();
             return 2;
@@ -868,7 +868,7 @@ static int cmd_browse(int argc, char **argv) {
             }
             output_begin("open62541", "browse");
             output_success(0);
-            output_service_result(UA_STATUSCODE_BADNAMESPACEURIINVALID);
+            output_service_result(UA_STATUSCODE_BADSERVERURIINVALID);
             output_error("input", msg);
             output_end();
             return 2;
@@ -1057,7 +1057,7 @@ static int cmd_call(int argc, char **argv) {
         UA_Client_delete(client);
         output_begin("open62541", "call");
         output_success(0);
-        output_service_result(UA_STATUSCODE_BADNAMESPACEURIINVALID);
+        output_service_result(UA_STATUSCODE_BADSERVERURIINVALID);
         output_error("input", resolve_msg);
         output_end();
         return 2;
@@ -1223,7 +1223,7 @@ static int cmd_subscribe(int argc, char **argv) {
             snprintf(msg, sizeof(msg), "unknown namespace URI in '%s'", nodeStr);
             output_begin("open62541", "subscribe");
             output_success(0);
-            output_service_result(UA_STATUSCODE_BADNAMESPACEURIINVALID);
+            output_service_result(UA_STATUSCODE_BADSERVERURIINVALID);
             output_error("input", msg);
             output_end();
             return 2;

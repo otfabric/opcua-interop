@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "server.h"
 #include "fixture.h"
 
@@ -9,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <open62541.h>
@@ -768,11 +771,7 @@ int server_run(const ServerArgs *args) {
         UA_String_clear(&cfg->applicationDescription.discoveryUrls[i]);
         cfg->applicationDescription.discoveryUrls[i] = UA_STRING_ALLOC(adv_url);
     }
-    /* serverUrls controls what open62541 binds/advertises in later versions */
-    for (size_t i = 0; i < cfg->serverUrlsSize; i++) {
-        UA_String_clear(&cfg->serverUrls[i]);
-        cfg->serverUrls[i] = UA_STRING_ALLOC(adv_url);
-    }
+    /* serverUrls (v1.3.x uses endpointUrl / discoveryUrls only) */
 
     /* Application description */
     if (fixture->applicationUri) {
