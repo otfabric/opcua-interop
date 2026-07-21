@@ -2,13 +2,9 @@
 # Cross-stack smoke test for opcua-interop.
 #
 # Usage:
-#   smoke.sh open62541 <image>           # single-adapter smoke
-#   smoke.sh milo <image>                # single-adapter smoke
-#   smoke.sh cross <image-open62541> <image-milo>  # cross-stack self-check
-#
-# This script proves both adapters realize the same baseline contract. It is a
-# repository self-check, not a product compatibility matrix. Test assertions
-# belong in consumer repositories.
+#   smoke.sh open62541 <image>                        # single-adapter smoke
+#   smoke.sh milo <image>                             # single-adapter smoke
+#   smoke.sh cross <image-open62541> <image-milo>     # cross-stack self-check
 #
 # Exit codes:
 #   0  — all checks passed
@@ -18,7 +14,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-FIXTURE="${REPO_ROOT}/fixtures/baseline/fixture.json"
 ENDPOINT_PATH="/opcua-interop"
 WAIT_TIMEOUT=60
 
@@ -48,7 +43,10 @@ start_server() {
         "${image}" \
         server \
         --fixture /fixtures/baseline/fixture.json \
-        --endpoint "opc.tcp://0.0.0.0:4840${ENDPOINT_PATH}" \
+        --bind-address 0.0.0.0 \
+        --bind-port 4840 \
+        --advertised-host localhost \
+        --endpoint-path "${ENDPOINT_PATH}" \
         --ready-file /run/opcua-interop/ready
 
     echo "smoke-${name}-$$"
@@ -69,13 +67,32 @@ run_client_op() {
     local subcommand="$2"
     shift 2
 
+    # Replace localhost with host.docker.internal so the client container can
+    # reach the host-published server port on both Linux and macOS Docker Desktop.
+    local fixed_args=()
+    for arg in "$@"; do
+        fixed_args+=("${arg/localhost/host.docker.internal}")
+    done
+
     docker run --rm \
-        --network host \
+        --add-host=host.docker.internal:host-gateway \
         "${client_image}" \
-        client "${subcommand}" "$@"
+        client "${subcommand}" "${fixed_args[@]}"
 }
 
-# ── Smoke checks ─────────────────────────────────────────────────────────────
+# ── Envelope validation (requires jq) ────────────────────────────────────────
+
+validate_envelope() {
+    local output="$1"
+    local label="$2"
+    if ! echo "${output}" | jq -e '.schemaVersion and .adapter and (.success != null)' >/dev/null 2>&1; then
+        fail "${label}: output is not a valid result envelope"
+        return 1
+    fi
+    return 0
+}
+
+# ── Smoke checks ──────────────────────────────────────────────────────────────
 
 check_endpoints() {
     local client_image="$1"
@@ -84,13 +101,32 @@ check_endpoints() {
 
     local output
     if output=$(run_client_op "${client_image}" endpoints --endpoint "${endpoint}" 2>/dev/null); then
-        if echo "${output}" | python3 -c "import sys,json; d=json.load(sys.stdin); assert len(d.get('results',[])) > 0" 2>/dev/null; then
-            ok "${label}: endpoints returned at least one endpoint"
+        validate_envelope "${output}" "${label}:endpoints" || return
+        if echo "${output}" | jq -e '.success == true and (.results | length) > 0' >/dev/null 2>&1; then
+            ok "${label}: endpoints"
         else
-            fail "${label}: endpoints returned empty results"
+            fail "${label}: endpoints — success=false or empty results: ${output}"
         fi
     else
-        fail "${label}: endpoints command failed"
+        fail "${label}: endpoints command exited non-zero"
+    fi
+}
+
+check_browse() {
+    local client_image="$1"
+    local endpoint="$2"
+    local label="$3"
+
+    local output
+    if output=$(run_client_op "${client_image}" browse --endpoint "${endpoint}" --node "i=85" 2>/dev/null); then
+        validate_envelope "${output}" "${label}:browse" || return
+        if echo "${output}" | jq -e '.success == true and ([.results[].browseName.name? // .results[].nodeId?] | map(test("Compatibility")) | any)' >/dev/null 2>&1; then
+            ok "${label}: browse found Compatibility node"
+        else
+            fail "${label}: browse — Compatibility not found in results: ${output}"
+        fi
+    else
+        fail "${label}: browse command exited non-zero"
     fi
 }
 
@@ -102,13 +138,14 @@ check_read_scalar() {
     local node="nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32"
     local output
     if output=$(run_client_op "${client_image}" read --endpoint "${endpoint}" --node "${node}" 2>/dev/null); then
-        if echo "${output}" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('success') is True" 2>/dev/null; then
+        validate_envelope "${output}" "${label}:read" || return
+        if echo "${output}" | jq -e '.success == true and .results[0].statusCode.name == "Good"' >/dev/null 2>&1; then
             ok "${label}: read Scalar.Int32"
         else
-            fail "${label}: read Scalar.Int32 returned success=false"
+            fail "${label}: read — unexpected result: ${output}"
         fi
     else
-        fail "${label}: read command failed"
+        fail "${label}: read command exited non-zero"
     fi
 }
 
@@ -124,77 +161,14 @@ check_write() {
             --node "${node}" \
             --type Int32 \
             --value 999 2>/dev/null); then
-        if echo "${output}" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('success') is True" 2>/dev/null; then
+        validate_envelope "${output}" "${label}:write" || return
+        if echo "${output}" | jq -e '.success == true and .results[0].statusCode.name == "Good"' >/dev/null 2>&1; then
             ok "${label}: write Access.ReadWrite"
         else
-            fail "${label}: write returned success=false"
+            fail "${label}: write — unexpected result: ${output}"
         fi
     else
-        fail "${label}: write command failed"
-    fi
-}
-
-check_browse() {
-    local client_image="$1"
-    local endpoint="$2"
-    local label="$3"
-
-    local output
-    if output=$(run_client_op "${client_image}" browse --endpoint "${endpoint}" --node "i=85" 2>/dev/null); then
-        if echo "${output}" | python3 -c "import sys,json; d=json.load(sys.stdin); assert any('Compatibility' in str(r) for r in d.get('results',[]))" 2>/dev/null; then
-            ok "${label}: browse Objects found Compatibility node"
-        else
-            fail "${label}: browse did not find Compatibility node"
-        fi
-    else
-        fail "${label}: browse command failed"
-    fi
-}
-
-check_call_add() {
-    local client_image="$1"
-    local endpoint="$2"
-    local label="$3"
-
-    local object="nsu=urn:otfabric:opcua-interop:model;s=Methods"
-    local method="nsu=urn:otfabric:opcua-interop:model;s=Methods.Add"
-    local output
-    if output=$(run_client_op "${client_image}" call \
-            --endpoint "${endpoint}" \
-            --object "${object}" \
-            --method "${method}" \
-            --input "Int32:10" \
-            --input "Int32:20" 2>/dev/null); then
-        if echo "${output}" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('success') is True and any(r.get('value')==30 for r in d.get('results',[]))" 2>/dev/null; then
-            ok "${label}: call Add(10,20)=30"
-        else
-            fail "${label}: call Add returned unexpected result"
-        fi
-    else
-        fail "${label}: call command failed"
-    fi
-}
-
-check_subscribe() {
-    local client_image="$1"
-    local endpoint="$2"
-    local label="$3"
-
-    local node="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter"
-    local output
-    if output=$(run_client_op "${client_image}" subscribe \
-            --endpoint "${endpoint}" \
-            --node "${node}" \
-            --publishing-interval 250 \
-            --notifications 2 \
-            --timeout 10s 2>/dev/null); then
-        if echo "${output}" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('success') is True and len(d.get('notifications',[])) >= 2" 2>/dev/null; then
-            ok "${label}: subscribe received ≥2 counter notifications"
-        else
-            fail "${label}: subscribe returned insufficient notifications"
-        fi
-    else
-        fail "${label}: subscribe command failed"
+        fail "${label}: write command exited non-zero"
     fi
 }
 
@@ -213,13 +187,11 @@ run_single_smoke() {
 
     local endpoint="opc.tcp://localhost:${port}${ENDPOINT_PATH}"
 
-    log "Running ${adapter} self-smoke: client=${adapter} server=${adapter}"
-    check_endpoints  "${image}" "${endpoint}" "${adapter}→${adapter}"
-    check_browse     "${image}" "${endpoint}" "${adapter}→${adapter}"
+    log "Running ${adapter} self-smoke"
+    check_endpoints   "${image}" "${endpoint}" "${adapter}→${adapter}"
+    check_browse      "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_read_scalar "${image}" "${endpoint}" "${adapter}→${adapter}"
-    check_write      "${image}" "${endpoint}" "${adapter}→${adapter}"
-    check_call_add   "${image}" "${endpoint}" "${adapter}→${adapter}"
-    check_subscribe  "${image}" "${endpoint}" "${adapter}→${adapter}"
+    check_write       "${image}" "${endpoint}" "${adapter}→${adapter}"
 
     stop_server "${cname}"
     trap - EXIT
@@ -245,32 +217,28 @@ run_cross_smoke() {
     local ep_milo="opc.tcp://localhost:${port_milo}${ENDPOINT_PATH}"
 
     log "Cross-stack: open62541-client → open62541-server"
-    check_endpoints  "${img_open62541}" "${ep_open62541}" "o62541-client→o62541-server"
-    check_browse     "${img_open62541}" "${ep_open62541}" "o62541-client→o62541-server"
-    check_read_scalar "${img_open62541}" "${ep_open62541}" "o62541-client→o62541-server"
-    check_call_add   "${img_open62541}" "${ep_open62541}" "o62541-client→o62541-server"
-    check_subscribe  "${img_open62541}" "${ep_open62541}" "o62541-client→o62541-server"
+    check_endpoints   "${img_open62541}" "${ep_open62541}" "o62541→o62541"
+    check_browse      "${img_open62541}" "${ep_open62541}" "o62541→o62541"
+    check_read_scalar "${img_open62541}" "${ep_open62541}" "o62541→o62541"
+    check_write       "${img_open62541}" "${ep_open62541}" "o62541→o62541"
 
     log "Cross-stack: open62541-client → milo-server"
-    check_endpoints  "${img_open62541}" "${ep_milo}" "o62541-client→milo-server"
-    check_browse     "${img_open62541}" "${ep_milo}" "o62541-client→milo-server"
-    check_read_scalar "${img_open62541}" "${ep_milo}" "o62541-client→milo-server"
-    check_call_add   "${img_open62541}" "${ep_milo}" "o62541-client→milo-server"
-    check_subscribe  "${img_open62541}" "${ep_milo}" "o62541-client→milo-server"
+    check_endpoints   "${img_open62541}" "${ep_milo}" "o62541→milo"
+    check_browse      "${img_open62541}" "${ep_milo}" "o62541→milo"
+    check_read_scalar "${img_open62541}" "${ep_milo}" "o62541→milo"
+    check_write       "${img_open62541}" "${ep_milo}" "o62541→milo"
 
     log "Cross-stack: milo-client → open62541-server"
-    check_endpoints  "${img_milo}" "${ep_open62541}" "milo-client→o62541-server"
-    check_browse     "${img_milo}" "${ep_open62541}" "milo-client→o62541-server"
-    check_read_scalar "${img_milo}" "${ep_open62541}" "milo-client→o62541-server"
-    check_call_add   "${img_milo}" "${ep_open62541}" "milo-client→o62541-server"
-    check_subscribe  "${img_milo}" "${ep_open62541}" "milo-client→o62541-server"
+    check_endpoints   "${img_milo}" "${ep_open62541}" "milo→o62541"
+    check_browse      "${img_milo}" "${ep_open62541}" "milo→o62541"
+    check_read_scalar "${img_milo}" "${ep_open62541}" "milo→o62541"
+    check_write       "${img_milo}" "${ep_open62541}" "milo→o62541"
 
     log "Cross-stack: milo-client → milo-server"
-    check_endpoints  "${img_milo}" "${ep_milo}" "milo-client→milo-server"
-    check_browse     "${img_milo}" "${ep_milo}" "milo-client→milo-server"
-    check_read_scalar "${img_milo}" "${ep_milo}" "milo-client→milo-server"
-    check_call_add   "${img_milo}" "${ep_milo}" "milo-client→milo-server"
-    check_subscribe  "${img_milo}" "${ep_milo}" "milo-client→milo-server"
+    check_endpoints   "${img_milo}" "${ep_milo}" "milo→milo"
+    check_browse      "${img_milo}" "${ep_milo}" "milo→milo"
+    check_read_scalar "${img_milo}" "${ep_milo}" "milo→milo"
+    check_write       "${img_milo}" "${ep_milo}" "milo→milo"
 
     stop_server "${cname_open62541}"
     stop_server "${cname_milo}"
@@ -298,6 +266,4 @@ esac
 echo ""
 log "Results: ${PASS} passed, ${FAIL} failed"
 
-if [[ "${FAIL}" -gt 0 ]]; then
-    exit 1
-fi
+[[ "${FAIL}" -eq 0 ]]

@@ -5,8 +5,14 @@ services:
       - server
       - --fixture
       - /fixtures/baseline/fixture.json
-      - --endpoint
-      - opc.tcp://0.0.0.0:4840/opcua-interop
+      - --bind-address
+      - 0.0.0.0
+      - --bind-port
+      - "4840"
+      - --advertised-host
+      - open62541
+      - --endpoint-path
+      - /opcua-interop
       - --pki-dir
       - /pki
       - --ready-file
@@ -31,8 +37,14 @@ services:
       - server
       - --fixture
       - /fixtures/baseline/fixture.json
-      - --endpoint
-      - opc.tcp://0.0.0.0:4840/opcua-interop
+      - --bind-address
+      - 0.0.0.0
+      - --bind-port
+      - "4840"
+      - --advertised-host
+      - milo
+      - --endpoint-path
+      - /opcua-interop
       - --pki-dir
       - /pki
       - --ready-file
