@@ -30,7 +30,9 @@ RUN cmake .. \
       -DUA_NAMESPACE_ZERO=FULL \
       -DBUILD_SHARED_LIBS=OFF \
       -DUA_MULTITHREADING=0 \
-    && cmake --build . --target open62541-amalgamation -- -j"$(nproc)"
+      -DUA_BUILD_EXAMPLES=OFF \
+      -DUA_BUILD_UNIT_TESTS=OFF \
+    && cmake --build . -- -j"$(nproc)"
 
 # ---------------------------------------------------------------------------
 # Stage 2 — compile the adapter
