@@ -420,3 +420,116 @@ void output_browse_results(const UA_ReferenceDescription *refs, size_t count) {
     }
     printf("],\"error\":null");
 }
+
+/* -------------------------------------------------------------------------
+ * NodeId public wrapper
+ * ---------------------------------------------------------------------- */
+
+void output_nodeid(const UA_NodeId *nid) {
+    print_ua_nodeid(nid);
+}
+
+/* -------------------------------------------------------------------------
+ * output_variant_to_buf — serialize a UA_Variant to a char buffer
+ * ---------------------------------------------------------------------- */
+
+static int format_scalar_to_buf(const void *data, const UA_DataType *type,
+                                 char *buf, size_t bufLen) {
+    if (!data || !type || bufLen == 0) { if (bufLen > 0) buf[0] = '\0'; return 0; }
+    if (type == &UA_TYPES[UA_TYPES_BOOLEAN])
+        return snprintf(buf, bufLen, "%s", *(UA_Boolean*)data ? "true" : "false");
+    if (type == &UA_TYPES[UA_TYPES_SBYTE])
+        return snprintf(buf, bufLen, "%" PRId8,  *(UA_SByte*)data);
+    if (type == &UA_TYPES[UA_TYPES_BYTE])
+        return snprintf(buf, bufLen, "%" PRIu8,  *(UA_Byte*)data);
+    if (type == &UA_TYPES[UA_TYPES_INT16])
+        return snprintf(buf, bufLen, "%" PRId16, *(UA_Int16*)data);
+    if (type == &UA_TYPES[UA_TYPES_UINT16])
+        return snprintf(buf, bufLen, "%" PRIu16, *(UA_UInt16*)data);
+    if (type == &UA_TYPES[UA_TYPES_INT32])
+        return snprintf(buf, bufLen, "%" PRId32, *(UA_Int32*)data);
+    if (type == &UA_TYPES[UA_TYPES_UINT32])
+        return snprintf(buf, bufLen, "%" PRIu32, *(UA_UInt32*)data);
+    if (type == &UA_TYPES[UA_TYPES_INT64])
+        return snprintf(buf, bufLen, "\"%" PRId64 "\"", *(UA_Int64*)data);
+    if (type == &UA_TYPES[UA_TYPES_UINT64])
+        return snprintf(buf, bufLen, "\"%" PRIu64 "\"", *(UA_UInt64*)data);
+    if (type == &UA_TYPES[UA_TYPES_FLOAT]) {
+        float v = *(UA_Float*)data;
+        return isfinite(v) ? snprintf(buf, bufLen, "%g", (double)v)
+                           : snprintf(buf, bufLen, "null");
+    }
+    if (type == &UA_TYPES[UA_TYPES_DOUBLE]) {
+        double v = *(UA_Double*)data;
+        return isfinite(v) ? snprintf(buf, bufLen, "%.17g", v)
+                           : snprintf(buf, bufLen, "null");
+    }
+    if (type == &UA_TYPES[UA_TYPES_STRING]) {
+        UA_String *s = (UA_String*)data;
+        if (!s->data) return snprintf(buf, bufLen, "null");
+        size_t out = 0;
+        if (out < bufLen) buf[out++] = '"';
+        for (size_t i = 0; i < s->length && out + 8 < bufLen; i++) {
+            unsigned char c = s->data[i];
+            if      (c == '"')  { buf[out++] = '\\'; buf[out++] = '"';  }
+            else if (c == '\\') { buf[out++] = '\\'; buf[out++] = '\\'; }
+            else if (c == '\n') { buf[out++] = '\\'; buf[out++] = 'n';  }
+            else if (c == '\r') { buf[out++] = '\\'; buf[out++] = 'r';  }
+            else if (c == '\t') { buf[out++] = '\\'; buf[out++] = 't';  }
+            else if (c < 0x20)  { out += (size_t)snprintf(buf + out, bufLen - out,
+                                                           "\\u%04x", c); }
+            else                  buf[out++] = (char)c;
+        }
+        if (out < bufLen) buf[out++] = '"';
+        if (out < bufLen) buf[out]   = '\0';
+        return (int)out;
+    }
+    return snprintf(buf, bufLen, "null");
+}
+
+int output_variant_to_buf(const UA_Variant *var, char *buf, size_t bufLen) {
+    if (!var || UA_Variant_isEmpty(var))
+        return snprintf(buf, bufLen, "null");
+    if (UA_Variant_isScalar(var))
+        return format_scalar_to_buf(var->data, var->type, buf, bufLen);
+
+    /* Array */
+    size_t out = 0;
+    if (out < bufLen) buf[out++] = '[';
+    size_t n    = var->arrayLength;
+    char  *base = (char*)var->data;
+    size_t sz   = var->type->memSize;
+    for (size_t i = 0; i < n && out + 32 < bufLen; i++) {
+        if (i > 0 && out + 1 < bufLen) buf[out++] = ',';
+        char tmp[256];
+        int r = format_scalar_to_buf(base + i * sz, var->type, tmp, sizeof(tmp));
+        if (r > 0 && out + (size_t)r < bufLen) {
+            memcpy(buf + out, tmp, (size_t)r);
+            out += (size_t)r;
+        }
+    }
+    if (out < bufLen) buf[out++] = ']';
+    if (out < bufLen) buf[out]   = '\0';
+    return (int)out;
+}
+
+/* -------------------------------------------------------------------------
+ * Call result item
+ * ---------------------------------------------------------------------- */
+
+void output_call_result(const char *objectNodeId, const char *methodNodeId,
+                        UA_StatusCode sc,
+                        const UA_Variant *outputs, size_t outputsSize) {
+    printf("{\"objectNodeId\":");
+    print_json_string(objectNodeId);
+    printf(",\"methodNodeId\":");
+    print_json_string(methodNodeId);
+    printf(",\"statusCode\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
+           output_status_code_name(sc), (uint32_t)sc, output_severity(sc));
+    printf(",\"outputArguments\":[");
+    for (size_t i = 0; i < outputsSize; i++) {
+        if (i > 0) printf(",");
+        output_ua_variant_value(&outputs[i]);
+    }
+    printf("]}");
+}

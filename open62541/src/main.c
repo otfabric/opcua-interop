@@ -47,14 +47,22 @@
 
 static int cmd_print_capabilities(void) {
     printf("{\n");
-    printf("  \"adapter\": \"open62541\",\n");
-    printf("  \"adapterVersion\": \"0.1.0\",\n");
-    printf("  \"stackVersion\": \"1.3.9\",\n");
+    printf("  \"schemaVersion\": \"1.0\",\n");
+    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.1.0\"},\n");
+    printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.3.9\"},\n");
     printf("  \"fixtureSchemaVersions\": [\"1.0\"],\n");
     printf("  \"roles\": [\"client\", \"server\"],\n");
     printf("  \"transports\": [\"opc.tcp\"],\n");
     printf("  \"encodings\": [\"binary\"],\n");
-    printf("  \"services\": [\n");
+    printf("  \"clientOperations\": [\n");
+    printf("    \"endpoints\",\n");
+    printf("    \"read\",\n");
+    printf("    \"write\",\n");
+    printf("    \"browse\",\n");
+    printf("    \"call\",\n");
+    printf("    \"subscribe\"\n");
+    printf("  ],\n");
+    printf("  \"serverServices\": [\n");
     printf("    \"GetEndpoints\",\n");
     printf("    \"CreateSession\",\n");
     printf("    \"Browse\",\n");
@@ -65,8 +73,8 @@ static int cmd_print_capabilities(void) {
     printf("    \"CreateMonitoredItems\",\n");
     printf("    \"Publish\"\n");
     printf("  ],\n");
-    printf("  \"securityPolicies\": [\"None\"],\n");
-    printf("  \"userTokenTypes\": [\"Anonymous\", \"UserName\"]\n");
+    printf("  \"securityProfiles\": [{\"policy\": \"None\", \"mode\": \"None\"}],\n");
+    printf("  \"userTokenTypes\": [\"Anonymous\"]\n");
     printf("}\n");
     return 0;
 }

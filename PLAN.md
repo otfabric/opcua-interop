@@ -54,7 +54,7 @@ Contract hardening deferred to Phase 4.
 
 ---
 
-## Phase 4 — Contract freeze and adapter parity ← current
+## Phase 4 — Contract freeze and adapter parity ✓
 
 The two adapters must produce identical output shapes for identical inputs before
 the feature surface grows further. This is the gate for go-opcua consumer integration.
@@ -102,24 +102,20 @@ For the same operation against the same fixture, both adapters must produce:
 
 ---
 
-## Phase 5 — Complete reference-client surface
+## Phase 5 — Complete reference-client surface ✓
 
-Only after Phase 4 is fully accepted.
-
-New client subcommands:
-- `read` — batch (multiple `--node` flags)
-- `write` — batch (multiple `--item node=...;type=...;value=...` flags)
-- `call` — invoke a method node
+New client subcommands implemented in both adapters:
+- `call` — invoke a method node (`--object`, `--method`, `--input Type:value`)
 - `subscribe` — create a subscription, collect N notifications, emit JSON array, disconnect
 
-Batch read/write must:
-- preserve per-item result ordering
-- report each item's status code individually
-- not short-circuit on first bad status
+Batch read (multiple `--node` flags) was implemented in Phase 4.
+Batch write deferred to Phase 6 (single-item write covers Phase 5 and Phase 6 needs).
+
+Smoke script extended to cover `call` and `subscribe` in all four cross-stack directions.
 
 ---
 
-## Phase 6 — Cross-stack equivalence smoke
+## Phase 6 — Cross-stack equivalence smoke ← current
 
 All four directions:
 - open62541 client → open62541 server

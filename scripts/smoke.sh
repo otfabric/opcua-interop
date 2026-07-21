@@ -172,6 +172,55 @@ check_write() {
     fi
 }
 
+check_call() {
+    local client_image="$1"
+    local endpoint="$2"
+    local label="$3"
+
+    local obj="nsu=urn:otfabric:opcua-interop:model;s=Methods"
+    local meth="nsu=urn:otfabric:opcua-interop:model;s=Methods.Add"
+    local output
+    if output=$(run_client_op "${client_image}" call \
+            --endpoint "${endpoint}" \
+            --object "${obj}" \
+            --method "${meth}" \
+            --input "Int32:10" \
+            --input "Int32:20" 2>/dev/null); then
+        validate_envelope "${output}" "${label}:call" || return
+        if echo "${output}" | jq -e '.success == true and .results[0].statusCode.name == "Good" and (.results[0].outputArguments[0] == 30)' >/dev/null 2>&1; then
+            ok "${label}: call Methods.Add(10,20)=30"
+        else
+            fail "${label}: call — unexpected result: ${output}"
+        fi
+    else
+        fail "${label}: call command exited non-zero"
+    fi
+}
+
+check_subscribe() {
+    local client_image="$1"
+    local endpoint="$2"
+    local label="$3"
+
+    local node="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter"
+    local output
+    if output=$(run_client_op "${client_image}" subscribe \
+            --endpoint "${endpoint}" \
+            --node "${node}" \
+            --publishing-interval-ms 500 \
+            --notifications 3 \
+            --timeout-ms 15000 2>/dev/null); then
+        validate_envelope "${output}" "${label}:subscribe" || return
+        if echo "${output}" | jq -e '.success == true and (.results[0].notifications | length) == 3' >/dev/null 2>&1; then
+            ok "${label}: subscribe Dynamic.Counter (3 notifications)"
+        else
+            fail "${label}: subscribe — unexpected result: ${output}"
+        fi
+    else
+        fail "${label}: subscribe command exited non-zero"
+    fi
+}
+
 # ── Mode: single adapter ──────────────────────────────────────────────────────
 
 run_single_smoke() {
@@ -192,6 +241,8 @@ run_single_smoke() {
     check_browse      "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_read_scalar "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_write       "${image}" "${endpoint}" "${adapter}→${adapter}"
+    check_call        "${image}" "${endpoint}" "${adapter}→${adapter}"
+    check_subscribe   "${image}" "${endpoint}" "${adapter}→${adapter}"
 
     stop_server "${cname}"
     trap - EXIT
@@ -221,24 +272,32 @@ run_cross_smoke() {
     check_browse      "${img_open62541}" "${ep_open62541}" "o62541→o62541"
     check_read_scalar "${img_open62541}" "${ep_open62541}" "o62541→o62541"
     check_write       "${img_open62541}" "${ep_open62541}" "o62541→o62541"
+    check_call        "${img_open62541}" "${ep_open62541}" "o62541→o62541"
+    check_subscribe   "${img_open62541}" "${ep_open62541}" "o62541→o62541"
 
     log "Cross-stack: open62541-client → milo-server"
     check_endpoints   "${img_open62541}" "${ep_milo}" "o62541→milo"
     check_browse      "${img_open62541}" "${ep_milo}" "o62541→milo"
     check_read_scalar "${img_open62541}" "${ep_milo}" "o62541→milo"
     check_write       "${img_open62541}" "${ep_milo}" "o62541→milo"
+    check_call        "${img_open62541}" "${ep_milo}" "o62541→milo"
+    check_subscribe   "${img_open62541}" "${ep_milo}" "o62541→milo"
 
     log "Cross-stack: milo-client → open62541-server"
     check_endpoints   "${img_milo}" "${ep_open62541}" "milo→o62541"
     check_browse      "${img_milo}" "${ep_open62541}" "milo→o62541"
     check_read_scalar "${img_milo}" "${ep_open62541}" "milo→o62541"
     check_write       "${img_milo}" "${ep_open62541}" "milo→o62541"
+    check_call        "${img_milo}" "${ep_open62541}" "milo→o62541"
+    check_subscribe   "${img_milo}" "${ep_open62541}" "milo→o62541"
 
     log "Cross-stack: milo-client → milo-server"
     check_endpoints   "${img_milo}" "${ep_milo}" "milo→milo"
     check_browse      "${img_milo}" "${ep_milo}" "milo→milo"
     check_read_scalar "${img_milo}" "${ep_milo}" "milo→milo"
     check_write       "${img_milo}" "${ep_milo}" "milo→milo"
+    check_call        "${img_milo}" "${ep_milo}" "milo→milo"
+    check_subscribe   "${img_milo}" "${ep_milo}" "milo→milo"
 
     stop_server "${cname_open62541}"
     stop_server "${cname_milo}"

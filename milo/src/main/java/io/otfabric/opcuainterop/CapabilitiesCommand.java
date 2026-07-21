@@ -28,7 +28,7 @@ public class CapabilitiesCommand {
         out.put("roles",                 Arrays.asList("client", "server"));
         out.put("transports",            Collections.singletonList("opc.tcp"));
         out.put("encodings",             Collections.singletonList("binary"));
-        out.put("clientOperations",      Arrays.asList("endpoints", "read", "write", "browse"));
+        out.put("clientOperations",      Arrays.asList("endpoints", "read", "write", "browse", "call", "subscribe"));
         out.put("serverServices",        Arrays.asList(
                 "GetEndpoints", "Browse", "Read", "Write", "Call",
                 "CreateSubscription", "CreateMonitoredItems", "Publish"));

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <open62541.h>
 
@@ -979,30 +980,88 @@ static int cmd_browse(int argc, char **argv) {
 }
 
 /* -------------------------------------------------------------------------
- * call subcommand (non-contract; kept for internal use)
+ * call subcommand
  * ---------------------------------------------------------------------- */
 
 static int cmd_call(int argc, char **argv) {
-    const char *endpoint  = find_arg(argc, argv, "--endpoint");
-    const char *objStr    = find_arg(argc, argv, "--object");
-    const char *methStr   = find_arg(argc, argv, "--method");
+    const char *endpoint = find_arg(argc, argv, "--endpoint");
+    const char *objStr   = find_arg(argc, argv, "--object");
+    const char *methStr  = find_arg(argc, argv, "--method");
     if (!endpoint || !objStr || !methStr) {
-        fprintf(stderr,
-            "usage: client call --endpoint <url> --object <nodeId>"
-            " --method <nodeId> [--input <type:val> ...]\n");
-        return 1;
+        output_begin("open62541", "call");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input",
+            "usage: call --endpoint <url> --object <nodeId> --method <nodeId>"
+            " [--input <type:val> ...]");
+        output_end();
+        return 2;
     }
 
+    if (validate_nodeid_structure(objStr) != 0) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "malformed NodeId: '%s'", objStr);
+        output_begin("open62541", "call");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", msg);
+        output_end();
+        return 2;
+    }
+    if (validate_nodeid_structure(methStr) != 0) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "malformed NodeId: '%s'", methStr);
+        output_begin("open62541", "call");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", msg);
+        output_end();
+        return 2;
+    }
+
+    int req_ms   = parse_int_flag(argc, argv, "--request-timeout", 5) * 1000;
     int exit_code = 3;
-    UA_Client *client = make_client(endpoint, 5000, "call", &exit_code);
+    UA_Client *client = make_client(endpoint, req_ms, "call", &exit_code);
     if (!client) return exit_code;
 
-    UA_NodeId objectId;
-    UA_NodeId methodId;
-    UA_NodeId_init(&objectId);
-    UA_NodeId_init(&methodId);
-    objectId = parse_nodeid_local(objStr);
-    methodId = parse_nodeid_local(methStr);
+    UA_NodeId objectId; UA_NodeId_init(&objectId);
+    UA_NodeId methodId; UA_NodeId_init(&methodId);
+
+    int   resolve_rc = 0;
+    char  resolve_msg[512] = "";
+
+    if (strncmp(objStr, "nsu=", 4) == 0) {
+        if (resolve_nsu_nodeid(client, objStr, &objectId) != 0) {
+            snprintf(resolve_msg, sizeof(resolve_msg),
+                     "unknown namespace URI in object NodeId: '%s'", objStr);
+            resolve_rc = 1;
+        }
+    } else {
+        objectId = parse_nodeid_local(objStr);
+    }
+
+    if (resolve_rc == 0 && strncmp(methStr, "nsu=", 4) == 0) {
+        if (resolve_nsu_nodeid(client, methStr, &methodId) != 0) {
+            snprintf(resolve_msg, sizeof(resolve_msg),
+                     "unknown namespace URI in method NodeId: '%s'", methStr);
+            resolve_rc = 1;
+        }
+    } else if (resolve_rc == 0) {
+        methodId = parse_nodeid_local(methStr);
+    }
+
+    if (resolve_rc != 0) {
+        UA_NodeId_clear(&objectId);
+        UA_NodeId_clear(&methodId);
+        UA_Client_disconnect(client);
+        UA_Client_delete(client);
+        output_begin("open62541", "call");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADNAMESPACEURIINVALID);
+        output_error("input", resolve_msg);
+        output_end();
+        return 2;
+    }
 
     int inCount = count_flag(argc, argv, "--input");
     UA_Variant *inputs = (UA_Variant *)calloc(
@@ -1032,25 +1091,26 @@ static int cmd_call(int argc, char **argv) {
         }
     }
 
-    UA_Variant *outputs = NULL;
+    UA_Variant *outputs     = NULL;
     size_t      outputsSize = 0;
     UA_StatusCode sc = UA_Client_call(client, objectId, methodId,
                                       (size_t)inCount, inputs,
                                       &outputsSize, &outputs);
 
+    int ok = UA_StatusCode_isGood(sc);
     output_begin("open62541", "call");
-    output_success(UA_StatusCode_isGood(sc));
+    output_success(ok);
     output_service_result(sc);
-    printf(",\"outputs\":[");
-    for (size_t i = 0; i < outputsSize; i++) {
-        if (i > 0) printf(",");
-        output_ua_variant_value(&outputs[i]);
-    }
-    printf("]");
-    output_no_results();
+    output_open_results();
+    output_call_result(objStr, methStr, sc, outputs, outputsSize);
+    output_close_results();
+    output_null_error();
     output_end();
 
-    int ret = UA_StatusCode_isGood(sc) ? 0 : 4;
+    int ret;
+    if      (sc == UA_STATUSCODE_BADTIMEOUT) ret = 7;
+    else if (!ok)                             ret = 4;
+    else                                      ret = 0;
 
     for (int i = 0; i < inCount; i++) UA_Variant_clear(&inputs[i]);
     free(inputs);
@@ -1066,123 +1126,198 @@ static int cmd_call(int argc, char **argv) {
 }
 
 /* -------------------------------------------------------------------------
- * subscribe subcommand (non-contract; kept for internal use)
+ * subscribe subcommand
  * ---------------------------------------------------------------------- */
 
+#define MAX_NOTIFICATIONS 256
+
 typedef struct {
-    UA_Client    *client;
-    const char   *nodeStr;
-    int           notificationsWanted;
-    int           notificationsReceived;
-} SubCtx;
+    int      index;
+    uint32_t statusCode;
+    char     dataType[64];
+    int      builtInType;
+    char     valueJson[512];
+    char     sourceTimestamp[64];
+} NotifEntry;
+
+typedef struct {
+    int        wanted;
+    int        count;
+    NotifEntry entries[MAX_NOTIFICATIONS];
+} NotifStore;
 
 static void sub_data_change_cb(UA_Client *client, UA_UInt32 subId,
-    void *subCtx, UA_UInt32 monId, void *monCtx,
-    UA_DataValue *val) {
+    void *subCtx, UA_UInt32 monId, void *monCtx, UA_DataValue *val) {
     (void)client; (void)subId; (void)subCtx; (void)monId;
-    SubCtx *ctx = (SubCtx *)monCtx;
-    if (!ctx) return;
+    NotifStore *store = (NotifStore *)monCtx;
+    if (!store || store->count >= MAX_NOTIFICATIONS) return;
 
-    char tsbuf[64] = "";
+    NotifEntry *e = &store->entries[store->count];
+    e->index      = store->count;
+    e->statusCode = (uint32_t)(val->hasStatus ? val->status : UA_STATUSCODE_GOOD);
+    e->sourceTimestamp[0] = '\0';
     if (val->hasSourceTimestamp)
-        output_timestamp(val->sourceTimestamp, tsbuf, sizeof(tsbuf));
+        output_timestamp(val->sourceTimestamp, e->sourceTimestamp,
+                         sizeof(e->sourceTimestamp));
 
-    const char *dtName = (val->hasValue && val->value.type)
-                          ? type_name(val->value.type) : "Unknown";
-
-    printf("{\"notificationIndex\":%d", ctx->notificationsReceived);
-    printf(",\"statusCode\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
-           output_status_code_name(val->hasStatus ? val->status : UA_STATUSCODE_GOOD),
-           (uint32_t)(val->hasStatus ? val->status : UA_STATUSCODE_GOOD),
-           output_severity(val->hasStatus ? val->status : UA_STATUSCODE_GOOD));
-    printf(",\"dataType\":\"%s\"", dtName);
-    if (val->hasValue) output_ua_variant_field("value", &val->value);
-    if (tsbuf[0]) printf(",\"sourceTimestamp\":\"%s\"", tsbuf);
-    printf("}");
-
-    ctx->notificationsReceived++;
-    if (ctx->notificationsReceived < ctx->notificationsWanted)
-        printf(",");
+    if (val->hasValue && val->value.type) {
+        strncpy(e->dataType, type_name(val->value.type), sizeof(e->dataType) - 1);
+        e->dataType[sizeof(e->dataType) - 1] = '\0';
+        e->builtInType = ua_type_to_builtin_id(val->value.type);
+        output_variant_to_buf(&val->value, e->valueJson, sizeof(e->valueJson));
+    } else {
+        strcpy(e->dataType,  "Unknown");
+        e->builtInType = 0;
+        strcpy(e->valueJson, "null");
+    }
+    store->count++;
 }
 
 static int cmd_subscribe(int argc, char **argv) {
     const char *endpoint = find_arg(argc, argv, "--endpoint");
     const char *nodeStr  = find_arg(argc, argv, "--node");
-    const char *piStr    = find_arg(argc, argv, "--publishing-interval");
+    const char *piStr    = find_arg(argc, argv, "--publishing-interval-ms");
+    const char *siStr    = find_arg(argc, argv, "--sampling-interval-ms");
     const char *nStr     = find_arg(argc, argv, "--notifications");
+    const char *toStr    = find_arg(argc, argv, "--timeout-ms");
+
     if (!endpoint || !nodeStr) {
-        fprintf(stderr,
-            "usage: client subscribe --endpoint <url> --node <nodeId>"
-            " [--publishing-interval <ms>] [--notifications <n>]\n");
-        return 1;
+        output_begin("open62541", "subscribe");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input",
+            "usage: subscribe --endpoint <url> --node <nodeId>"
+            " [--notifications <n>] [--timeout-ms <ms>]");
+        output_end();
+        return 2;
+    }
+
+    if (validate_nodeid_structure(nodeStr) != 0) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "malformed NodeId: '%s'", nodeStr);
+        output_begin("open62541", "subscribe");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", msg);
+        output_end();
+        return 2;
     }
 
     double piMs    = piStr ? atof(piStr) : 500.0;
+    double siMs    = siStr ? atof(siStr) : 100.0;
     int    nWanted = nStr  ? atoi(nStr)  : 5;
+    int    toMs    = toStr ? atoi(toStr) : 10000;
+    if (nWanted <= 0) nWanted = 5;
+    if (nWanted > MAX_NOTIFICATIONS) nWanted = MAX_NOTIFICATIONS;
 
     int exit_code = 3;
     UA_Client *client = make_client(endpoint, 5000, "subscribe", &exit_code);
     if (!client) return exit_code;
 
-    UA_NodeId nodeId = parse_nodeid_local(nodeStr);
+    UA_NodeId nodeId; UA_NodeId_init(&nodeId);
+    if (strncmp(nodeStr, "nsu=", 4) == 0) {
+        if (resolve_nsu_nodeid(client, nodeStr, &nodeId) != 0) {
+            UA_Client_disconnect(client);
+            UA_Client_delete(client);
+            char msg[512];
+            snprintf(msg, sizeof(msg), "unknown namespace URI in '%s'", nodeStr);
+            output_begin("open62541", "subscribe");
+            output_success(0);
+            output_service_result(UA_STATUSCODE_BADNAMESPACEURIINVALID);
+            output_error("input", msg);
+            output_end();
+            return 2;
+        }
+    } else {
+        nodeId = parse_nodeid_local(nodeStr);
+    }
 
     UA_CreateSubscriptionRequest subReq = UA_CreateSubscriptionRequest_default();
     subReq.requestedPublishingInterval  = piMs;
     UA_CreateSubscriptionResponse subResp =
         UA_Client_Subscriptions_create(client, subReq, NULL, NULL, NULL);
-
-    UA_StatusCode sc = subResp.responseHeader.serviceResult;
-    if (sc != UA_STATUSCODE_GOOD) {
-        output_begin("open62541", "subscribe");
-        output_success(0);
-        output_service_result(sc);
-        output_error("service", "CreateSubscription failed");
-        output_end();
+    UA_StatusCode svc_sc = subResp.responseHeader.serviceResult;
+    if (!UA_StatusCode_isGood(svc_sc)) {
         UA_NodeId_clear(&nodeId);
         UA_Client_disconnect(client);
         UA_Client_delete(client);
+        output_begin("open62541", "subscribe");
+        output_success(0);
+        output_service_result(svc_sc);
+        output_error("service", "CreateSubscription failed");
+        output_end();
         return 4;
     }
 
-    SubCtx ctx = { client, nodeStr, nWanted, 0 };
+    NotifStore store;
+    memset(&store, 0, sizeof(store));
+    store.wanted = nWanted;
 
     UA_MonitoredItemCreateRequest monReq =
         UA_MonitoredItemCreateRequest_default(nodeId);
+    monReq.requestedParameters.samplingInterval = siMs;
     UA_MonitoredItemCreateResult monResp =
         UA_Client_MonitoredItems_createDataChange(
-            client, subResp.subscriptionId,
-            UA_TIMESTAMPSTORETURN_BOTH,
-            monReq, &ctx, sub_data_change_cb, NULL);
+            client, subResp.subscriptionId, UA_TIMESTAMPSTORETURN_BOTH,
+            monReq, &store, sub_data_change_cb, NULL);
+    UA_StatusCode mon_sc = monResp.statusCode;
 
-    if (monResp.statusCode != UA_STATUSCODE_GOOD) {
-        output_begin("open62541", "subscribe");
-        output_success(0);
-        output_service_result(monResp.statusCode);
-        output_error("service", "CreateMonitoredItems failed");
-        output_end();
-        UA_NodeId_clear(&nodeId);
-        UA_Client_disconnect(client);
-        UA_Client_delete(client);
-        return 4;
+    int timedOut = 0;
+    if (UA_StatusCode_isGood(mon_sc)) {
+        time_t start = time(NULL);
+        while (store.count < nWanted) {
+            if ((int)(difftime(time(NULL), start) * 1000.0) >= toMs) {
+                timedOut = 1;
+                break;
+            }
+            UA_Client_run_iterate(client, 100);
+        }
     }
 
+    int all_ok   = UA_StatusCode_isGood(mon_sc) && !timedOut;
+    UA_StatusCode emit_sc = UA_StatusCode_isGood(mon_sc) ? svc_sc : mon_sc;
+
     output_begin("open62541", "subscribe");
-    output_success(1);
-    output_service_result(UA_STATUSCODE_GOOD);
-    printf(",\"nodeId\":\"%s\",\"notifications\":[", nodeStr);
+    output_success(all_ok);
+    output_service_result(emit_sc);
 
-    while (ctx.notificationsReceived < ctx.notificationsWanted)
-        UA_Client_run_iterate(client, 100);
+    printf(",\"results\":[{\"nodeId\":");
+    output_nodeid(&nodeId);
+    printf(",\"monitoredItemStatusCode\":{\"name\":\"%s\",\"code\":%" PRIu32
+           ",\"severity\":\"%s\"}",
+           output_status_code_name(mon_sc), (uint32_t)mon_sc,
+           output_severity(mon_sc));
+    printf(",\"notifications\":[");
+    for (int i = 0; i < store.count; i++) {
+        NotifEntry *e = &store.entries[i];
+        if (i > 0) printf(",");
+        printf("{\"sequenceNumber\":%d", e->index + 1);
+        printf(",\"statusCode\":{\"name\":\"%s\",\"code\":%" PRIu32
+               ",\"severity\":\"%s\"}",
+               output_status_code_name((UA_StatusCode)e->statusCode),
+               e->statusCode,
+               output_severity((UA_StatusCode)e->statusCode));
+        printf(",\"dataType\":\"%s\"", e->dataType);
+        printf(",\"builtInType\":%d", e->builtInType);
+        printf(",\"value\":%s", e->valueJson);
+        if (e->sourceTimestamp[0])
+            printf(",\"sourceTimestamp\":\"%s\"", e->sourceTimestamp);
+        printf("}");
+    }
+    printf("]}]");
 
-    printf("]");
-    output_no_results();
+    if (timedOut)
+        printf(",\"error\":{\"category\":\"timeout\","
+               "\"message\":\"timeout waiting for notifications\"}");
+    else
+        printf(",\"error\":null");
     output_end();
 
-    UA_NodeId_clear(&nodeId);
     UA_Client_Subscriptions_deleteSingle(client, subResp.subscriptionId);
+    UA_NodeId_clear(&nodeId);
     UA_Client_disconnect(client);
     UA_Client_delete(client);
-    return 0;
+    return timedOut ? 7 : 0;
 }
 
 /* -------------------------------------------------------------------------

@@ -17,7 +17,7 @@
     },
     "operation": {
       "type": "string",
-      "enum": ["endpoints", "read", "write", "browse"]
+      "enum": ["endpoints", "read", "write", "browse", "call", "subscribe"]
     },
     "success": {
       "type": "boolean"

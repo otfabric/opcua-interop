@@ -94,3 +94,16 @@ void output_ua_variant_value(const UA_Variant *var);
 
 /* Print: ,"<key>":<value of variant> */
 void output_ua_variant_field(const char *key, const UA_Variant *var);
+
+/* Print a UA_NodeId as a JSON string to stdout (includes the surrounding quotes). */
+void output_nodeid(const UA_NodeId *nid);
+
+/* Emit the single results item for a call command.
+ * Call between output_open_results() and output_close_results(). */
+void output_call_result(const char *objectNodeId, const char *methodNodeId,
+                        UA_StatusCode sc,
+                        const UA_Variant *outputs, size_t outputsSize);
+
+/* Write the JSON representation of a UA_Variant value into buf (NUL-terminated).
+ * Returns the number of bytes written (excluding NUL). buf must be >= bufLen. */
+int output_variant_to_buf(const UA_Variant *var, char *buf, size_t bufLen);

@@ -2,13 +2,18 @@ package io.otfabric.opcuainterop;
 
 import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
 import org.eclipse.milo.opcua.sdk.client.api.config.OpcUaClientConfig;
+import org.eclipse.milo.opcua.sdk.client.api.subscriptions.UaMonitoredItem;
+import org.eclipse.milo.opcua.sdk.client.api.subscriptions.UaSubscription;
 import org.eclipse.milo.opcua.stack.client.DiscoveryClient;
+import org.eclipse.milo.opcua.stack.core.AttributeId;
 import org.eclipse.milo.opcua.stack.core.Identifiers;
 import org.eclipse.milo.opcua.stack.core.security.SecurityPolicy;
 import org.eclipse.milo.opcua.stack.core.types.builtin.*;
-import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.*;import org.eclipse.milo.opcua.stack.core.types.enumerated.BrowseDirection;
+import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.*;
+import org.eclipse.milo.opcua.stack.core.types.enumerated.BrowseDirection;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.BrowseResultMask;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.MessageSecurityMode;
+import org.eclipse.milo.opcua.stack.core.types.enumerated.MonitoringMode;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
 import org.eclipse.milo.opcua.stack.core.types.structured.*;
 import org.slf4j.Logger;
@@ -16,8 +21,10 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.uint;
 
 public class ClientCommand {
 
@@ -30,7 +37,7 @@ public class ClientCommand {
 
     public static int run(String[] args) {
         if (args.length < 1) {
-            System.err.println("usage: client <endpoints|read|write|browse> ...");
+            System.err.println("usage: client <endpoints|read|write|browse|call|subscribe> ...");
             return 1;
         }
         String op = args[0];
@@ -42,6 +49,8 @@ public class ClientCommand {
                 case "read":      return cmdRead(rest);
                 case "write":     return cmdWrite(rest);
                 case "browse":    return cmdBrowse(rest);
+                case "call":      return cmdCall(rest);
+                case "subscribe": return cmdSubscribe(rest);
                 default:
                     System.err.println("unknown client subcommand: " + op);
                     return 1;
@@ -273,6 +282,177 @@ public class ClientCommand {
     }
 
     // -------------------------------------------------------------------------
+    // call
+    // -------------------------------------------------------------------------
+
+    private static int cmdCall(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        String objectStr   = findArg(args, "--object");
+        String methodStr   = findArg(args, "--method");
+        if (endpointUrl == null || objectStr == null || methodStr == null) {
+            System.out.println(new ResultBuilder("call")
+                .error("input", "missing --endpoint, --object, or --method").toJson());
+            return 2;
+        }
+        long cto = connectTimeoutMs(args);
+        long rto = requestTimeoutMs(args);
+        long dto = disconnectTimeoutMs(args);
+
+        List<Variant> inputVariants = new ArrayList<>();
+        for (int i = 0; i < args.length - 1; i++) {
+            if ("--input".equals(args[i])) {
+                String spec = args[i + 1];
+                int colon = spec.indexOf(':');
+                if (colon > 0) {
+                    String type = spec.substring(0, colon);
+                    String val  = spec.substring(colon + 1);
+                    inputVariants.add(buildWriteVariant(type, val));
+                }
+            }
+        }
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto);
+        try {
+            NodeId objectNodeId = NodeIdParser.resolveWithClient(objectStr, client, rto);
+            NodeId methodNodeId = NodeIdParser.resolveWithClient(methodStr, client, rto);
+
+            Variant[] inputs = inputVariants.toArray(new Variant[0]);
+            CallMethodRequest req = new CallMethodRequest(objectNodeId, methodNodeId, inputs);
+            CallResponse callResponse = client.call(List.of(req)).get(rto, MILLISECONDS);
+
+            CallMethodResult methodResult = callResponse.getResults()[0];
+            StatusCode methodSc = methodResult.getStatusCode();
+            Variant[] outputs = methodResult.getOutputArguments();
+
+            List<Object> outArgs = new ArrayList<>();
+            if (outputs != null) {
+                for (Variant v : outputs) {
+                    outArgs.add(ResultBuilder.encodeVariantValue(v));
+                }
+            }
+
+            Map<String, Object> resultItem = new LinkedHashMap<>();
+            resultItem.put("objectNodeId",    ResultBuilder.nodeIdToString(objectNodeId));
+            resultItem.put("methodNodeId",    ResultBuilder.nodeIdToString(methodNodeId));
+            resultItem.put("statusCode",      ResultBuilder.statusCodeJson(methodSc));
+            resultItem.put("outputArguments", outArgs);
+
+            System.out.println(new ResultBuilder("call")
+                .success(methodSc.isGood())
+                .serviceResult(methodSc)
+                .addResult(resultItem)
+                .toJson());
+            return methodSc.isGood() ? 0 : 4;
+        } finally {
+            safeDisconnect(client, dto);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // subscribe
+    // -------------------------------------------------------------------------
+
+    private static int cmdSubscribe(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        String nodeStr     = findArg(args, "--node");
+        if (endpointUrl == null || nodeStr == null) {
+            System.out.println(new ResultBuilder("subscribe")
+                .error("input", "missing --endpoint or --node").toJson());
+            return 2;
+        }
+        long   cto    = connectTimeoutMs(args);
+        long   rto    = requestTimeoutMs(args);
+        long   dto    = disconnectTimeoutMs(args);
+        double piMs   = parseDoubleArg(args, "--publishing-interval-ms", 500.0);
+        double siMs   = parseDoubleArg(args, "--sampling-interval-ms",   100.0);
+        int    nWanted = parseIntArg(args,   "--notifications", 5);
+        long   toMs   = parseLongArg(args,   "--timeout-ms",   10000L);
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto);
+        try {
+            NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
+
+            UaSubscription subscription = client.getSubscriptionManager()
+                .createSubscription(piMs).get(rto, MILLISECONDS);
+
+            List<Map<String, Object>> notifications =
+                Collections.synchronizedList(new ArrayList<>());
+            CountDownLatch latch = new CountDownLatch(nWanted);
+            AtomicReference<StatusCode> monStatusRef =
+                new AtomicReference<>(StatusCode.GOOD);
+            AtomicInteger seqRef = new AtomicInteger(0);
+
+            ReadValueId readValueId = new ReadValueId(
+                nodeId,
+                AttributeId.Value.uid(),
+                null,
+                QualifiedName.NULL_VALUE);
+            MonitoringParameters params = new MonitoringParameters(
+                uint(1), siMs, null, uint(10), true);
+            MonitoredItemCreateRequest monRequest =
+                new MonitoredItemCreateRequest(readValueId, MonitoringMode.Reporting, params);
+
+            subscription.createMonitoredItems(
+                TimestampsToReturn.Both,
+                List.of(monRequest),
+                (item, idx) -> {
+                    monStatusRef.set(item.getStatusCode());
+                    item.setValueConsumer((DataValue dv) -> {
+                        if (notifications.size() >= nWanted) return;
+                        Map<String, Object> n = new LinkedHashMap<>();
+                        int seq = seqRef.incrementAndGet();
+                        n.put("sequenceNumber", seq);
+                        String typeName = ResultBuilder.builtInTypeName(dv.getValue());
+                        n.put("value",       ResultBuilder.encodeVariantValue(dv.getValue()));
+                        n.put("dataType",    typeName);
+                        n.put("builtInType", ResultBuilder.builtInTypeId(typeName));
+                        StatusCode dvSc = dv.getStatusCode() != null
+                            ? dv.getStatusCode() : StatusCode.GOOD;
+                        n.put("statusCode",  ResultBuilder.statusCodeJson(dvSc));
+                        if (dv.getSourceTime() != null && dv.getSourceTime().getJavaTime() != 0) {
+                            n.put("sourceTimestamp",
+                                dv.getSourceTime().getJavaInstant().toString());
+                        }
+                        notifications.add(n);
+                        latch.countDown();
+                    });
+                }
+            ).get(rto, MILLISECONDS);
+
+            StatusCode monSc = monStatusRef.get();
+            boolean timedOut = false;
+
+            if (monSc.isGood()) {
+                timedOut = !latch.await(toMs, MILLISECONDS);
+            }
+
+            Map<String, Object> resultItem = new LinkedHashMap<>();
+            resultItem.put("nodeId", ResultBuilder.nodeIdToString(nodeId));
+            resultItem.put("monitoredItemStatusCode", ResultBuilder.statusCodeJson(monSc));
+            resultItem.put("notifications", new ArrayList<>(notifications));
+
+            ResultBuilder rb = new ResultBuilder("subscribe")
+                .success(monSc.isGood() && !timedOut)
+                .serviceResult(monSc)
+                .addResult(resultItem);
+            if (timedOut) {
+                rb.error("timeout", "timeout waiting for notifications");
+            }
+            System.out.println(rb.toJson());
+
+            try {
+                client.getSubscriptionManager()
+                    .deleteSubscription(subscription.getSubscriptionId())
+                    .get(dto, MILLISECONDS);
+            } catch (Exception ignored) {}
+
+            return timedOut ? 7 : (monSc.isGood() ? 0 : 4);
+        } finally {
+            safeDisconnect(client, dto);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // helpers
     // -------------------------------------------------------------------------
 
@@ -349,6 +529,18 @@ public class ClientCommand {
         String val = findArg(args, flag);
         if (val == null) return defaultVal;
         try { return Long.parseLong(val); } catch (NumberFormatException e) { return defaultVal; }
+    }
+
+    private static double parseDoubleArg(String[] args, String flag, double defaultVal) {
+        String val = findArg(args, flag);
+        if (val == null) return defaultVal;
+        try { return Double.parseDouble(val); } catch (NumberFormatException e) { return defaultVal; }
+    }
+
+    private static int parseIntArg(String[] args, String flag, int defaultVal) {
+        String val = findArg(args, flag);
+        if (val == null) return defaultVal;
+        try { return Integer.parseInt(val); } catch (NumberFormatException e) { return defaultVal; }
     }
 
     private static long connectTimeoutMs(String[] args)    { return parseLongArg(args, "--connect-timeout",    5) * 1000; }

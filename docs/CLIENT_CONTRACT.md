@@ -55,6 +55,24 @@ this contract. Changes that break it require a major schema version bump.
 | `--node <nodeId>` | Starting node | `i=85` (Objects folder) |
 | `--max-refs <n>` | Max references per Browse request | 0 (server default) |
 
+### `call` flags
+
+| Flag | Description |
+|------|-------------|
+| `--object <nodeId>` | NodeId of the object that owns the method |
+| `--method <nodeId>` | NodeId of the method node |
+| `--input <type:value>` | Input argument (repeatable); format `Type:value` e.g. `Int32:10` |
+
+### `subscribe` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--node <nodeId>` | Node to monitor |  required |
+| `--publishing-interval-ms <n>` | Requested publishing interval in ms | 500 |
+| `--sampling-interval-ms <n>` | Requested sampling interval in ms | 100 |
+| `--notifications <n>` | Stop after receiving this many data-change notifications | 5 |
+| `--timeout-ms <n>` | Absolute command timeout in ms | 10000 |
+
 ---
 
 ## 2. I/O contract
@@ -194,6 +212,47 @@ Error categories:
 `nodeClass` is the symbolic name from OPC UA Part 3: `"Object"`, `"Variable"`,
 `"Method"`, `"ObjectType"`, `"VariableType"`, `"ReferenceType"`, `"DataType"`,
 `"View"`.
+
+### `call`
+
+```json
+"results": [
+  {
+    "objectNodeId": "ns=1;s=Methods",
+    "methodNodeId": "ns=1;s=Methods.Add",
+    "statusCode":   { "name": "Good", "code": 0, "severity": "Good" },
+    "outputArguments": [ 30 ]
+  }
+]
+```
+
+`outputArguments` is an ordered array of values encoded per §7. An empty array `[]`
+means the method returned no output arguments.
+
+### `subscribe`
+
+```json
+"results": [
+  {
+    "nodeId":                  "ns=1;s=Dynamic.Counter",
+    "monitoredItemStatusCode": { "name": "Good", "code": 0, "severity": "Good" },
+    "notifications": [
+      {
+        "sequenceNumber":  1,
+        "value":           0,
+        "dataType":        "UInt32",
+        "builtInType":     7,
+        "statusCode":      { "name": "Good", "code": 0, "severity": "Good" },
+        "sourceTimestamp": "2024-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+]
+```
+
+The command collects exactly `--notifications` data-change events then disconnects.
+If the timeout expires before enough notifications arrive, the command emits whatever
+was collected, sets `success: false`, and exits 7.
 
 ---
 

@@ -8,6 +8,7 @@ import java.util.Arrays;
  * Subcommands:
  *   server            -- start OPC UA server from fixture
  *   client <op>       -- run client probe operation
+ *                        ops: endpoints, read, write, browse, call, subscribe
  *   validate-fixture  -- validate fixture JSON against schema
  *   print-capabilities -- emit adapter capability JSON
  *   test              -- run internal self-tests
