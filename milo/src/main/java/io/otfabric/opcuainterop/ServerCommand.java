@@ -1,5 +1,6 @@
 package io.otfabric.opcuainterop;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.milo.opcua.sdk.server.OpcUaServer;
 import org.eclipse.milo.opcua.sdk.server.api.config.OpcUaServerConfig;
 import org.eclipse.milo.opcua.sdk.server.identity.AnonymousIdentityValidator;
@@ -14,12 +15,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
@@ -28,15 +30,26 @@ public class ServerCommand {
     private static final Logger LOG = LoggerFactory.getLogger(ServerCommand.class);
 
     public static void run(String[] args) throws Exception {
-        String fixturePath = getenv("OPCUA_FIXTURE", null);
-        String endpointUrl = null;
-        String readyFile   = getenv("OPCUA_READY_FILE", "/run/opcua-interop/ready");
+        String fixturePath    = getenv("OPCUA_FIXTURE", null);
+        String bindAddress    = "0.0.0.0";
+        int    bindPort       = -1;
+        String advertisedHost = "localhost";
+        int    advertisedPort = -1;
+        String endpointPath   = null;
+        String readyFile      = getenv("OPCUA_READY_FILE", "/run/opcua-interop/ready");
+        String pkiDir         = "/run/opcua-interop/pki";
+        boolean readyFileExplicit = false;
 
         for (int i = 0; i < args.length - 1; i++) {
             switch (args[i]) {
-                case "--fixture":    fixturePath = args[i + 1]; break;
-                case "--endpoint":   endpointUrl = args[i + 1]; break;
-                case "--ready-file": readyFile   = args[i + 1]; break;
+                case "--fixture":          fixturePath    = args[i + 1]; break;
+                case "--bind-address":     bindAddress    = args[i + 1]; break;
+                case "--bind-port":        bindPort       = Integer.parseInt(args[i + 1]); break;
+                case "--advertised-host":  advertisedHost = args[i + 1]; break;
+                case "--advertised-port":  advertisedPort = Integer.parseInt(args[i + 1]); break;
+                case "--endpoint-path":    endpointPath   = args[i + 1]; break;
+                case "--ready-file":       readyFile = args[i + 1]; readyFileExplicit = true; break;
+                case "--pki-dir":          pkiDir = args[i + 1]; break;
             }
         }
 
@@ -48,36 +61,26 @@ public class ServerCommand {
         FixtureModel fixture = FixtureLoader.load(fixturePath);
         LOG.info("Fixture loaded: id={}", fixture.id);
 
-        int port = fixture.endpoint.port;
-        String path = fixture.endpoint.path != null ? fixture.endpoint.path : "/";
+        if (bindPort < 0)       bindPort       = fixture.endpoint.port;
+        if (advertisedPort < 0) advertisedPort = bindPort;
+        if (endpointPath == null) endpointPath = fixture.endpoint.path != null ? fixture.endpoint.path : "/";
 
-        // Override port from endpoint URL if provided
-        if (endpointUrl != null) {
-            try {
-                int lastColon = endpointUrl.lastIndexOf(':');
-                if (lastColon >= 0) {
-                    String portStr = endpointUrl.substring(lastColon + 1).split("/")[0];
-                    int p = Integer.parseInt(portStr);
-                    if (p > 0) port = p;
-                }
-            } catch (NumberFormatException ignored) { }
-        }
+        String advertisedEndpoint = "opc.tcp://" + advertisedHost + ":" + advertisedPort + endpointPath;
+        LOG.info("Advertised endpoint: {}", advertisedEndpoint);
+        LOG.debug("PKI dir: {}", pkiDir);
 
-        String hostname = resolveHostname();
-
-        EndpointConfiguration endpoint = EndpointConfiguration.newBuilder()
-                .setBindAddress("0.0.0.0")
-                .setBindPort(port)
-                .setHostname(hostname)
-                .setPath(path)
+        Set<EndpointConfiguration> endpointSet = new LinkedHashSet<>();
+        EndpointConfiguration.Builder builder = EndpointConfiguration.newBuilder()
+                .setBindAddress(bindAddress)
+                .setBindPort(bindPort)
+                .setHostname(advertisedHost)
+                .setPath(endpointPath)
                 .setTransportProfile(TransportProfile.TCP_UASC_UABINARY)
+                .addTokenPolicy(OpcUaServerConfig.USER_TOKEN_POLICY_ANONYMOUS);
+        endpointSet.add(builder
                 .setSecurityPolicy(SecurityPolicy.None)
                 .setSecurityMode(MessageSecurityMode.None)
-                .addTokenPolicy(OpcUaServerConfig.USER_TOKEN_POLICY_ANONYMOUS)
-                .build();
-
-        Set<EndpointConfiguration> endpoints = new LinkedHashSet<>();
-        endpoints.add(endpoint);
+                .build());
 
         BuildInfo buildInfo = new BuildInfo(
                 fixture.server.productUri,
@@ -91,7 +94,7 @@ public class ServerCommand {
                 .setApplicationUri(fixture.server.applicationUri)
                 .setApplicationName(LocalizedText.english(fixture.server.applicationName))
                 .setProductUri(fixture.server.productUri)
-                .setEndpoints(endpoints)
+                .setEndpoints(endpointSet)
                 .setBuildInfo(buildInfo)
                 .setIdentityValidator(AnonymousIdentityValidator.INSTANCE)
                 .build();
@@ -102,10 +105,16 @@ public class ServerCommand {
         namespace.startup();
 
         server.startup().get();
-        LOG.info("Server started on port={}", port);
+        LOG.info("Server started on port={}", bindPort);
 
-        writeReadyFile(readyFile);
+        try {
+            writeReadyFile(readyFile, fixture.id, advertisedEndpoint);
+        } catch (IOException e) {
+            LOG.error("FATAL: cannot write ready file {}: {}", readyFile, e.getMessage());
+            System.exit(6);
+        }
 
+        final String finalReadyFile = readyFile;
         CountDownLatch latch = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOG.info("Shutdown signal received");
@@ -113,34 +122,39 @@ public class ServerCommand {
                 server.shutdown().get();
             } catch (Exception e) {
                 LOG.error("Error during shutdown", e);
-            } finally {
-                latch.countDown();
             }
+            try {
+                Files.deleteIfExists(Paths.get(finalReadyFile));
+            } catch (Exception ignored) {
+                // best-effort cleanup
+            }
+            latch.countDown();
         }));
 
         latch.await();
     }
 
-    private static void writeReadyFile(String path) {
-        if (path == null || path.isEmpty()) return;
-        try {
-            Path p = Paths.get(path);
-            Files.createDirectories(p.getParent());
-            Files.writeString(p, "ready\n");
-            LOG.info("Ready file written: {}", path);
-        } catch (IOException e) {
-            LOG.warn("Cannot write ready file {}: {}", path, e.getMessage());
-        }
-    }
+    private static void writeReadyFile(String path, String fixtureId, String endpoint) throws IOException {
+        Path p = Paths.get(path);
+        Files.createDirectories(p.getParent());
+        Files.deleteIfExists(p);
 
-    private static String resolveHostname() {
-        String h = System.getenv("HOSTNAME");
-        if (h != null && !h.isEmpty()) return h;
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("ready",    true);
+        content.put("adapter",  "milo");
+        content.put("fixture",  fixtureId);
+        content.put("endpoint", endpoint);
+        String json;
         try {
-            return InetAddress.getLocalHost().getHostName();
-        } catch (UnknownHostException e) {
-            return "localhost";
+            json = new ObjectMapper().writeValueAsString(content) + "\n";
+        } catch (Exception e) {
+            throw new IOException("failed to serialize ready file content: " + e.getMessage(), e);
         }
+
+        Path tmp = p.resolveSibling(p.getFileName() + ".tmp");
+        Files.writeString(tmp, json);
+        Files.move(tmp, p, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        LOG.info("Ready file written: {}", path);
     }
 
     private static String getenv(String key, String fallback) {

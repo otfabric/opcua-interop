@@ -16,43 +16,53 @@ MILO_PORT      ?= 4841
 FIXTURE_SCHEMA = fixtures/schema/opcua-fixture.schema.json
 FIXTURE_DIRS   = $(wildcard fixtures/*/fixture.json)
 
-.PHONY: help all build build-open62541 build-milo image-open62541 image-milo validate validate-fixtures run-open62541 run-milo smoke smoke-open62541 smoke-milo smoke-cross-stack certs release clean
+.PHONY: help all image image-open62541 image-milo buildx buildx-open62541 buildx-milo \
+        validate validate-fixtures \
+        run-open62541 run-milo \
+        smoke smoke-open62541 smoke-milo smoke-cross-stack \
+        certs release clean
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-all: validate build ## Run all targets
+all: validate image ## Validate fixtures and build local images
 
-# ── Build ────────────────────────────────────────────────────────────────────
+# ── Local single-arch images (loaded into Docker, used for smoke/dev) ─────────
 
-build: build-open62541 build-milo ## Build both adapter images (multi-arch)
+image: image-open62541 image-milo ## Build both images for host architecture
 
-build-open62541: ## Build open62541 image only
-	@echo "Building open62541 image..."
-	docker buildx build \
-		--platform $(PLATFORMS) \
-		--tag $(IMAGE_OPEN62541):$(VERSION) \
-		--file open62541/Dockerfile \
-		open62541/
-
-build-milo: ## Build Milo image only
-	@echo "Building Milo image..."
-	docker buildx build \
-		--platform $(PLATFORMS) \
-		--tag $(IMAGE_MILO):$(VERSION) \
-		--file milo/Dockerfile \
-		milo/
-
-image-open62541: ## Build open62541 image (host arch)
+image-open62541: ## Build open62541 image (host arch, loaded into Docker)
 	@echo "Building open62541 image (host arch)..."
 	docker build \
 		--tag $(IMAGE_OPEN62541):$(VERSION) \
 		--file open62541/Dockerfile \
 		open62541/
 
-image-milo: ## Build Milo image (host arch)
+image-milo: ## Build Milo image (host arch, loaded into Docker)
 	@echo "Building Milo image (host arch)..."
 	docker build \
+		--tag $(IMAGE_MILO):$(VERSION) \
+		--file milo/Dockerfile \
+		milo/
+
+# ── Multi-arch buildx (pushes to registry; requires --push or --output) ───────
+
+buildx: buildx-open62541 buildx-milo ## Build and push both images (multi-arch)
+
+buildx-open62541: ## Build and push open62541 image (multi-arch)
+	@echo "Building open62541 image (multi-arch, push)..."
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		--push \
+		--tag $(IMAGE_OPEN62541):$(VERSION) \
+		--file open62541/Dockerfile \
+		open62541/
+
+buildx-milo: ## Build and push Milo image (multi-arch)
+	@echo "Building Milo image (multi-arch, push)..."
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		--push \
 		--tag $(IMAGE_MILO):$(VERSION) \
 		--file milo/Dockerfile \
 		milo/
@@ -76,7 +86,7 @@ run-open62541: ## Start open62541 server on port $(OPEN62541_PORT)
 		$(IMAGE_OPEN62541):$(VERSION) \
 		server \
 		--fixture /fixtures/baseline/fixture.json \
-		--endpoint opc.tcp://0.0.0.0:4840/opcua-interop \
+		--advertised-host localhost \
 		--pki-dir /pki \
 		--ready-file /run/opcua-interop/ready
 
@@ -89,7 +99,7 @@ run-milo: ## Start Milo server on port $(MILO_PORT)
 		$(IMAGE_MILO):$(VERSION) \
 		server \
 		--fixture /fixtures/baseline/fixture.json \
-		--endpoint opc.tcp://0.0.0.0:4840/opcua-interop \
+		--advertised-host localhost \
 		--pki-dir /pki \
 		--ready-file /run/opcua-interop/ready
 
@@ -117,7 +127,7 @@ certs: ## Generate test PKI
 
 # ── Release ──────────────────────────────────────────────────────────────────
 
-release: ## Build and push multi-arch release images
+release: ## Build and push multi-arch release images (requires VERSION=v0.x.x)
 	@echo "Building and pushing multi-arch release images..."
 ifndef VERSION
 	$(error VERSION is required: make release VERSION=v0.1.0)
@@ -152,4 +162,3 @@ clean: ## Remove containers and build artifacts
 	docker rmi $(IMAGE_OPEN62541):$(VERSION) 2>/dev/null || true
 	docker rmi $(IMAGE_MILO):$(VERSION) 2>/dev/null || true
 	rm -rf open62541/build/ milo/target/
-

@@ -10,13 +10,27 @@
  *
  * Server flags:
  *   --fixture <path>
- *   --endpoint <opc.tcp://host:port/path>
+ *   --bind-address <host>        (default: 0.0.0.0)
+ *   --bind-port <n>              (default: from fixture)
+ *   --advertised-host <host>     (default: localhost)
+ *   --advertised-port <n>        (default: bind port)
+ *   --endpoint-path <path>       (default: from fixture)
  *   --pki-dir <path>
  *   --ready-file <path>
  *
+ * Client exit codes:
+ *   0  success
+ *   2  invalid argument / malformed NodeId
+ *   3  transport / connect failure
+ *   4  OPC UA service failure
+ *   5  fixture validation failure
+ *   6  internal adapter failure
+ *   7  timeout
+ *
  * Environment equivalents:
  *   OPCUA_FIXTURE, OPCUA_PORT, OPCUA_ENDPOINT_PATH, OPCUA_LOG_LEVEL,
- *   OPCUA_PKI_DIR, OPCUA_TRUST_MODE, OPCUA_READY_FILE
+ *   OPCUA_PKI_DIR, OPCUA_TRUST_MODE, OPCUA_READY_FILE,
+ *   OPCUA_BIND_ADDRESS, OPCUA_ADVERTISED_HOST
  */
 
 #include "client.h"
@@ -123,7 +137,7 @@ int main(int argc, char **argv) {
         char errBuf[512];
         if (server_parse_args(argc - 1, argv + 1, &args, errBuf, sizeof(errBuf)) != 0) {
             fprintf(stderr, "server: %s\n", errBuf);
-            return 1;
+            return 2;
         }
         return server_run(&args);
     }

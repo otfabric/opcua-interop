@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <open62541.h>
 
@@ -33,32 +34,33 @@ int server_parse_args(int argc, char **argv, ServerArgs *out,
 
     /* Defaults from environment */
     const char *env;
-    if ((env = getenv("OPCUA_FIXTURE"))       && *env) out->fixturePath = strdup(env);
-    if ((env = getenv("OPCUA_READY_FILE"))    && *env) out->readyFile   = strdup(env);
-    if ((env = getenv("OPCUA_PKI_DIR"))       && *env) out->pkiDir      = strdup(env);
-
-    /* Build endpoint URL from env if present */
-    {
-        const char *port = getenv("OPCUA_PORT");
-        const char *path = getenv("OPCUA_ENDPOINT_PATH");
-        if (port && *port) {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "opc.tcp://0.0.0.0:%s%s",
-                     port, (path && *path) ? path : "");
-            out->endpointUrl = strdup(buf);
-        }
-    }
+    if ((env = getenv("OPCUA_FIXTURE"))       && *env) out->fixturePath    = strdup(env);
+    if ((env = getenv("OPCUA_READY_FILE"))    && *env) out->readyFile       = strdup(env);
+    if ((env = getenv("OPCUA_PKI_DIR"))       && *env) out->pkiDir          = strdup(env);
+    if ((env = getenv("OPCUA_BIND_ADDRESS"))  && *env) out->bindAddress     = strdup(env);
+    if ((env = getenv("OPCUA_ADVERTISED_HOST")) && *env) out->advertisedHost = strdup(env);
+    if ((env = getenv("OPCUA_ENDPOINT_PATH")) && *env) out->endpointPath    = strdup(env);
+    if ((env = getenv("OPCUA_PORT"))          && *env) out->bindPort        = atoi(env);
 
     /* CLI overrides */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--fixture") == 0 && i+1 < argc) {
-            free(out->fixturePath); out->fixturePath = strdup(argv[++i]);
-        } else if (strcmp(argv[i], "--endpoint") == 0 && i+1 < argc) {
-            free(out->endpointUrl); out->endpointUrl = strdup(argv[++i]);
+            free(out->fixturePath);    out->fixturePath    = strdup(argv[++i]);
+        } else if (strcmp(argv[i], "--bind-address") == 0 && i+1 < argc) {
+            free(out->bindAddress);    out->bindAddress    = strdup(argv[++i]);
+        } else if (strcmp(argv[i], "--bind-port") == 0 && i+1 < argc) {
+            out->bindPort = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--advertised-host") == 0 && i+1 < argc) {
+            free(out->advertisedHost); out->advertisedHost = strdup(argv[++i]);
+        } else if (strcmp(argv[i], "--advertised-port") == 0 && i+1 < argc) {
+            out->advertisedPort = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--endpoint-path") == 0 && i+1 < argc) {
+            free(out->endpointPath);   out->endpointPath   = strdup(argv[++i]);
         } else if (strcmp(argv[i], "--pki-dir") == 0 && i+1 < argc) {
-            free(out->pkiDir); out->pkiDir = strdup(argv[++i]);
+            free(out->pkiDir);         out->pkiDir         = strdup(argv[++i]);
         } else if (strcmp(argv[i], "--ready-file") == 0 && i+1 < argc) {
-            free(out->readyFile); out->readyFile = strdup(argv[++i]);
+            free(out->readyFile);      out->readyFile      = strdup(argv[++i]);
+            out->readyFileExplicit = 1;
         }
     }
 
@@ -645,19 +647,63 @@ static void behavior_callback(UA_Server *server, void *data) {
 }
 
 /* -------------------------------------------------------------------------
- * Write ready file
+ * Ready file helpers
  * ---------------------------------------------------------------------- */
 
-static void write_ready_file(const char *path) {
+static void unlink_ready_file(const char *path) {
     if (!path || !*path) return;
-    FILE *fp = fopen(path, "w");
-    if (!fp) {
-        fprintf(stderr, "[open62541] warn: cannot write ready file '%s': %s\n",
+    if (unlink(path) != 0 && errno != ENOENT) {
+        fprintf(stderr, "[open62541] warn: unlink ready file '%s': %s\n",
                 path, strerror(errno));
-        return;
     }
-    fprintf(fp, "ready\n");
+}
+
+/*
+ * Write the readiness file atomically:
+ *   1. Remove any stale file from a prior run (called on startup).
+ *   2. Write JSON to <path>.tmp
+ *   3. Rename <path>.tmp -> <path>
+ * If explicit == 1 and the write/rename fails, print FATAL and return -1.
+ * If explicit == 0, failures are warnings only and return 0.
+ */
+static int write_ready_file_atomic(const char *path, int explicit,
+                                    const char *adapter,
+                                    const char *fixture_id,
+                                    const char *adv_url) {
+    if (!path || !*path) return 0;
+
+    char tmp_path[4096];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+
+    FILE *fp = fopen(tmp_path, "w");
+    if (!fp) {
+        if (explicit) {
+            fprintf(stderr, "FATAL: cannot write ready file '%s': %s\n",
+                    tmp_path, strerror(errno));
+            return -1;
+        }
+        fprintf(stderr, "[open62541] warn: cannot write ready file '%s': %s\n",
+                tmp_path, strerror(errno));
+        return 0;
+    }
+
+    fprintf(fp, "{\"ready\":true,\"adapter\":\"%s\",\"fixture\":\"%s\",\"endpoint\":\"%s\"}\n",
+            adapter ? adapter : "open62541",
+            fixture_id ? fixture_id : "",
+            adv_url ? adv_url : "");
     fclose(fp);
+
+    if (rename(tmp_path, path) != 0) {
+        unlink(tmp_path);
+        if (explicit) {
+            fprintf(stderr, "FATAL: cannot rename ready file '%s' -> '%s': %s\n",
+                    tmp_path, path, strerror(errno));
+            return -1;
+        }
+        fprintf(stderr, "[open62541] warn: cannot rename ready file: %s\n",
+                strerror(errno));
+    }
+    return 0;
 }
 
 /* -------------------------------------------------------------------------
@@ -674,16 +720,27 @@ int server_run(const ServerArgs *args) {
     }
     fprintf(stderr, "[open62541] info: fixture loaded id=%s\n", fixture->id);
 
-    /* Determine port */
-    int port = fixture->port;
-    if (args->endpointUrl && *args->endpointUrl) {
-        /* Parse port from opc.tcp://host:PORT/path */
-        const char *colon = strrchr(args->endpointUrl, ':');
-        if (colon) {
-            int p = atoi(colon + 1);
-            if (p > 0) port = p;
-        }
-    }
+    /* Resolve bind / advertised parameters */
+    const char *bind_addr   = (args->bindAddress && *args->bindAddress)
+                               ? args->bindAddress : "0.0.0.0";
+    int         bind_port   = (args->bindPort > 0) ? args->bindPort : fixture->port;
+    const char *adv_host    = (args->advertisedHost && *args->advertisedHost)
+                               ? args->advertisedHost : "localhost";
+    int         adv_port    = (args->advertisedPort > 0) ? args->advertisedPort : bind_port;
+    const char *ep_path     = (args->endpointPath && *args->endpointPath)
+                               ? args->endpointPath
+                               : (fixture->endpointPath ? fixture->endpointPath : "");
+
+    char bind_url[512];
+    char adv_url[512];
+    snprintf(bind_url, sizeof(bind_url), "opc.tcp://%s:%d%s", bind_addr, bind_port, ep_path);
+    snprintf(adv_url,  sizeof(adv_url),  "opc.tcp://%s:%d%s", adv_host,  adv_port,  ep_path);
+
+    fprintf(stderr, "[open62541] info: bind=%s advertised=%s\n", bind_url, adv_url);
+
+    /* Remove any stale ready file from a prior run */
+    if (args->readyFile && *args->readyFile)
+        unlink_ready_file(args->readyFile);
 
     /* Create server */
     UA_Server *server = UA_Server_new();
@@ -693,14 +750,28 @@ int server_run(const ServerArgs *args) {
         return 1;
     }
     UA_ServerConfig *cfg = UA_Server_getConfig(server);
-    /* UA_ServerConfig_setMinimal sets up a minimal TCP server on the given port */
-    UA_StatusCode cfgSc = UA_ServerConfig_setMinimal(cfg, (UA_UInt16)port, NULL);
+    UA_StatusCode cfgSc = UA_ServerConfig_setMinimal(cfg, (UA_UInt16)bind_port, NULL);
     if (cfgSc != UA_STATUSCODE_GOOD) {
         fprintf(stderr, "[open62541] error: UA_ServerConfig_setMinimal: 0x%08" PRIx32 "\n",
                 (uint32_t)cfgSc);
         UA_Server_delete(server);
         fixture_free(fixture);
         return 1;
+    }
+
+    /* Override advertised endpoint URL */
+    for (size_t i = 0; i < cfg->endpointsSize; i++) {
+        UA_String_clear(&cfg->endpoints[i].endpointUrl);
+        cfg->endpoints[i].endpointUrl = UA_STRING_ALLOC(adv_url);
+    }
+    for (size_t i = 0; i < cfg->applicationDescription.discoveryUrlsSize; i++) {
+        UA_String_clear(&cfg->applicationDescription.discoveryUrls[i]);
+        cfg->applicationDescription.discoveryUrls[i] = UA_STRING_ALLOC(adv_url);
+    }
+    /* serverUrls controls what open62541 binds/advertises in later versions */
+    for (size_t i = 0; i < cfg->serverUrlsSize; i++) {
+        UA_String_clear(&cfg->serverUrls[i]);
+        cfg->serverUrls[i] = UA_STRING_ALLOC(adv_url);
     }
 
     /* Application description */
@@ -800,7 +871,6 @@ int server_run(const ServerArgs *args) {
                     nd->outputArgCount, outArgs,
                     NULL, NULL);
 
-                /* Free UA_Argument arrays */
                 for (size_t j = 0; j < nd->inputArgCount; j++)
                     UA_Argument_clear(&inArgs[j]);
                 for (size_t j = 0; j < nd->outputArgCount; j++)
@@ -861,8 +931,21 @@ int server_run(const ServerArgs *args) {
         return 1;
     }
 
-    fprintf(stderr, "[open62541] info: server started port=%d\n", fixture->port);
-    write_ready_file(args->readyFile);
+    fprintf(stderr, "[open62541] info: server started bind_port=%d adv=%s\n",
+            bind_port, adv_url);
+
+    /* Write readiness file atomically */
+    if (args->readyFile && *args->readyFile) {
+        int r = write_ready_file_atomic(args->readyFile, args->readyFileExplicit,
+                                         "open62541", fixture->id, adv_url);
+        if (r != 0) {
+            UA_Server_run_shutdown(server);
+            UA_Server_delete(server);
+            free(behCtxs); free(nsMap);
+            fixture_free(fixture);
+            return 6;
+        }
+    }
 
     /* Main loop */
     while (g_running) {
@@ -872,6 +955,10 @@ int server_run(const ServerArgs *args) {
     fprintf(stderr, "[open62541] info: shutting down\n");
     UA_Server_run_shutdown(server);
     UA_Server_delete(server);
+
+    /* Remove ready file on clean shutdown */
+    if (args->readyFile && *args->readyFile)
+        unlink_ready_file(args->readyFile);
 
     /* Clean up behavior contexts */
     if (behCtxs) {

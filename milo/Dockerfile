@@ -1,4 +1,3 @@
-ARG DEBIAN_DIGEST=sha256:placeholder
 ARG MAVEN_VERSION=3.9.8
 
 # Stage 1: build

@@ -42,6 +42,7 @@ public class Main {
                     CapabilitiesCommand.run();
                     break;
 
+
                 case "test":
                     runSelfTest();
                     break;
