@@ -50,8 +50,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=open62541-build /src/open62541/build/open62541.h /opt/open62541/include/open62541.h
 COPY --from=open62541-build /src/open62541/build/open62541.c /opt/open62541/src/open62541.c
 
-# Copy adapter source
-COPY open62541 /src/adapter
+    # Copy adapter source
+COPY . /src/adapter
 
 WORKDIR /src/adapter/build
 RUN cmake .. \

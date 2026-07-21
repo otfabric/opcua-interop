@@ -41,7 +41,10 @@ jobs:
             ghcr.io/otfabric/opcua-interop-open62541:smoke \
             server \
             --fixture /fixtures/baseline/fixture.json \
-            --endpoint opc.tcp://0.0.0.0:4840/opcua-interop \
+            --bind-address 0.0.0.0 \
+            --bind-port 4840 \
+            --advertised-host localhost \
+            --endpoint-path /opcua-interop \
             --ready-file /run/opcua-interop/ready)
           scripts/wait-ready.sh "${cname}" 60
           docker stop --time=10 "${cname}"
@@ -82,7 +85,10 @@ jobs:
             ghcr.io/otfabric/opcua-interop-milo:smoke \
             server \
             --fixture /fixtures/baseline/fixture.json \
-            --endpoint opc.tcp://0.0.0.0:4840/opcua-interop \
+            --bind-address 0.0.0.0 \
+            --bind-port 4840 \
+            --advertised-host localhost \
+            --endpoint-path /opcua-interop \
             --ready-file /run/opcua-interop/ready)
           scripts/wait-ready.sh "${cname}" 60
           docker stop --time=10 "${cname}"

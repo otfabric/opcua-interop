@@ -115,7 +115,7 @@ Smoke script extended to cover `call` and `subscribe` in all four cross-stack di
 
 ---
 
-## Phase 6 — Cross-stack equivalence smoke ← current
+## Phase 6 — Cross-stack equivalence smoke ✓
 
 All four directions:
 - open62541 client → open62541 server
@@ -130,14 +130,15 @@ Assertions limited to fixture realization:
 4. Read a representative scalar set
 5. Write Access.ReadWrite
 6. Call Methods.Add
-7. Receive two Dynamic.Counter notifications
+7. Receive three Dynamic.Counter notifications
 8. Disconnect
 
-`scripts/smoke.sh cross` must automate all four directions with exit 0/1.
+`scripts/smoke.sh cross` automates all four directions with exit 0/1.
+Cross-stack CI job in `.github/workflows/smoke.yml` runs after both single-adapter jobs pass.
 
 ---
 
-## Phase 7 — First go-opcua consumer integration
+## Phase 7 — First go-opcua consumer integration ← current
 
 Release a provisional tagged image (v0.1.0 candidate) and begin consumer tests in
 `go-opcua/interop/`.
