@@ -11,12 +11,10 @@ ARG OPEN62541_COMMIT=v1.3.9
 ARG OPEN62541_REPO=https://github.com/open62541/open62541
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
       ca-certificates \
       cmake \
-      gcc \
       git \
-      libc6-dev \
-      make \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -39,11 +37,9 @@ RUN cmake .. \
 FROM debian:bookworm-slim AS adapter-build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
       cmake \
-      gcc \
-      libc6-dev \
       libcjson-dev \
-      make \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy open62541 amalgam
