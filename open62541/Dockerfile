@@ -1,13 +1,11 @@
 # open62541 C adapter — multi-stage build.
-# Build from repository root:
-#   docker buildx build --platform=linux/amd64 -f open62541/Dockerfile -t opcua-interop-open62541:local .
-
-ARG DEBIAN_DIGEST=sha256:39868af6be6b8a5e29dfc7f5c3a4974b4b9e3a86e5d57b7e5e0bc5ce2568e77d
+# Build from the open62541/ directory:
+#   docker build -f open62541/Dockerfile -t opcua-interop-open62541:local open62541/
 
 # ---------------------------------------------------------------------------
 # Stage 1 — build open62541 amalgam from source
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim@${DEBIAN_DIGEST} AS open62541-build
+FROM debian:bookworm-slim AS open62541-build
 
 ARG OPEN62541_COMMIT=v1.3.9
 ARG OPEN62541_REPO=https://github.com/open62541/open62541
@@ -37,7 +35,7 @@ RUN cmake .. \
 # ---------------------------------------------------------------------------
 # Stage 2 — compile the adapter
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim@${DEBIAN_DIGEST} AS adapter-build
+FROM debian:bookworm-slim AS adapter-build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       cmake \
@@ -64,7 +62,7 @@ RUN cmake .. \
 # ---------------------------------------------------------------------------
 # Stage 3 — minimal runtime image
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim@${DEBIAN_DIGEST} AS runtime
+FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bash \

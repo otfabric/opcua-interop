@@ -47,7 +47,8 @@ start_server() {
         --bind-port 4840 \
         --advertised-host localhost \
         --endpoint-path "${ENDPOINT_PATH}" \
-        --ready-file /run/opcua-interop/ready
+        --ready-file /run/opcua-interop/ready \
+        >/dev/null
 
     echo "smoke-${name}-$$"
 }
