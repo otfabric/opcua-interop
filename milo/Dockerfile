@@ -1,16 +1,35 @@
-# Milo adapter — Phase 3 (not yet implemented)
-#
-# This is a placeholder that will be replaced during Phase 3 implementation.
-# The multi-stage build will be:
-#
-#   Stage 1 (builder): eclipse-temurin:<version>-jdk with Maven, pinned Milo version
-#   Stage 2 (runtime): eclipse-temurin:<version>-jre-jammy
-#
-# Pinned versions (to be set during Phase 3):
-#   Eclipse Milo:  0.6.x
-#   JDK:           21 (LTS)
-#   Maven:         3.9.x
+ARG DEBIAN_DIGEST=sha256:placeholder
+ARG MAVEN_VERSION=3.9.8
 
-# Placeholder so the Dockerfile is syntactically valid
+# Stage 1: build
+FROM eclipse-temurin:21-jdk-jammy AS builder
+
+ARG MAVEN_VERSION
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    curl -fsSL \
+      "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+      | tar -xzC /opt && \
+    ln -s "/opt/apache-maven-${MAVEN_VERSION}/bin/mvn" /usr/local/bin/mvn
+
+WORKDIR /build
+
+COPY pom.xml .
+RUN mvn -B dependency:go-offline -q
+
+COPY src/ src/
+RUN mvn -B package -DskipTests && \
+    cp target/opcua-interop-milo-*.jar target/opcua-interop-milo.jar
+
+# Stage 2: runtime
 FROM eclipse-temurin:21-jre-jammy AS runtime
-RUN echo "Milo adapter: not yet implemented (Phase 3)" && exit 1
+
+RUN mkdir -p /app /run/opcua-interop
+
+COPY --from=builder /build/target/opcua-interop-milo.jar /app/opcua-interop-milo.jar
+
+EXPOSE 4840
+
+ENTRYPOINT ["java", "-jar", "/app/opcua-interop-milo.jar"]

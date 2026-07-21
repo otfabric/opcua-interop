@@ -64,7 +64,7 @@ Acceptance:
 
 ---
 
-### Phase 3 — Milo server
+### Phase 3 — Milo server ✓
 
 Deliverables:
 - `milo/Dockerfile` (multi-stage, pinned JDK and release)

@@ -1,3 +1,8 @@
+# Self-documented Makefile (https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html)
+# Run 'make' or 'make help' to list targets.
+
+.DEFAULT_GOAL := help
+
 REGISTRY     ?= ghcr.io/otfabric
 VERSION      ?= dev
 PLATFORMS    ?= linux/amd64,linux/arm64
@@ -11,39 +16,42 @@ MILO_PORT      ?= 4841
 FIXTURE_SCHEMA = fixtures/schema/opcua-fixture.schema.json
 FIXTURE_DIRS   = $(wildcard fixtures/*/fixture.json)
 
-.PHONY: all
-all: validate build
+.PHONY: help all build build-open62541 build-milo image-open62541 image-milo validate validate-fixtures run-open62541 run-milo smoke smoke-open62541 smoke-milo smoke-cross-stack certs release clean
+
+help: ## Show this help
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+all: validate build ## Run all targets
 
 # ── Build ────────────────────────────────────────────────────────────────────
 
-.PHONY: build
-build: build-open62541 build-milo
+build: build-open62541 build-milo ## Build both adapter images (multi-arch)
 
-.PHONY: build-open62541
-build-open62541:
+build-open62541: ## Build open62541 image only
+	@echo "Building open62541 image..."
 	docker buildx build \
 		--platform $(PLATFORMS) \
 		--tag $(IMAGE_OPEN62541):$(VERSION) \
 		--file open62541/Dockerfile \
 		open62541/
 
-.PHONY: build-milo
-build-milo:
+build-milo: ## Build Milo image only
+	@echo "Building Milo image..."
 	docker buildx build \
 		--platform $(PLATFORMS) \
 		--tag $(IMAGE_MILO):$(VERSION) \
 		--file milo/Dockerfile \
 		milo/
 
-.PHONY: image-open62541
-image-open62541:
+image-open62541: ## Build open62541 image (host arch)
+	@echo "Building open62541 image (host arch)..."
 	docker build \
 		--tag $(IMAGE_OPEN62541):$(VERSION) \
 		--file open62541/Dockerfile \
 		open62541/
 
-.PHONY: image-milo
-image-milo:
+image-milo: ## Build Milo image (host arch)
+	@echo "Building Milo image (host arch)..."
 	docker build \
 		--tag $(IMAGE_MILO):$(VERSION) \
 		--file milo/Dockerfile \
@@ -51,17 +59,16 @@ image-milo:
 
 # ── Validation ───────────────────────────────────────────────────────────────
 
-.PHONY: validate
-validate: validate-fixtures
+validate: validate-fixtures ## Run all validation checks
 
-.PHONY: validate-fixtures
-validate-fixtures:
+validate-fixtures: ## Validate all fixture files against schema
+	@echo "Validating fixture files..."
 	@scripts/validate-fixtures.sh
 
 # ── Run ──────────────────────────────────────────────────────────────────────
 
-.PHONY: run-open62541
-run-open62541:
+run-open62541: ## Start open62541 server on port $(OPEN62541_PORT)
+	@echo "Starting open62541 server on port $(OPEN62541_PORT)..."
 	docker run --rm \
 		-p $(OPEN62541_PORT):4840 \
 		-v "$(PWD)/fixtures:/fixtures:ro" \
@@ -73,8 +80,8 @@ run-open62541:
 		--pki-dir /pki \
 		--ready-file /run/opcua-interop/ready
 
-.PHONY: run-milo
-run-milo:
+run-milo: ## Start Milo server on port $(MILO_PORT)
+	@echo "Starting Milo server on port $(MILO_PORT)..."
 	docker run --rm \
 		-p $(MILO_PORT):4840 \
 		-v "$(PWD)/fixtures:/fixtures:ro" \
@@ -88,31 +95,30 @@ run-milo:
 
 # ── Smoke tests ──────────────────────────────────────────────────────────────
 
-.PHONY: smoke
-smoke: smoke-open62541 smoke-milo smoke-cross-stack
+smoke: smoke-open62541 smoke-milo smoke-cross-stack ## Run all smoke tests
 
-.PHONY: smoke-open62541
-smoke-open62541:
+smoke-open62541: ## Smoke test open62541 adapter
+	@echo "Smoking open62541 adapter..."
 	@scripts/smoke.sh open62541 $(IMAGE_OPEN62541):$(VERSION)
 
-.PHONY: smoke-milo
-smoke-milo:
+smoke-milo: ## Smoke test Milo adapter
+	@echo "Smoking Milo adapter..."
 	@scripts/smoke.sh milo $(IMAGE_MILO):$(VERSION)
 
-.PHONY: smoke-cross-stack
-smoke-cross-stack:
+smoke-cross-stack: ## Cross-stack interop self-check
+	@echo "Smoking cross-stack interop self-check..."
 	@scripts/smoke.sh cross $(IMAGE_OPEN62541):$(VERSION) $(IMAGE_MILO):$(VERSION)
 
 # ── Certificates ─────────────────────────────────────────────────────────────
 
-.PHONY: certs
-certs:
+certs: ## Generate test PKI
+	@echo "Generating test PKI..."
 	@certs/generate.sh
 
 # ── Release ──────────────────────────────────────────────────────────────────
 
-.PHONY: release
-release:
+release: ## Build and push multi-arch release images
+	@echo "Building and pushing multi-arch release images..."
 ifndef VERSION
 	$(error VERSION is required: make release VERSION=v0.1.0)
 endif
@@ -140,39 +146,10 @@ endif
 
 # ── Clean ────────────────────────────────────────────────────────────────────
 
-.PHONY: clean
-clean:
+clean: ## Remove containers and build artifacts
+	@echo "Removing containers and build artifacts..."
 	docker compose down --remove-orphans 2>/dev/null || true
 	docker rmi $(IMAGE_OPEN62541):$(VERSION) 2>/dev/null || true
 	docker rmi $(IMAGE_MILO):$(VERSION) 2>/dev/null || true
 	rm -rf open62541/build/ milo/target/
 
-.PHONY: help
-help:
-	@echo "Usage: make [target] [VERSION=v0.1.0]"
-	@echo ""
-	@echo "Build:"
-	@echo "  build                Build both adapter images (multi-arch)"
-	@echo "  build-open62541      Build open62541 image only"
-	@echo "  build-milo           Build Milo image only"
-	@echo "  image-open62541      Build open62541 image (host arch)"
-	@echo "  image-milo           Build Milo image (host arch)"
-	@echo ""
-	@echo "Validation:"
-	@echo "  validate             Run all validation checks"
-	@echo "  validate-fixtures    Validate all fixture files against schema"
-	@echo ""
-	@echo "Run:"
-	@echo "  run-open62541        Start open62541 server on port $(OPEN62541_PORT)"
-	@echo "  run-milo             Start Milo server on port $(MILO_PORT)"
-	@echo ""
-	@echo "Smoke tests:"
-	@echo "  smoke                Run all smoke tests"
-	@echo "  smoke-open62541      Smoke test open62541 adapter"
-	@echo "  smoke-milo           Smoke test Milo adapter"
-	@echo "  smoke-cross-stack    Cross-stack interop self-check"
-	@echo ""
-	@echo "Other:"
-	@echo "  certs                Generate test PKI"
-	@echo "  release VERSION=...  Build and push multi-arch release images"
-	@echo "  clean                Remove containers and build artifacts"
