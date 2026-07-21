@@ -51,6 +51,6 @@ public class CapabilitiesCommand {
         } catch (Exception ignored) {
             // fall through to default
         }
-        return "0.6.12";
+        return "1.1.5";
     }
 }

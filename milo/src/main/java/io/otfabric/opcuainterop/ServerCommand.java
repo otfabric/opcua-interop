@@ -2,7 +2,8 @@ package io.otfabric.opcuainterop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.milo.opcua.sdk.server.OpcUaServer;
-import org.eclipse.milo.opcua.sdk.server.api.config.OpcUaServerConfig;
+import org.eclipse.milo.opcua.sdk.server.OpcUaServerConfig;
+import org.eclipse.milo.opcua.sdk.server.EndpointConfig;
 import org.eclipse.milo.opcua.sdk.server.identity.AnonymousIdentityValidator;
 import org.eclipse.milo.opcua.stack.core.security.SecurityPolicy;
 import org.eclipse.milo.opcua.stack.core.transport.TransportProfile;
@@ -10,7 +11,6 @@ import org.eclipse.milo.opcua.stack.core.types.builtin.DateTime;
 import org.eclipse.milo.opcua.stack.core.types.builtin.LocalizedText;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.MessageSecurityMode;
 import org.eclipse.milo.opcua.stack.core.types.structured.BuildInfo;
-import org.eclipse.milo.opcua.stack.server.EndpointConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,8 +69,8 @@ public class ServerCommand {
         LOG.info("Advertised endpoint: {}", advertisedEndpoint);
         LOG.debug("PKI dir: {}", pkiDir);
 
-        Set<EndpointConfiguration> endpointSet = new LinkedHashSet<>();
-        EndpointConfiguration.Builder builder = EndpointConfiguration.newBuilder()
+        Set<EndpointConfig> endpointSet = new LinkedHashSet<>();
+        EndpointConfig.Builder builder = EndpointConfig.newBuilder()
                 .setBindAddress(bindAddress)
                 .setBindPort(bindPort)
                 .setHostname(advertisedHost)
@@ -87,7 +87,7 @@ public class ServerCommand {
                 "OTFabric",
                 "opcua-interop-milo",
                 "0.1.0",
-                "0.6.12",
+                "1.1.5",
                 DateTime.now());
 
         OpcUaServerConfig config = OpcUaServerConfig.builder()

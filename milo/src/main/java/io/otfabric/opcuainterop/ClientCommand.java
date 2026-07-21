@@ -1,12 +1,13 @@
 package io.otfabric.opcuainterop;
 
+import org.eclipse.milo.opcua.sdk.client.DiscoveryClient;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
-import org.eclipse.milo.opcua.sdk.client.api.config.OpcUaClientConfig;
-import org.eclipse.milo.opcua.sdk.client.api.subscriptions.UaMonitoredItem;
-import org.eclipse.milo.opcua.sdk.client.api.subscriptions.UaSubscription;
-import org.eclipse.milo.opcua.stack.client.DiscoveryClient;
+import org.eclipse.milo.opcua.sdk.client.OpcUaClientConfig;
+import org.eclipse.milo.opcua.sdk.client.subscriptions.OpcUaMonitoredItem;
+import org.eclipse.milo.opcua.sdk.client.subscriptions.OpcUaSubscription;
 import org.eclipse.milo.opcua.stack.core.AttributeId;
 import org.eclipse.milo.opcua.stack.core.Identifiers;
+import org.eclipse.milo.opcua.stack.core.UaException;
 import org.eclipse.milo.opcua.stack.core.security.SecurityPolicy;
 import org.eclipse.milo.opcua.stack.core.types.builtin.*;
 import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.*;
@@ -58,13 +59,15 @@ public class ClientCommand {
         } catch (NodeIdParser.InvalidNodeIdException | NodeIdParser.UnknownNamespaceException e) {
             System.out.println(new ResultBuilder(op).error("input", e.getMessage()).toJson());
             return 2;
-        } catch (TimeoutException e) {
-            System.out.println(new ResultBuilder(op).error("timeout", "operation timed out").toJson());
-            return 7;
         } catch (TransportException e) {
             System.out.println(new ResultBuilder(op).error("transport", e.getMessage()).toJson());
             return 3;
-        } catch (ExecutionException e) {
+        } catch (org.eclipse.milo.opcua.stack.core.UaServiceFaultException e) {
+            StatusCode sc = e.getStatusCode();
+            System.out.println(new ResultBuilder(op).success(false).serviceResult(sc)
+                    .error("service", e.getMessage()).toJson());
+            return 4;
+        } catch (UaException e) {
             Throwable cause = e.getCause();
             if (cause instanceof org.eclipse.milo.opcua.stack.core.UaServiceFaultException) {
                 StatusCode sc = ((org.eclipse.milo.opcua.stack.core.UaServiceFaultException) cause).getStatusCode();
@@ -72,7 +75,7 @@ public class ClientCommand {
                         .error("service", cause.getMessage()).toJson());
                 return 4;
             }
-            String msg = cause != null ? cause.getMessage() : e.getMessage();
+            String msg = e.getMessage();
             System.out.println(new ResultBuilder(op).error("transport", msg).toJson());
             return 3;
         } catch (Exception e) {
@@ -128,8 +131,7 @@ public class ClientCommand {
                 nodeIds.add(NodeIdParser.resolveWithClient(ns, client, rto));
             }
 
-            List<DataValue> dvs = client.readValues(0.0, TimestampsToReturn.Both, nodeIds)
-                    .get(rto, MILLISECONDS);
+            List<DataValue> dvs = client.readValues(0.0, TimestampsToReturn.Both, nodeIds);
 
             ResultBuilder rb = new ResultBuilder("read");
             boolean anyBad = false;
@@ -184,7 +186,8 @@ public class ClientCommand {
         try {
             NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
             Variant var   = buildWriteVariant(typeStr, valStr);
-            StatusCode sc = client.writeValue(nodeId, new DataValue(var)).get(rto, MILLISECONDS);
+            List<StatusCode> scList = client.writeValues(List.of(nodeId), List.of(new DataValue(var)));
+            StatusCode sc = scList.get(0);
 
             Map<String, Object> writeResult = new LinkedHashMap<>();
             writeResult.put("nodeId",     ResultBuilder.nodeIdToString(nodeId));
@@ -230,7 +233,7 @@ public class ClientCommand {
                     UInteger.valueOf(0xFF),
                     UInteger.valueOf(BrowseResultMask.All.getValue()));
 
-            BrowseResult firstResult = client.browse(bd).get(rto, MILLISECONDS);
+            BrowseResult firstResult = client.browse(bd);
             List<ReferenceDescription> allRefs = new ArrayList<>(
                     Arrays.asList(firstResult.getReferences() != null
                             ? firstResult.getReferences() : new ReferenceDescription[0]));
@@ -246,7 +249,7 @@ public class ClientCommand {
                         UInteger.valueOf((int) Math.min(rto, Integer.MAX_VALUE)),
                         null);
                 BrowseNextRequest req = new BrowseNextRequest(header, false, new ByteString[]{contPoint});
-                BrowseNextResponse resp = (BrowseNextResponse) client.sendRequest(req).get(rto, MILLISECONDS);
+                BrowseNextResponse resp = (BrowseNextResponse) client.sendRequest(req);
                 BrowseResult next = resp.getResults()[0];
                 if (next.getReferences() != null) allRefs.addAll(Arrays.asList(next.getReferences()));
                 contPoint = next.getContinuationPoint();
@@ -318,7 +321,7 @@ public class ClientCommand {
 
             Variant[] inputs = inputVariants.toArray(new Variant[0]);
             CallMethodRequest req = new CallMethodRequest(objectNodeId, methodNodeId, inputs);
-            CallResponse callResponse = client.call(List.of(req)).get(rto, MILLISECONDS);
+            CallResponse callResponse = client.call(List.of(req));
 
             CallMethodResult methodResult = callResponse.getResults()[0];
             StatusCode methodSc = methodResult.getStatusCode();
@@ -372,57 +375,50 @@ public class ClientCommand {
         try {
             NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
 
-            UaSubscription subscription = client.getSubscriptionManager()
-                .createSubscription(piMs).get(rto, MILLISECONDS);
-
-            List<Map<String, Object>> notifications =
-                Collections.synchronizedList(new ArrayList<>());
-            CountDownLatch latch = new CountDownLatch(nWanted);
-            AtomicReference<StatusCode> monStatusRef =
-                new AtomicReference<>(StatusCode.GOOD);
-            AtomicInteger seqRef = new AtomicInteger(0);
+            OpcUaSubscription subscription = new OpcUaSubscription(client, piMs);
+            subscription.create();
 
             ReadValueId readValueId = new ReadValueId(
                 nodeId,
                 AttributeId.Value.uid(),
                 null,
                 QualifiedName.NULL_VALUE);
-            MonitoringParameters params = new MonitoringParameters(
-                uint(1), siMs, null, uint(10), true);
-            MonitoredItemCreateRequest monRequest =
-                new MonitoredItemCreateRequest(readValueId, MonitoringMode.Reporting, params);
+            OpcUaMonitoredItem monItem = new OpcUaMonitoredItem(readValueId);
+            monItem.setSamplingInterval(siMs);
+            monItem.setQueueSize(uint(10));
 
-            subscription.createMonitoredItems(
-                TimestampsToReturn.Both,
-                List.of(monRequest),
-                (item, idx) -> {
-                    monStatusRef.set(item.getStatusCode());
-                    item.setValueConsumer((DataValue dv) -> {
-                        if (notifications.size() >= nWanted) return;
-                        Map<String, Object> n = new LinkedHashMap<>();
-                        int seq = seqRef.incrementAndGet();
-                        n.put("sequenceNumber", seq);
-                        String typeName = ResultBuilder.builtInTypeName(dv.getValue());
-                        n.put("value",       ResultBuilder.encodeVariantValue(dv.getValue()));
-                        n.put("dataType",    typeName);
-                        n.put("builtInType", ResultBuilder.builtInTypeId(typeName));
-                        StatusCode dvSc = dv.getStatusCode() != null
-                            ? dv.getStatusCode() : StatusCode.GOOD;
-                        n.put("statusCode",  ResultBuilder.statusCodeJson(dvSc));
-                        if (dv.getSourceTime() != null && dv.getSourceTime().getJavaTime() != 0) {
-                            n.put("sourceTimestamp",
-                                dv.getSourceTime().getJavaInstant().toString());
-                        }
-                        notifications.add(n);
-                        latch.countDown();
-                    });
-                }
-            ).get(rto, MILLISECONDS);
+            subscription.addMonitoredItem(monItem);
+            subscription.createMonitoredItems();
 
-            StatusCode monSc = monStatusRef.get();
+            StatusCode monSc = monItem.getCreateResult().orElse(StatusCode.GOOD);
+
+            List<Map<String, Object>> notifications =
+                Collections.synchronizedList(new ArrayList<>());
+            CountDownLatch latch = new CountDownLatch(nWanted);
+            AtomicInteger seqRef = new AtomicInteger(0);
             boolean timedOut = false;
 
             if (monSc.isGood()) {
+                monItem.setDataValueListener((item, dv) -> {
+                    if (notifications.size() >= nWanted) return;
+                    Map<String, Object> n = new LinkedHashMap<>();
+                    int seq = seqRef.incrementAndGet();
+                    n.put("sequenceNumber", seq);
+                    String typeName = ResultBuilder.builtInTypeName(dv.getValue());
+                    n.put("value",       ResultBuilder.encodeVariantValue(dv.getValue()));
+                    n.put("dataType",    typeName);
+                    n.put("builtInType", ResultBuilder.builtInTypeId(typeName));
+                    StatusCode dvSc = dv.getStatusCode() != null
+                        ? dv.getStatusCode() : StatusCode.GOOD;
+                    n.put("statusCode",  ResultBuilder.statusCodeJson(dvSc));
+                    if (dv.getSourceTime() != null && dv.getSourceTime().getJavaTime() != 0) {
+                        n.put("sourceTimestamp",
+                            dv.getSourceTime().getJavaInstant().toString());
+                    }
+                    notifications.add(n);
+                    latch.countDown();
+                });
+
                 timedOut = !latch.await(toMs, MILLISECONDS);
             }
 
@@ -441,9 +437,7 @@ public class ClientCommand {
             System.out.println(rb.toJson());
 
             try {
-                client.getSubscriptionManager()
-                    .deleteSubscription(subscription.getSubscriptionId())
-                    .get(dto, MILLISECONDS);
+                subscription.delete();
             } catch (Exception ignored) {}
 
             return timedOut ? 7 : (monSc.isGood() ? 0 : 4);
@@ -480,13 +474,13 @@ public class ClientCommand {
                 .build();
 
         OpcUaClient client = OpcUaClient.create(config);
-        client.connect().get(connectTimeoutMs, MILLISECONDS);
+        client.connect();
         return client;
     }
 
     private static void safeDisconnect(OpcUaClient client, long timeoutMs) {
         try {
-            client.disconnect().get(timeoutMs, MILLISECONDS);
+            client.disconnect();
         } catch (Exception e) {
             LOG.warn("Error during disconnect: {}", e.getMessage());
         }
@@ -553,7 +547,8 @@ public class ClientCommand {
      */
     private static NodeId expandedToLocalNodeId(ExpandedNodeId eId) {
         if (eId == null) return NodeId.NULL_VALUE;
-        int ns = eId.getNamespaceIndex().intValue();
+        UShort nsIdx = eId.getNamespaceIndex();
+        int ns = nsIdx != null ? nsIdx.intValue() : 0;
         Object id = eId.getIdentifier();
         if (id instanceof UInteger)           return new NodeId(ns, (UInteger) id);
         if (id instanceof String)             return new NodeId(ns, (String) id);

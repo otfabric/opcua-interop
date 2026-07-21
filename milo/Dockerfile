@@ -5,8 +5,9 @@ FROM eclipse-temurin:21-jdk-jammy AS builder
 
 ARG MAVEN_VERSION
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates && \
+RUN apt-get update -o Acquire::AllowInsecureRepositories=true \
+    -o Acquire::AllowDowngradeToInsecureRepositories=true && \
+    apt-get install -y --no-install-recommends --allow-unauthenticated curl ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
     curl -fsSL \
       "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
