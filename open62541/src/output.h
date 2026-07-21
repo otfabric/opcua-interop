@@ -37,4 +37,4 @@ void output_read_result(const char *nodeId, UA_StatusCode sc,
                         UA_DateTime sourceTs);
 
 /* Emit a complete "references" array from a browse response. */
-void output_browse_results(UA_BrowseResult *result);
+void output_browse_results(const UA_BrowseResult *result);

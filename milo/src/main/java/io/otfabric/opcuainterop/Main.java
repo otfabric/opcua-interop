@@ -1,4 +1,4 @@
-package io.otfabric.opcuacompat;
+package io.otfabric.opcuainterop;
 
 /**
  * Milo adapter entry point.

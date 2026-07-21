@@ -143,12 +143,17 @@ Fixture *fixture_load(const char *path, char *errBuf, size_t errLen) {
 
     const char *parse_err = NULL;
     cJSON *root = cJSON_ParseWithOpts(buf, &parse_err, 0);
-    free(buf);
     if (!root) {
-        snprintf(errBuf, errLen, "JSON parse error near: %.80s",
-                 parse_err ? parse_err : "(unknown)");
+        /* parse_err points into buf — copy context before freeing */
+        char ctx[96] = "(unknown)";
+        if (parse_err) {
+            snprintf(ctx, sizeof(ctx), "%.80s", parse_err);
+        }
+        free(buf);
+        snprintf(errBuf, errLen, "JSON parse error in '%s' near: %s", path, ctx);
         return NULL;
     }
+    free(buf);
 
     Fixture *f = calloc(1, sizeof(Fixture));
     if (!f) {

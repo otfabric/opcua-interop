@@ -296,7 +296,7 @@ void output_read_result(const char *nodeId, UA_StatusCode sc,
     printf("}]");
 }
 
-void output_browse_results(UA_BrowseResult *result) {
+void output_browse_results(const UA_BrowseResult *result) {
     printf(",\"references\":[");
     if (result) {
         for (size_t i = 0; i < result->referencesSize; i++) {
@@ -308,12 +308,29 @@ void output_browse_results(UA_BrowseResult *result) {
             printf(",\"isForward\":%s", ref->isForward ? "true" : "false");
             printf(",\"nodeId\":");
             print_ua_nodeid(&ref->nodeId.nodeId);
-            printf(",\"browseName\":\"%.*s\"",
-                   (int)ref->browseName.name.length,
-                   ref->browseName.name.data);
-            printf(",\"displayName\":\"%.*s\"",
-                   (int)ref->displayName.text.length,
-                   ref->displayName.text.data);
+            /* NUL-terminate before printing so print_json_string can escape */
+            {
+                char *bn = malloc(ref->browseName.name.length + 1);
+                char *dn = malloc(ref->displayName.text.length + 1);
+                if (bn) {
+                    memcpy(bn, ref->browseName.name.data, ref->browseName.name.length);
+                    bn[ref->browseName.name.length] = '\0';
+                    printf(",\"browseName\":");
+                    print_json_string(bn);
+                    free(bn);
+                } else {
+                    printf(",\"browseName\":null");
+                }
+                if (dn) {
+                    memcpy(dn, ref->displayName.text.data, ref->displayName.text.length);
+                    dn[ref->displayName.text.length] = '\0';
+                    printf(",\"displayName\":");
+                    print_json_string(dn);
+                    free(dn);
+                } else {
+                    printf(",\"displayName\":null");
+                }
+            }
             printf(",\"nodeClass\":%d", (int)ref->nodeClass);
             printf("}");
         }
