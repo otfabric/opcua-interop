@@ -771,7 +771,11 @@ int server_run(const ServerArgs *args) {
         UA_String_clear(&cfg->applicationDescription.discoveryUrls[i]);
         cfg->applicationDescription.discoveryUrls[i] = UA_STRING_ALLOC(adv_url);
     }
-    /* serverUrls (v1.3.x uses endpointUrl / discoveryUrls only) */
+    /* serverUrls controls what open62541 binds/advertises in later versions */
+    for (size_t i = 0; i < cfg->serverUrlsSize; i++) {
+        UA_String_clear(&cfg->serverUrls[i]);
+        cfg->serverUrls[i] = UA_STRING_ALLOC(adv_url);
+    }
 
     /* Application description */
     if (fixture->applicationUri) {

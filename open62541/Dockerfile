@@ -7,7 +7,7 @@
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS open62541-build
 
-ARG OPEN62541_COMMIT=v1.3.9
+ARG OPEN62541_COMMIT=v1.5.5
 ARG OPEN62541_REPO=https://github.com/open62541/open62541
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
