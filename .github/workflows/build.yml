@@ -1,0 +1,173 @@
+name: Build
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install check-jsonschema
+        run: pip install check-jsonschema
+
+      - name: Validate fixture schema
+        run: |
+          check-jsonschema \
+            --check-metaschema \
+            fixtures/schema/opcua-fixture.schema.json
+
+      - name: Validate fixtures
+        run: scripts/validate-fixtures.sh
+
+  build-open62541:
+    name: Build open62541 image
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build open62541 (host arch)
+        uses: docker/build-push-action@v7
+        with:
+          context: open62541
+          file: open62541/Dockerfile
+          push: false
+          load: true
+          tags: ghcr.io/otfabric/opcua-interop-open62541:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image
+        run: docker save ghcr.io/otfabric/opcua-interop-open62541:ci | gzip > /tmp/open62541.tar.gz
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-open62541
+          path: /tmp/open62541.tar.gz
+          retention-days: 1
+
+  build-milo:
+    name: Build Milo image
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Milo (host arch)
+        uses: docker/build-push-action@v7
+        with:
+          context: milo
+          file: milo/Dockerfile
+          push: false
+          load: true
+          tags: ghcr.io/otfabric/opcua-interop-milo:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image
+        run: docker save ghcr.io/otfabric/opcua-interop-milo:ci | gzip > /tmp/milo.tar.gz
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-milo
+          path: /tmp/milo.tar.gz
+          retention-days: 1
+
+  unit-test-open62541:
+    name: open62541 unit tests
+    runs-on: ubuntu-latest
+    needs: build-open62541
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: image-open62541
+          path: /tmp
+
+      - name: Load image
+        run: docker load < /tmp/open62541.tar.gz
+
+      - name: Run open62541 unit tests
+        run: |
+          docker run --rm \
+            -v "$PWD/fixtures:/fixtures:ro" \
+            ghcr.io/otfabric/opcua-interop-open62541:ci \
+            test
+
+  unit-test-milo:
+    name: Milo unit tests
+    runs-on: ubuntu-latest
+    needs: build-milo
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: image-milo
+          path: /tmp
+
+      - name: Load image
+        run: docker load < /tmp/milo.tar.gz
+
+      - name: Run Milo unit tests
+        run: |
+          docker run --rm \
+            -v "$PWD/fixtures:/fixtures:ro" \
+            ghcr.io/otfabric/opcua-interop-milo:ci \
+            test
+
+  # On pushes to main, verify each arch builds natively (no QEMU emulation).
+  # The 4 matrix jobs run in parallel on their native runners.
+  build-multiarch:
+    name: Multi-arch (${{ matrix.adapter }}/${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [unit-test-open62541, unit-test-milo]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - adapter: open62541
+            arch: amd64
+            runner: ubuntu-latest
+          - adapter: open62541
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - adapter: milo
+            arch: amd64
+            runner: ubuntu-latest
+          - adapter: milo
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build ${{ matrix.adapter }} (linux/${{ matrix.arch }})
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.adapter }}
+          file: ${{ matrix.adapter }}/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

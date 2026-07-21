@@ -1,0 +1,379 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/otfabric/opcua-interop/fixtures/schema/opcua-fixture.schema.json",
+  "title": "OPC UA Compatibility Fixture",
+  "description": "Stack-neutral, declarative description of a deterministic OPC UA address space for interoperability testing.",
+  "type": "object",
+  "required": ["schemaVersion", "id", "server", "endpoint", "namespaces"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "description": "Fixture schema version. Increment when the schema changes in a backward-incompatible way.",
+      "enum": ["1.0"]
+    },
+    "id": {
+      "type": "string",
+      "description": "Unique fixture identifier. Used to select fixtures and in diagnostic output.",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this fixture tests."
+    },
+    "server": {
+      "$ref": "#/$defs/ServerMetadata"
+    },
+    "endpoint": {
+      "$ref": "#/$defs/EndpointConfig"
+    },
+    "namespaces": {
+      "type": "array",
+      "description": "Custom namespace declarations. Namespace 0 (OPC UA) is always implicit.",
+      "items": {
+        "$ref": "#/$defs/NamespaceDeclaration"
+      },
+      "minItems": 0
+    },
+    "nodes": {
+      "type": "array",
+      "description": "Node definitions that both adapters must realize identically.",
+      "items": {
+        "$ref": "#/$defs/Node"
+      },
+      "default": []
+    },
+    "behaviors": {
+      "type": "array",
+      "description": "Dynamic value generator definitions. Each behavior drives one or more variables at a deterministic rate.",
+      "items": {
+        "$ref": "#/$defs/Behavior"
+      },
+      "default": []
+    },
+    "users": {
+      "type": "array",
+      "description": "User credentials for username/password authentication.",
+      "items": {
+        "$ref": "#/$defs/UserCredential"
+      },
+      "default": []
+    },
+    "securityProfiles": {
+      "type": "array",
+      "description": "Security policy and mode combinations to activate. Empty means None/None only.",
+      "items": {
+        "$ref": "#/$defs/SecurityProfile"
+      },
+      "default": []
+    }
+  },
+  "$defs": {
+    "ServerMetadata": {
+      "type": "object",
+      "description": "OPC UA ApplicationDescription for the server endpoint.",
+      "required": ["applicationUri", "productUri", "applicationName"],
+      "additionalProperties": false,
+      "properties": {
+        "applicationUri": {
+          "type": "string",
+          "description": "OPC UA ApplicationUri. Must be globally unique. Matches the certificate SAN when security is enabled.",
+          "format": "uri"
+        },
+        "productUri": {
+          "type": "string",
+          "description": "OPC UA ProductUri.",
+          "format": "uri"
+        },
+        "applicationName": {
+          "type": "string",
+          "description": "OPC UA ApplicationName (LocalizedText, locale defaults to en)."
+        }
+      }
+    },
+    "EndpointConfig": {
+      "type": "object",
+      "description": "Network endpoint configuration.",
+      "required": ["port"],
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "integer",
+          "description": "TCP port the server listens on.",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "path": {
+          "type": "string",
+          "description": "URL path component of the endpoint URL (e.g. /opcua-interop).",
+          "pattern": "^/[a-zA-Z0-9/_-]*$"
+        }
+      }
+    },
+    "NamespaceDeclaration": {
+      "type": "object",
+      "description": "A custom OPC UA namespace. Adapters register namespaces in declaration order; runtime namespace indices may differ between stacks.",
+      "required": ["uri"],
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "type": "string",
+          "description": "Short alias used in human-readable references inside this fixture file. Not an OPC UA concept.",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$"
+        },
+        "uri": {
+          "type": "string",
+          "description": "Namespace URI. Must be globally unique.",
+          "format": "uri"
+        }
+      }
+    },
+    "NodeId": {
+      "type": "string",
+      "description": "OPC UA NodeId in expanded form. Use nsu= prefix to reference namespaces by URI rather than runtime index. Examples: nsu=urn:example;s=My.Node  i=85  nsu=urn:example;i=1001  nsu=urn:example;g=550e8400-e29b-41d4-a716-446655440000",
+      "pattern": "^(nsu=[^;]+;)?(i=\\d+|s=.+|g=[0-9a-fA-F-]{36}|b=[A-Za-z0-9+/=]+)$"
+    },
+    "AccessLevel": {
+      "type": "string",
+      "description": "A single OPC UA AccessLevel bit.",
+      "enum": [
+        "CurrentRead",
+        "CurrentWrite",
+        "HistoryRead",
+        "HistoryWrite",
+        "SemanticChange",
+        "StatusWrite",
+        "TimestampWrite"
+      ]
+    },
+    "Node": {
+      "type": "object",
+      "description": "An OPC UA node to be created in the server address space.",
+      "required": ["nodeClass", "nodeId", "browseName", "displayName", "parentNodeId", "referenceType"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeClass": {
+          "type": "string",
+          "description": "OPC UA NodeClass.",
+          "enum": ["Object", "Variable", "Method", "ObjectType", "VariableType", "DataType", "View"]
+        },
+        "nodeId": {
+          "$ref": "#/$defs/NodeId",
+          "description": "NodeId for this node. Must be unique within the fixture."
+        },
+        "browseName": {
+          "type": "string",
+          "description": "OPC UA BrowseName in the form [namespaceIndex:]name or nsu=URI;name. Must be unique among siblings."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Human-readable DisplayName (en locale)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional node description."
+        },
+        "parentNodeId": {
+          "$ref": "#/$defs/NodeId",
+          "description": "NodeId of the parent node. The reference from parent to this node uses referenceType."
+        },
+        "referenceType": {
+          "type": "string",
+          "description": "OPC UA ReferenceType for the parent→child reference.",
+          "enum": [
+            "Organizes",
+            "HasComponent",
+            "HasProperty",
+            "HasSubtype",
+            "HasTypeDefinition",
+            "HasModellingRule",
+            "HasEncoding",
+            "HasDescription",
+            "HasEventSource",
+            "Aggregates"
+          ]
+        },
+        "typeDefinition": {
+          "$ref": "#/$defs/NodeId",
+          "description": "HasTypeDefinition reference target. Defaults to BaseObjectType or BaseDataVariableType."
+        },
+        "dataType": {
+          "type": "string",
+          "description": "For Variable nodes: OPC UA data type name or NodeId.",
+          "examples": [
+            "Boolean", "SByte", "Byte", "Int16", "UInt16", "Int32", "UInt32",
+            "Int64", "UInt64", "Float", "Double", "String", "DateTime", "Guid",
+            "ByteString", "XmlElement", "NodeId", "ExpandedNodeId",
+            "QualifiedName", "LocalizedText", "StatusCode"
+          ]
+        },
+        "valueRank": {
+          "type": "integer",
+          "description": "For Variable nodes: OPC UA ValueRank. -1=Scalar, 0=ScalarOrOneDimension, 1=OneDimension, n=n-dimensional matrix.",
+          "default": -1
+        },
+        "arrayDimensions": {
+          "type": "array",
+          "description": "For Variable nodes with valueRank >= 1: fixed array dimensions. 0 means variable-length in that dimension.",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "accessLevel": {
+          "type": "array",
+          "description": "For Variable nodes: set of AccessLevel bits to enable.",
+          "items": {
+            "$ref": "#/$defs/AccessLevel"
+          },
+          "default": ["CurrentRead"]
+        },
+        "minimumSamplingInterval": {
+          "type": "number",
+          "description": "Minimum sampling interval in milliseconds. -1=continuous, 0=fastest.",
+          "default": 0
+        },
+        "initialValue": {
+          "description": "For Variable nodes: the initial value. Type must match dataType. Arrays are JSON arrays. null represents a null/absent value."
+        },
+        "inputArguments": {
+          "type": "array",
+          "description": "For Method nodes: ordered list of input argument definitions.",
+          "items": {
+            "$ref": "#/$defs/Argument"
+          }
+        },
+        "outputArguments": {
+          "type": "array",
+          "description": "For Method nodes: ordered list of output argument definitions.",
+          "items": {
+            "$ref": "#/$defs/Argument"
+          }
+        },
+        "methodBehavior": {
+          "type": "string",
+          "description": "For Method nodes: name of the deterministic method behavior implemented by both adapters.",
+          "enum": ["Add", "Multiply", "Echo", "NoArguments", "MultipleOutputs", "Fail", "Delay"]
+        }
+      }
+    },
+    "Argument": {
+      "type": "object",
+      "description": "OPC UA Argument structure for method input/output parameters.",
+      "required": ["name", "dataType"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Argument name."
+        },
+        "dataType": {
+          "type": "string",
+          "description": "OPC UA data type name or NodeId."
+        },
+        "valueRank": {
+          "type": "integer",
+          "description": "ValueRank for array arguments. -1=Scalar.",
+          "default": -1
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable argument description."
+        }
+      }
+    },
+    "Behavior": {
+      "type": "object",
+      "description": "A deterministic dynamic value generator bound to a Variable node.",
+      "required": ["target", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/NodeId",
+          "description": "NodeId of the Variable node this behavior drives."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Behavior type. Both adapters must implement the same semantics.",
+          "enum": ["counter", "toggle", "ramp", "status-sequence", "static", "timestamp"]
+        },
+        "initial": {
+          "description": "Initial value for counter and ramp behaviors."
+        },
+        "increment": {
+          "type": "number",
+          "description": "Increment per interval for counter and ramp behaviors.",
+          "default": 1
+        },
+        "minimum": {
+          "type": "number",
+          "description": "Lower bound for ramp behavior."
+        },
+        "maximum": {
+          "type": "number",
+          "description": "Upper bound for ramp behavior."
+        },
+        "intervalMs": {
+          "type": "integer",
+          "description": "Update interval in milliseconds.",
+          "minimum": 1,
+          "default": 250
+        },
+        "statusCodes": {
+          "type": "array",
+          "description": "For status-sequence behavior: ordered list of status code names to cycle through.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "UserCredential": {
+      "type": "object",
+      "description": "Username/password credential for authenticated OPC UA sessions.",
+      "required": ["username", "password", "roles"],
+      "additionalProperties": false,
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string",
+          "description": "Plaintext password. For test infrastructure only."
+        },
+        "roles": {
+          "type": "array",
+          "description": "OPC UA roles assigned to this user.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "SecurityProfile": {
+      "type": "object",
+      "description": "An OPC UA security policy and message security mode combination to activate.",
+      "required": ["securityPolicy", "securityMode"],
+      "additionalProperties": false,
+      "properties": {
+        "securityPolicy": {
+          "type": "string",
+          "description": "OPC UA SecurityPolicy URI suffix or short name.",
+          "enum": [
+            "None",
+            "Basic128Rsa15",
+            "Basic256",
+            "Basic256Sha256",
+            "Aes128_Sha256_RsaOaep",
+            "Aes256_Sha256_RsaPss"
+          ]
+        },
+        "securityMode": {
+          "type": "string",
+          "description": "OPC UA MessageSecurityMode.",
+          "enum": ["None", "Sign", "SignAndEncrypt"]
+        }
+      }
+    }
+  }
+}

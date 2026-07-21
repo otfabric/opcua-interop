@@ -1,0 +1,64 @@
+services:
+  open62541:
+    image: ghcr.io/otfabric/opcua-interop-open62541:${OPCUA_COMPAT_VERSION:-dev}
+    command:
+      - server
+      - --fixture
+      - /fixtures/baseline/fixture.json
+      - --bind-address
+      - 0.0.0.0
+      - --bind-port
+      - "4840"
+      - --advertised-host
+      - open62541
+      - --endpoint-path
+      - /opcua-interop
+      - --pki-dir
+      - /pki
+      - --ready-file
+      - /run/opcua-interop/ready
+    ports:
+      - "4840:4840"
+    volumes:
+      - ./fixtures:/fixtures:ro
+      - ./certs/test-pki:/pki:ro
+    healthcheck:
+      test: ["CMD", "test", "-f", "/run/opcua-interop/ready"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+    environment:
+      OPCUA_LOG_LEVEL: ${OPCUA_LOG_LEVEL:-info}
+
+  milo:
+    image: ghcr.io/otfabric/opcua-interop-milo:${OPCUA_COMPAT_VERSION:-dev}
+    command:
+      - server
+      - --fixture
+      - /fixtures/baseline/fixture.json
+      - --bind-address
+      - 0.0.0.0
+      - --bind-port
+      - "4840"
+      - --advertised-host
+      - milo
+      - --endpoint-path
+      - /opcua-interop
+      - --pki-dir
+      - /pki
+      - --ready-file
+      - /run/opcua-interop/ready
+    ports:
+      - "4841:4840"
+    volumes:
+      - ./fixtures:/fixtures:ro
+      - ./certs/test-pki:/pki:ro
+    healthcheck:
+      test: ["CMD", "test", "-f", "/run/opcua-interop/ready"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+    environment:
+      OPCUA_LOG_LEVEL: ${OPCUA_LOG_LEVEL:-info}

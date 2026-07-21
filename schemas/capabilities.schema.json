@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/otfabric/opcua-interop/schemas/capabilities.schema.json",
+  "title": "opcua-interop adapter capabilities",
+  "description": "Schema for the JSON object written to stdout by the print-capabilities subcommand.",
+  "type": "object",
+  "required": ["schemaVersion", "adapter", "stack", "fixtureSchemaVersions", "roles", "transports", "encodings", "clientOperations", "serverServices", "securityProfiles", "userTokenTypes"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "adapter": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name":    { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "stack": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name":    { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "fixtureSchemaVersions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "roles": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["client", "server"] }
+    },
+    "transports": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "encodings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "clientOperations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "serverServices": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "securityProfiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["policy", "mode"],
+        "properties": {
+          "policy": { "type": "string" },
+          "mode":   { "type": "string" }
+        }
+      }
+    },
+    "userTokenTypes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

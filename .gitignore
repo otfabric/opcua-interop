@@ -1,0 +1,20 @@
+# Build artifacts
+open62541/build/
+milo/target/
+
+# Generated test PKI (regenerate with make certs)
+certs/test-pki/
+
+# Editor and OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+*.iml
+.vscode/
+
+# Python validation tool cache
+__pycache__/
+*.pyc
+.mypy_cache/
+milo/org/

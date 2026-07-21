@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/otfabric/opcua-interop/schemas/client-result.schema.json",
+  "title": "opcua-interop client result",
+  "description": "Schema for the single JSON object written to stdout by every opcua-interop client command.",
+  "type": "object",
+  "required": ["schemaVersion", "adapter", "operation", "success", "serviceResult", "results", "error"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "adapter": {
+      "type": "string",
+      "enum": ["open62541", "milo"]
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["endpoints", "read", "write", "browse", "call", "subscribe"]
+    },
+    "success": {
+      "type": "boolean"
+    },
+    "serviceResult": {
+      "$ref": "#/$defs/statusCode"
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/endpointResult" },
+          { "$ref": "#/$defs/readResult" },
+          { "$ref": "#/$defs/writeResult" },
+          { "$ref": "#/$defs/browseResult" }
+        ]
+      }
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/errorObject" }
+      ]
+    }
+  },
+  "$defs": {
+    "statusCode": {
+      "type": "object",
+      "required": ["name", "code", "severity"],
+      "additionalProperties": false,
+      "properties": {
+        "name":     { "type": "string" },
+        "code":     { "type": "integer", "minimum": 0 },
+        "severity": { "type": "string", "enum": ["Good", "Uncertain", "Bad"] }
+      }
+    },
+    "errorObject": {
+      "type": "object",
+      "required": ["category", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": ["input", "transport", "service", "timeout", "internal"]
+        },
+        "message": { "type": "string" }
+      }
+    },
+    "endpointResult": {
+      "type": "object",
+      "required": ["url", "securityPolicy", "securityMode"],
+      "additionalProperties": false,
+      "properties": {
+        "url":            { "type": "string" },
+        "securityPolicy": { "type": "string" },
+        "securityMode":   { "type": "string" }
+      }
+    },
+    "readResult": {
+      "type": "object",
+      "required": ["nodeId", "statusCode", "dataType", "builtInType", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId":          { "type": "string" },
+        "statusCode":      { "$ref": "#/$defs/statusCode" },
+        "dataType":        { "type": "string" },
+        "builtInType":     { "type": "integer", "minimum": 1, "maximum": 25 },
+        "value":           {},
+        "sourceTimestamp": { "type": "string" }
+      }
+    },
+    "writeResult": {
+      "type": "object",
+      "required": ["nodeId", "statusCode"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId":     { "type": "string" },
+        "statusCode": { "$ref": "#/$defs/statusCode" }
+      }
+    },
+    "browseResult": {
+      "type": "object",
+      "required": ["referenceTypeId", "isForward", "nodeId", "browseName", "displayName", "nodeClass"],
+      "additionalProperties": false,
+      "properties": {
+        "referenceTypeId": { "type": "string" },
+        "isForward":       { "type": "boolean" },
+        "nodeId":          { "type": "string" },
+        "browseName": {
+          "type": "object",
+          "required": ["ns", "name"],
+          "properties": {
+            "ns":   { "type": "integer" },
+            "name": { "type": "string" }
+          }
+        },
+        "displayName": {
+          "type": "object",
+          "required": ["locale", "text"],
+          "properties": {
+            "locale": { "type": "string" },
+            "text":   { "type": "string" }
+          }
+        },
+        "nodeClass": {
+          "type": "string",
+          "enum": ["Object","Variable","Method","ObjectType","VariableType","ReferenceType","DataType","View"]
+        }
+      }
+    }
+  }
+}

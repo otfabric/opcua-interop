@@ -1,0 +1,244 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  # ── 1a. Parse version from git tag ────────────────────────────────────────
+  parse-version:
+    name: Parse version
+    runs-on: ubuntu-latest
+    outputs:
+      tag:   ${{ steps.v.outputs.tag }}
+      minor: ${{ steps.v.outputs.minor }}
+      major: ${{ steps.v.outputs.major }}
+    steps:
+      - name: Extract tag components
+        id: v
+        run: |
+          TAG="${GITHUB_REF_NAME}"       # e.g. v0.1.0
+          echo "tag=${TAG}"             >> "$GITHUB_OUTPUT"
+          echo "minor=${TAG%.*}"        >> "$GITHUB_OUTPUT"  # v0.1
+          echo "major=${TAG%%.*}"       >> "$GITHUB_OUTPUT"  # v0
+
+  # ── 1b. Validate fixtures (runs in parallel with parse-version) ────────────
+  validate:
+    name: Validate fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install check-jsonschema
+        run: pip install check-jsonschema
+
+      - name: Validate fixture schema
+        run: |
+          check-jsonschema \
+            --check-metaschema \
+            fixtures/schema/opcua-fixture.schema.json
+
+      - name: Validate fixtures
+        run: scripts/validate-fixtures.sh
+
+  # ── 2. Build each adapter × arch on its native runner, push arch image ────
+  #
+  # The 4 matrix jobs run fully in parallel on native runners (no QEMU).
+  # Each pushes a single-platform image tagged <image>:<version>-<arch>.
+  # The manifest job below merges those into the final multi-arch manifest.
+  build-push:
+    name: Build & push ${{ matrix.adapter }} (${{ matrix.arch }})
+    needs: [parse-version, validate]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - adapter: open62541
+            arch: amd64
+            runner: ubuntu-latest
+          - adapter: open62541
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - adapter: milo
+            arch: amd64
+            runner: ubuntu-latest
+          - adapter: milo
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.adapter }} (linux/${{ matrix.arch }})
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.adapter }}
+          file: ${{ matrix.adapter }}/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          # Intermediate per-arch tag; the manifest job applies the final tags.
+          tags: ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:${{ needs.parse-version.outputs.tag }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.parse-version.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── 3. Merge per-arch images into multi-arch manifests ────────────────────
+  create-manifests:
+    name: Create multi-arch manifests
+    needs: [parse-version, build-push]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    env:
+      TAG:   ${{ needs.parse-version.outputs.tag }}
+      MINOR: ${{ needs.parse-version.outputs.minor }}
+      MAJOR: ${{ needs.parse-version.outputs.major }}
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Create open62541 manifest
+        run: |
+          IMG=ghcr.io/otfabric/opcua-interop-open62541
+          docker buildx imagetools create \
+            -t "${IMG}:${TAG}" \
+            -t "${IMG}:${MINOR}" \
+            -t "${IMG}:${MAJOR}" \
+            "${IMG}:${TAG}-amd64" \
+            "${IMG}:${TAG}-arm64"
+
+      - name: Create Milo manifest
+        run: |
+          IMG=ghcr.io/otfabric/opcua-interop-milo
+          docker buildx imagetools create \
+            -t "${IMG}:${TAG}" \
+            -t "${IMG}:${MINOR}" \
+            -t "${IMG}:${MAJOR}" \
+            "${IMG}:${TAG}-amd64" \
+            "${IMG}:${TAG}-arm64"
+
+      - name: Inspect open62541 manifest
+        run: docker buildx imagetools inspect ghcr.io/otfabric/opcua-interop-open62541:${TAG}
+
+      - name: Inspect Milo manifest
+        run: docker buildx imagetools inspect ghcr.io/otfabric/opcua-interop-milo:${TAG}
+
+  # ── 4a/4b. SBOM + CVE scan — one job per adapter, run in parallel ─────────
+  sbom-scan-open62541:
+    name: SBOM & scan open62541
+    needs: [parse-version, create-manifests]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/otfabric/opcua-interop-open62541:${{ needs.parse-version.outputs.tag }}
+          artifact-name: sbom-open62541-${{ needs.parse-version.outputs.tag }}.spdx.json
+          output-file: /tmp/sbom-open62541.spdx.json
+
+      - name: CVE scan
+        uses: anchore/scan-action@v7
+        with:
+          image: ghcr.io/otfabric/opcua-interop-open62541:${{ needs.parse-version.outputs.tag }}
+          fail-build: false
+          severity-cutoff: critical
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom-open62541
+          path: /tmp/sbom-open62541.spdx.json
+          retention-days: 7
+
+  sbom-scan-milo:
+    name: SBOM & scan Milo
+    needs: [parse-version, create-manifests]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/otfabric/opcua-interop-milo:${{ needs.parse-version.outputs.tag }}
+          artifact-name: sbom-milo-${{ needs.parse-version.outputs.tag }}.spdx.json
+          output-file: /tmp/sbom-milo.spdx.json
+
+      - name: CVE scan
+        uses: anchore/scan-action@v7
+        with:
+          image: ghcr.io/otfabric/opcua-interop-milo:${{ needs.parse-version.outputs.tag }}
+          fail-build: false
+          severity-cutoff: critical
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom-milo
+          path: /tmp/sbom-milo.spdx.json
+          retention-days: 7
+
+  # ── 5. Create GitHub Release once both SBOM/scan jobs pass ───────────────
+  github-release:
+    name: GitHub Release
+    needs: [parse-version, sbom-scan-open62541, sbom-scan-milo]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: sbom-open62541
+          path: /tmp
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: sbom-milo
+          path: /tmp
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: true
+          files: |
+            /tmp/sbom-open62541.spdx.json
+            /tmp/sbom-milo.spdx.json

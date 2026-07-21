@@ -1,0 +1,109 @@
+name: Upstream candidates
+run-name: "Candidate upstream probe by @${{ github.actor }}"
+
+# Exercises newer upstreams without mutating release pins.
+# Runs weekly on Monday morning and can be triggered manually.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # open62541 – resolve latest release tag from GitHub, build the adapter
+  # ---------------------------------------------------------------------------
+  candidate-open62541:
+    name: open62541-latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Resolve latest open62541 release
+        id: release
+        run: |
+          tag="$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/open62541/open62541/releases/latest \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")"
+          echo "version=${tag}" >> "$GITHUB_OUTPUT"
+          echo "candidate open62541=${tag}"
+
+      - name: Build open62541 adapter with candidate pin
+        uses: docker/build-push-action@v7
+        with:
+          context: open62541
+          file: open62541/Dockerfile
+          push: false
+          load: true
+          tags: opcua-interop-open62541:candidate
+          build-args: |
+            OPEN62541_COMMIT=${{ steps.release.outputs.version }}
+
+      - name: Run open62541 smoke against candidate image
+        run: bash scripts/smoke.sh open62541 opcua-interop-open62541:candidate
+
+      - name: Record candidate result
+        if: always()
+        run: |
+          mkdir -p dist/candidate
+          {
+            echo "open62541_candidate=${{ steps.release.outputs.version }}"
+            echo "release_pin=v1.5.5"
+            echo "NOTE: release pins in Dockerfile were not modified"
+          } > dist/candidate/open62541.txt
+          cat dist/candidate/open62541.txt
+
+  # ---------------------------------------------------------------------------
+  # Eclipse Milo – resolve latest release from Maven Central, build the adapter
+  # ---------------------------------------------------------------------------
+  candidate-milo:
+    name: milo-latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Resolve latest Eclipse Milo release on GitHub
+        id: release
+        run: |
+          tag="$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/eclipse/milo/releases/latest \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")"
+          # GitHub tag is vX.Y.Z; Maven artifact version is X.Y.Z (no v prefix)
+          ver="${tag#v}"
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+          echo "candidate milo=${ver}"
+
+      - name: Build Milo adapter with candidate pin
+        uses: docker/build-push-action@v7
+        with:
+          context: milo
+          file: milo/Dockerfile
+          push: false
+          load: true
+          tags: opcua-interop-milo:candidate
+          build-args: |
+            MILO_VERSION=${{ steps.release.outputs.version }}
+
+      - name: Run Milo smoke against candidate image
+        run: bash scripts/smoke.sh milo opcua-interop-milo:candidate
+
+      - name: Record candidate result
+        if: always()
+        run: |
+          mkdir -p dist/candidate
+          {
+            echo "milo_candidate=${{ steps.release.outputs.version }}"
+            echo "release_pin=1.1.5"
+            echo "NOTE: release pins in pom.xml were not modified"
+          } > dist/candidate/milo.txt
+          cat dist/candidate/milo.txt
