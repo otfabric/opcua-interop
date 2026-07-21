@@ -2,7 +2,7 @@
 # Wait for an OPC UA compat container to write its ready file.
 # Usage: wait-ready.sh <container-name-or-id> [timeout-seconds]
 #
-# The ready file (/run/opcua-compat/ready) is written by the server only after
+# The ready file (/run/opcua-interop/ready) is written by the server only after
 # the fixture has been loaded and the address space is available. Checking for
 # a listening port is insufficient — readiness requires fixture initialization.
 
@@ -10,7 +10,7 @@ set -euo pipefail
 
 CONTAINER="${1:?Usage: wait-ready.sh <container> [timeout-seconds]}"
 TIMEOUT="${2:-60}"
-READY_FILE="/run/opcua-compat/ready"
+READY_FILE="/run/opcua-interop/ready"
 INTERVAL=1
 elapsed=0
 

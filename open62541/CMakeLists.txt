@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(opcua-compat-open62541 C)
+project(opcua-interop-open62541 C)
 
 set(CMAKE_C_STANDARD 11)
 

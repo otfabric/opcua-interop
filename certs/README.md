@@ -49,10 +49,10 @@ All certificates include:
 
 | Component | ApplicationUri |
 |---|---|
-| Server (both adapters) | `urn:otfabric:opcua-compat:server` |
-| open62541 client | `urn:otfabric:opcua-compat:client:open62541` |
-| Milo client | `urn:otfabric:opcua-compat:client:milo` |
-| Consumer client | `urn:otfabric:opcua-compat:client:consumer` |
+| Server (both adapters) | `urn:otfabric:opcua-interop:server` |
+| open62541 client | `urn:otfabric:opcua-interop:client:open62541` |
+| Milo client | `urn:otfabric:opcua-interop:client:milo` |
+| Consumer client | `urn:otfabric:opcua-interop:client:consumer` |
 
 ## Trust model
 

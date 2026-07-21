@@ -28,21 +28,21 @@ jobs:
           file: open62541/Dockerfile
           push: false
           load: true
-          tags: ghcr.io/otfabric/opcua-compat-open62541:smoke
+          tags: ghcr.io/otfabric/opcua-interop-open62541:smoke
           cache-from: type=gha
 
       - name: Run open62541 smoke test
-        run: scripts/smoke.sh open62541 ghcr.io/otfabric/opcua-compat-open62541:smoke
+        run: scripts/smoke.sh open62541 ghcr.io/otfabric/opcua-interop-open62541:smoke
 
       - name: Test graceful shutdown
         run: |
           cname=$(docker run -d \
             -v "$PWD/fixtures:/fixtures:ro" \
-            ghcr.io/otfabric/opcua-compat-open62541:smoke \
+            ghcr.io/otfabric/opcua-interop-open62541:smoke \
             server \
             --fixture /fixtures/baseline/fixture.json \
-            --endpoint opc.tcp://0.0.0.0:4840/opcua-compat \
-            --ready-file /run/opcua-compat/ready)
+            --endpoint opc.tcp://0.0.0.0:4840/opcua-interop \
+            --ready-file /run/opcua-interop/ready)
           scripts/wait-ready.sh "${cname}" 60
           docker stop --time=10 "${cname}"
           exit_code=$(docker inspect --format='{{.State.ExitCode}}' "${cname}")
@@ -69,21 +69,21 @@ jobs:
           file: milo/Dockerfile
           push: false
           load: true
-          tags: ghcr.io/otfabric/opcua-compat-milo:smoke
+          tags: ghcr.io/otfabric/opcua-interop-milo:smoke
           cache-from: type=gha
 
       - name: Run Milo smoke test
-        run: scripts/smoke.sh milo ghcr.io/otfabric/opcua-compat-milo:smoke
+        run: scripts/smoke.sh milo ghcr.io/otfabric/opcua-interop-milo:smoke
 
       - name: Test graceful shutdown
         run: |
           cname=$(docker run -d \
             -v "$PWD/fixtures:/fixtures:ro" \
-            ghcr.io/otfabric/opcua-compat-milo:smoke \
+            ghcr.io/otfabric/opcua-interop-milo:smoke \
             server \
             --fixture /fixtures/baseline/fixture.json \
-            --endpoint opc.tcp://0.0.0.0:4840/opcua-compat \
-            --ready-file /run/opcua-compat/ready)
+            --endpoint opc.tcp://0.0.0.0:4840/opcua-interop \
+            --ready-file /run/opcua-interop/ready)
           scripts/wait-ready.sh "${cname}" 60
           docker stop --time=10 "${cname}"
           exit_code=$(docker inspect --format='{{.State.ExitCode}}' "${cname}")
@@ -111,7 +111,7 @@ jobs:
           file: open62541/Dockerfile
           push: false
           load: true
-          tags: ghcr.io/otfabric/opcua-compat-open62541:smoke
+          tags: ghcr.io/otfabric/opcua-interop-open62541:smoke
           cache-from: type=gha
 
       - name: Build Milo
@@ -121,11 +121,11 @@ jobs:
           file: milo/Dockerfile
           push: false
           load: true
-          tags: ghcr.io/otfabric/opcua-compat-milo:smoke
+          tags: ghcr.io/otfabric/opcua-interop-milo:smoke
           cache-from: type=gha
 
       - name: Cross-stack smoke
         run: |
           scripts/smoke.sh cross \
-            ghcr.io/otfabric/opcua-compat-open62541:smoke \
-            ghcr.io/otfabric/opcua-compat-milo:smoke
+            ghcr.io/otfabric/opcua-interop-open62541:smoke \
+            ghcr.io/otfabric/opcua-interop-milo:smoke

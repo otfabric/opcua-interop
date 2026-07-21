@@ -46,12 +46,12 @@ jobs:
           file: open62541/Dockerfile
           push: false
           load: true
-          tags: ghcr.io/otfabric/opcua-compat-open62541:ci
+          tags: ghcr.io/otfabric/opcua-interop-open62541:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Save image
-        run: docker save ghcr.io/otfabric/opcua-compat-open62541:ci | gzip > /tmp/open62541.tar.gz
+        run: docker save ghcr.io/otfabric/opcua-interop-open62541:ci | gzip > /tmp/open62541.tar.gz
 
       - uses: actions/upload-artifact@v4
         with:
@@ -76,12 +76,12 @@ jobs:
           file: milo/Dockerfile
           push: false
           load: true
-          tags: ghcr.io/otfabric/opcua-compat-milo:ci
+          tags: ghcr.io/otfabric/opcua-interop-milo:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Save image
-        run: docker save ghcr.io/otfabric/opcua-compat-milo:ci | gzip > /tmp/milo.tar.gz
+        run: docker save ghcr.io/otfabric/opcua-interop-milo:ci | gzip > /tmp/milo.tar.gz
 
       - uses: actions/upload-artifact@v4
         with:
@@ -108,7 +108,7 @@ jobs:
         run: |
           docker run --rm \
             -v "$PWD/fixtures:/fixtures:ro" \
-            ghcr.io/otfabric/opcua-compat-open62541:ci \
+            ghcr.io/otfabric/opcua-interop-open62541:ci \
             test
 
   unit-test-milo:
@@ -130,7 +130,7 @@ jobs:
         run: |
           docker run --rm \
             -v "$PWD/fixtures:/fixtures:ro" \
-            ghcr.io/otfabric/opcua-compat-milo:ci \
+            ghcr.io/otfabric/opcua-interop-milo:ci \
             test
 
   # On pushes to main, also build multi-arch images (no push, just verify)

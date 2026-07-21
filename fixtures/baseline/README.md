@@ -6,7 +6,7 @@ The baseline fixture defines the primary interoperability address space. Both ad
 
 ```
 Objects (i=85)
-└── Compatibility  (nsu=urn:otfabric:opcua-compat:model;s=Compatibility)
+└── Compatibility  (nsu=urn:otfabric:opcua-interop:model;s=Compatibility)
     ├── Scalars       — one readable/writable variable per built-in scalar type
     ├── Arrays        — empty, one-element, multi-element, string, ByteString, 2D matrix
     ├── Dynamic       — deterministic value generators (counter, toggle, ramp)
@@ -20,7 +20,7 @@ Objects (i=85)
 
 | Alias | URI |
 |---|---|
-| `compat` | `urn:otfabric:opcua-compat:model` |
+| `compat` | `urn:otfabric:opcua-interop:model` |
 
 Runtime namespace indices differ between stacks. Always reference nodes by namespace URI in tests.
 
@@ -44,7 +44,7 @@ These values are chosen to reveal binary encoding errors:
 | `Scalar.String` | String | `"OPC UA – 兼容性 – Δ"` |
 | `Scalar.DateTime` | DateTime | `2024-01-01T00:00:00Z` |
 | `Scalar.Guid` | Guid | `72962b91-fa75-4ae6-8d28-b404dc7daf63` |
-| `Scalar.ByteString` | ByteString | `opcua-compat` (base64) |
+| `Scalar.ByteString` | ByteString | `opcua-interop` (base64) |
 | `Scalar.XmlElement` | XmlElement | `<compat>test</compat>` |
 | `Scalar.NodeId` | NodeId | `i=85` |
 | `Scalar.QualifiedName` | QualifiedName | `0:Objects` |

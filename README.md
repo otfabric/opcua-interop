@@ -1,10 +1,10 @@
-# opcua-compat
+# opcua-interop
 
 Containerized OPC UA reference implementations for interoperability testing.
 
 ## Purpose
 
-`opcua-compat` provides two independently implemented OPC UA stacks—**open62541** (C) and **Eclipse Milo** (Java/JVM)—as deterministic Docker containers with a shared fixture format. Consumer repositories such as [`go-opcua`](https://github.com/otfabric/go-opcua) use these containers to make defensible client and server interoperability claims.
+`opcua-interop` provides two independently implemented OPC UA stacks—**open62541** (C) and **Eclipse Milo** (Java/JVM)—as deterministic Docker containers with a shared fixture format. Consumer repositories such as [`go-opcua`](https://github.com/otfabric/go-opcua) use these containers to make defensible client and server interoperability claims.
 
 **This repository owns:**
 - Containerized reference servers and clients
@@ -45,30 +45,30 @@ docker compose up
 ```sh
 # Read a node from the open62541 server
 docker run --rm --network host \
-  ghcr.io/otfabric/opcua-compat-open62541:latest \
+  ghcr.io/otfabric/opcua-interop-open62541:latest \
   client read \
-  --endpoint opc.tcp://localhost:4840/opcua-compat \
-  --node 'nsu=urn:otfabric:opcua-compat:model;s=Scalar.Int32'
+  --endpoint opc.tcp://localhost:4840/opcua-interop \
+  --node 'nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32'
 
 # Browse from the Milo server
 docker run --rm --network host \
-  ghcr.io/otfabric/opcua-compat-milo:latest \
+  ghcr.io/otfabric/opcua-interop-milo:latest \
   client browse \
-  --endpoint opc.tcp://localhost:4841/opcua-compat \
+  --endpoint opc.tcp://localhost:4841/opcua-interop \
   --node 'i=85'
 ```
 
 ### Print adapter capabilities
 
 ```sh
-docker run --rm ghcr.io/otfabric/opcua-compat-open62541:latest print-capabilities
-docker run --rm ghcr.io/otfabric/opcua-compat-milo:latest print-capabilities
+docker run --rm ghcr.io/otfabric/opcua-interop-open62541:latest print-capabilities
+docker run --rm ghcr.io/otfabric/opcua-interop-milo:latest print-capabilities
 ```
 
 ## Architecture
 
 ```
-opcua-compat/
+opcua-interop/
 ├── fixtures/           # Shared, stack-neutral fixture definitions
 │   ├── schema/         # JSON Schema for fixture validation
 │   ├── baseline/       # Baseline fixture (scalars, access, browse)
@@ -105,17 +105,17 @@ Each image supports the same command contract:
 
 | Image | Architecture |
 |---|---|
-| `ghcr.io/otfabric/opcua-compat-open62541:<version>` | linux/amd64, linux/arm64 |
-| `ghcr.io/otfabric/opcua-compat-milo:<version>` | linux/amd64, linux/arm64 |
+| `ghcr.io/otfabric/opcua-interop-open62541:<version>` | linux/amd64, linux/arm64 |
+| `ghcr.io/otfabric/opcua-interop-milo:<version>` | linux/amd64, linux/arm64 |
 
 ### Server command
 
 ```sh
 /server \
   --fixture /fixtures/baseline/fixture.json \
-  --endpoint opc.tcp://0.0.0.0:4840/opcua-compat \
+  --endpoint opc.tcp://0.0.0.0:4840/opcua-interop \
   --pki-dir /pki \
-  --ready-file /run/opcua-compat/ready
+  --ready-file /run/opcua-interop/ready
 ```
 
 Environment variable equivalents: `OPCUA_FIXTURE`, `OPCUA_PORT`, `OPCUA_ENDPOINT_PATH`, `OPCUA_LOG_LEVEL`, `OPCUA_PKI_DIR`, `OPCUA_TRUST_MODE`.
@@ -123,7 +123,7 @@ Environment variable equivalents: `OPCUA_FIXTURE`, `OPCUA_PORT`, `OPCUA_ENDPOINT
 ### Client commands
 
 ```sh
-/client endpoints --endpoint opc.tcp://host:4840/opcua-compat
+/client endpoints --endpoint opc.tcp://host:4840/opcua-interop
 /client read      --endpoint ... --node 'nsu=...;s=Scalar.Int32'
 /client write     --endpoint ... --node '...' --type Int32 --value 100
 /client browse    --endpoint ... --node 'i=85'
@@ -136,7 +136,7 @@ All client operations write JSON to stdout and diagnostics to stderr.
 ## Consumer integration model
 
 ```
-opcua-compat
+opcua-interop
     ├── deterministic reference servers
     ├── reference client commands
     ├── shared fixtures
@@ -201,4 +201,4 @@ Security profiles are implemented after baseline unsecured interoperability is s
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

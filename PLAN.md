@@ -2,7 +2,7 @@
 
 ## Governing principle
 
-`opcua-compat` owns reference implementations and deterministic test environments. Consuming repositories own test scenarios, assertions, coverage, pass/fail decisions, and compatibility claims.
+`opcua-interop` owns reference implementations and deterministic test environments. Consuming repositories own test scenarios, assertions, coverage, pass/fail decisions, and compatibility claims.
 
 ## Implementation phases
 
@@ -55,7 +55,7 @@ Deliverables:
 - `open62541/CMakeLists.txt`
 - `open62541/src/` — fixture parser, server, readiness, signal handling
 - `open62541/tests/` — fixture parser unit tests
-- Image: `ghcr.io/otfabric/opcua-compat-open62541`
+- Image: `ghcr.io/otfabric/opcua-interop-open62541`
 
 Acceptance:
 - `docker run ... server --fixture /fixtures/baseline/fixture.json` starts a usable OPC UA server
@@ -71,7 +71,7 @@ Deliverables:
 - `milo/pom.xml`
 - `milo/src/main/java/` — fixture loader, server, namespace, readiness, shutdown
 - `milo/src/test/java/` — fixture loading unit tests
-- Image: `ghcr.io/otfabric/opcua-compat-milo`
+- Image: `ghcr.io/otfabric/opcua-interop-milo`
 
 Acceptance:
 - Both servers expose equivalent namespace URIs, NodeIds, and values
@@ -146,7 +146,7 @@ Acceptance:
 
 ### Phase 8 — go-opcua consumer integration
 
-This phase is implemented in `go-opcua`, not `opcua-compat`.
+This phase is implemented in `go-opcua`, not `opcua-interop`.
 
 Pattern:
 ```

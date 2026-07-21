@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`opcua-compat` provides containerized OPC UA reference implementations and a shared fixture format for interoperability testing. Consumer repositories use these containers to make defensible interoperability claims about their own OPC UA implementations.
+`opcua-interop` provides containerized OPC UA reference implementations and a shared fixture format for interoperability testing. Consumer repositories use these containers to make defensible interoperability claims about their own OPC UA implementations.
 
 ## Goals
 
@@ -114,7 +114,7 @@ The repository must include a smoke process that runs each reference client agai
 
 ## Non-goals
 
-`opcua-compat` is not:
+`opcua-interop` is not:
 
 - A replacement for the OPC Foundation CTT
 - An OPC UA conformance certification suite

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/otfabric/opcua-compat/fixtures/schema/opcua-fixture.schema.json",
+  "$id": "https://github.com/otfabric/opcua-interop/fixtures/schema/opcua-fixture.schema.json",
   "title": "OPC UA Compatibility Fixture",
   "description": "Stack-neutral, declarative description of a deterministic OPC UA address space for interoperability testing.",
   "type": "object",
@@ -105,7 +105,7 @@
         },
         "path": {
           "type": "string",
-          "description": "URL path component of the endpoint URL (e.g. /opcua-compat).",
+          "description": "URL path component of the endpoint URL (e.g. /opcua-interop).",
           "pattern": "^/[a-zA-Z0-9/_-]*$"
         }
       }

@@ -52,9 +52,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/otfabric/opcua-compat-open62541:${{ steps.version.outputs.tag }}
-            ghcr.io/otfabric/opcua-compat-open62541:${{ steps.version.outputs.minor }}
-            ghcr.io/otfabric/opcua-compat-open62541:${{ steps.version.outputs.major }}
+            ghcr.io/otfabric/opcua-interop-open62541:${{ steps.version.outputs.tag }}
+            ghcr.io/otfabric/opcua-interop-open62541:${{ steps.version.outputs.minor }}
+            ghcr.io/otfabric/opcua-interop-open62541:${{ steps.version.outputs.major }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -70,9 +70,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/otfabric/opcua-compat-milo:${{ steps.version.outputs.tag }}
-            ghcr.io/otfabric/opcua-compat-milo:${{ steps.version.outputs.minor }}
-            ghcr.io/otfabric/opcua-compat-milo:${{ steps.version.outputs.major }}
+            ghcr.io/otfabric/opcua-interop-milo:${{ steps.version.outputs.tag }}
+            ghcr.io/otfabric/opcua-interop-milo:${{ steps.version.outputs.minor }}
+            ghcr.io/otfabric/opcua-interop-milo:${{ steps.version.outputs.major }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -83,28 +83,28 @@ jobs:
       - name: Generate SBOM (open62541)
         uses: anchore/sbom-action@v0
         with:
-          image: ghcr.io/otfabric/opcua-compat-open62541:${{ steps.version.outputs.tag }}
+          image: ghcr.io/otfabric/opcua-interop-open62541:${{ steps.version.outputs.tag }}
           artifact-name: sbom-open62541-${{ steps.version.outputs.tag }}.spdx.json
           output-file: /tmp/sbom-open62541.spdx.json
 
       - name: Generate SBOM (Milo)
         uses: anchore/sbom-action@v0
         with:
-          image: ghcr.io/otfabric/opcua-compat-milo:${{ steps.version.outputs.tag }}
+          image: ghcr.io/otfabric/opcua-interop-milo:${{ steps.version.outputs.tag }}
           artifact-name: sbom-milo-${{ steps.version.outputs.tag }}.spdx.json
           output-file: /tmp/sbom-milo.spdx.json
 
       - name: Scan open62541 image
         uses: anchore/scan-action@v4
         with:
-          image: ghcr.io/otfabric/opcua-compat-open62541:${{ steps.version.outputs.tag }}
+          image: ghcr.io/otfabric/opcua-interop-open62541:${{ steps.version.outputs.tag }}
           fail-build: false
           severity-cutoff: critical
 
       - name: Scan Milo image
         uses: anchore/scan-action@v4
         with:
-          image: ghcr.io/otfabric/opcua-compat-milo:${{ steps.version.outputs.tag }}
+          image: ghcr.io/otfabric/opcua-interop-milo:${{ steps.version.outputs.tag }}
           fail-build: false
           severity-cutoff: critical
 

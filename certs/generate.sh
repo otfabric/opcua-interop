@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate the opcua-compat test PKI.
+# Generate the opcua-interop test PKI.
 #
 # Requirements: openssl >= 1.1
 # Output: certs/test-pki/
@@ -15,10 +15,10 @@ PKI_DIR="${SCRIPT_DIR}/test-pki"
 CA_DAYS=3650    # 10 years
 CERT_DAYS=1825  # 5 years
 
-SERVER_APP_URI="urn:otfabric:opcua-compat:server"
-OPEN62541_CLIENT_URI="urn:otfabric:opcua-compat:client:open62541"
-MILO_CLIENT_URI="urn:otfabric:opcua-compat:client:milo"
-CONSUMER_CLIENT_URI="urn:otfabric:opcua-compat:client:consumer"
+SERVER_APP_URI="urn:otfabric:opcua-interop:server"
+OPEN62541_CLIENT_URI="urn:otfabric:opcua-interop:client:open62541"
+MILO_CLIENT_URI="urn:otfabric:opcua-interop:client:milo"
+CONSUMER_CLIENT_URI="urn:otfabric:opcua-interop:client:consumer"
 
 log() { echo "[certs] $*" >&2; }
 
@@ -81,7 +81,7 @@ gen_untrusted_cert() {
         -out    "${dir}/cert.crt" \
         -days   "${CERT_DAYS}" \
         -subj   "/CN=${cn}/O=OTFabric/OU=Untrusted Test" \
-        -addext "subjectAltName=URI:urn:otfabric:opcua-compat:client:untrusted,DNS:localhost" \
+        -addext "subjectAltName=URI:urn:otfabric:opcua-interop:client:untrusted,DNS:localhost" \
         2>/dev/null
     log "Untrusted cert: ${cn}"
 }

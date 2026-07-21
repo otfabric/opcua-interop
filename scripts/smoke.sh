@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-stack smoke test for opcua-compat.
+# Cross-stack smoke test for opcua-interop.
 #
 # Usage:
 #   smoke.sh open62541 <image>           # single-adapter smoke
@@ -19,7 +19,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FIXTURE="${REPO_ROOT}/fixtures/baseline/fixture.json"
-ENDPOINT_PATH="/opcua-compat"
+ENDPOINT_PATH="/opcua-interop"
 WAIT_TIMEOUT=60
 
 MODE="${1:?Usage: smoke.sh <open62541|milo|cross> <image> [image-milo]}"
@@ -49,7 +49,7 @@ start_server() {
         server \
         --fixture /fixtures/baseline/fixture.json \
         --endpoint "opc.tcp://0.0.0.0:4840${ENDPOINT_PATH}" \
-        --ready-file /run/opcua-compat/ready
+        --ready-file /run/opcua-interop/ready
 
     echo "smoke-${name}-$$"
 }
@@ -99,7 +99,7 @@ check_read_scalar() {
     local endpoint="$2"
     local label="$3"
 
-    local node="nsu=urn:otfabric:opcua-compat:model;s=Scalar.Int32"
+    local node="nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32"
     local output
     if output=$(run_client_op "${client_image}" read --endpoint "${endpoint}" --node "${node}" 2>/dev/null); then
         if echo "${output}" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('success') is True" 2>/dev/null; then
@@ -117,7 +117,7 @@ check_write() {
     local endpoint="$2"
     local label="$3"
 
-    local node="nsu=urn:otfabric:opcua-compat:model;s=Access.ReadWrite"
+    local node="nsu=urn:otfabric:opcua-interop:model;s=Access.ReadWrite"
     local output
     if output=$(run_client_op "${client_image}" write \
             --endpoint "${endpoint}" \
@@ -156,8 +156,8 @@ check_call_add() {
     local endpoint="$2"
     local label="$3"
 
-    local object="nsu=urn:otfabric:opcua-compat:model;s=Methods"
-    local method="nsu=urn:otfabric:opcua-compat:model;s=Methods.Add"
+    local object="nsu=urn:otfabric:opcua-interop:model;s=Methods"
+    local method="nsu=urn:otfabric:opcua-interop:model;s=Methods.Add"
     local output
     if output=$(run_client_op "${client_image}" call \
             --endpoint "${endpoint}" \
@@ -180,7 +180,7 @@ check_subscribe() {
     local endpoint="$2"
     local label="$3"
 
-    local node="nsu=urn:otfabric:opcua-compat:model;s=Dynamic.Counter"
+    local node="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter"
     local output
     if output=$(run_client_op "${client_image}" subscribe \
             --endpoint "${endpoint}" \

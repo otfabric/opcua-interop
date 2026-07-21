@@ -2,8 +2,8 @@ REGISTRY     ?= ghcr.io/otfabric
 VERSION      ?= dev
 PLATFORMS    ?= linux/amd64,linux/arm64
 
-IMAGE_OPEN62541 = $(REGISTRY)/opcua-compat-open62541
-IMAGE_MILO      = $(REGISTRY)/opcua-compat-milo
+IMAGE_OPEN62541 = $(REGISTRY)/opcua-interop-open62541
+IMAGE_MILO      = $(REGISTRY)/opcua-interop-milo
 
 OPEN62541_PORT ?= 4840
 MILO_PORT      ?= 4841
@@ -69,9 +69,9 @@ run-open62541:
 		$(IMAGE_OPEN62541):$(VERSION) \
 		server \
 		--fixture /fixtures/baseline/fixture.json \
-		--endpoint opc.tcp://0.0.0.0:4840/opcua-compat \
+		--endpoint opc.tcp://0.0.0.0:4840/opcua-interop \
 		--pki-dir /pki \
-		--ready-file /run/opcua-compat/ready
+		--ready-file /run/opcua-interop/ready
 
 .PHONY: run-milo
 run-milo:
@@ -82,9 +82,9 @@ run-milo:
 		$(IMAGE_MILO):$(VERSION) \
 		server \
 		--fixture /fixtures/baseline/fixture.json \
-		--endpoint opc.tcp://0.0.0.0:4840/opcua-compat \
+		--endpoint opc.tcp://0.0.0.0:4840/opcua-interop \
 		--pki-dir /pki \
-		--ready-file /run/opcua-compat/ready
+		--ready-file /run/opcua-interop/ready
 
 # ── Smoke tests ──────────────────────────────────────────────────────────────
 
