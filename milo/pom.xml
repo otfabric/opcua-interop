@@ -29,7 +29,7 @@
     <!-- Pin upstream versions here. Update in Phase 3. -->
     <milo.version>1.1.5</milo.version>
     <jackson.version>2.17.2</jackson.version>
-    <slf4j.version>2.0.13</slf4j.version>
+    <slf4j.version>2.0.18</slf4j.version>
     <logback.version>1.5.6</logback.version>
     <junit.version>6.1.2</junit.version>
   </properties>
