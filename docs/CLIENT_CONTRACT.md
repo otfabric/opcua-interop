@@ -22,6 +22,8 @@ this contract. Changes that break it require a major schema version bump.
 | `read` | Read one or more node values |
 | `write` | Write a value to one node |
 | `browse` | Browse forward hierarchical references from a node |
+| `call` | Call a method node and collect output arguments |
+| `subscribe` | Create a subscription and collect a bounded number of data-change notifications |
 
 ### Global flags
 
