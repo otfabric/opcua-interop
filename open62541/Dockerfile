@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       cmake \
       gcc \
       git \
+      libc6-dev \
       make \
     && rm -rf /var/lib/apt/lists/*
 
@@ -40,6 +41,7 @@ FROM debian:bookworm-slim AS adapter-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
       cmake \
       gcc \
+      libc6-dev \
       libcjson-dev \
       make \
     && rm -rf /var/lib/apt/lists/*
