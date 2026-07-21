@@ -466,6 +466,20 @@ public class ClientCommand {
                     "no endpoint with SecurityPolicy=None and MessageSecurityMode=None at " + endpointUrl);
         }
 
+        // The server's advertised endpoint URL may not be reachable from inside a
+        // client container (e.g. it says "localhost" but that resolves to the client's
+        // own loopback). Replace it with the URL we actually used for discovery so
+        // the TCP connection goes to the right host.
+        endpoint = new EndpointDescription(
+                endpointUrl,
+                endpoint.getServer(),
+                endpoint.getServerCertificate(),
+                endpoint.getSecurityMode(),
+                endpoint.getSecurityPolicyUri(),
+                endpoint.getUserIdentityTokens(),
+                endpoint.getTransportProfileUri(),
+                endpoint.getSecurityLevel());
+
         OpcUaClientConfig config = OpcUaClientConfig.builder()
                 .setEndpoint(endpoint)
                 .setApplicationUri("urn:otfabric:opcua-interop:milo-client")
