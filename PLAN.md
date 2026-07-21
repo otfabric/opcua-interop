@@ -23,8 +23,6 @@ Deliverables:
 - `fixtures/baseline/README.md`
 - Schema validation in CI
 
-Status: structurally complete. Semantic validation and corpus hardening deferred to Phase 4.
-
 ---
 
 ## Phase 2 — open62541 adapter foundation ✓
@@ -35,8 +33,7 @@ Deliverables:
 - `open62541/src/` — fixture parser, server, client, readiness, signal handling, output
 - `open62541/tests/` — fixture parser unit tests
 
-Status: complete. All six client commands (endpoints, read, write, browse, call, subscribe)
-implemented. Contract hardening deferred to Phase 4.
+All six client commands (endpoints, read, write, browse, call, subscribe) implemented.
 
 ---
 
@@ -48,31 +45,26 @@ Deliverables:
 - `milo/src/main/java/` — fixture loader, namespace, server, client, shutdown, readiness
 - `milo/src/test/java/` — fixture loading unit tests (8 tests, all pass)
 
-Status: complete. All six client commands (endpoints, read, write, browse, call, subscribe)
-implemented. Contract hardening deferred to Phase 4.
+All six client commands (endpoints, read, write, browse, call, subscribe) implemented.
 
 ---
 
 ## Phase 4 — Contract freeze and adapter parity ✓
 
-The two adapters must produce identical output shapes for identical inputs before
-the feature surface grows further. This is the gate for go-opcua consumer integration.
+The two adapters produce identical output shapes for identical inputs.
 
-### Workstream A — Command and output contract
+### Workstream A — Command and output contract ✓
 
-Deliverables:
-- `docs/CLIENT_CONTRACT.md` ✓
-- `schemas/client-result.schema.json` ✓
-- `schemas/capabilities.schema.json` ✓
+- `docs/CLIENT_CONTRACT.md`
+- `schemas/client-result.schema.json`
+- `schemas/capabilities.schema.json`
 
-### Workstream B — Adapter hardening (both adapters)
-
-For each item, both adapters must comply before it is considered done.
+### Workstream B — Adapter hardening (both adapters) ✓
 
 | Item | Description |
 |------|-------------|
 | Canonical envelope | Every command: `schemaVersion`, `adapter`, `operation`, `success`, `serviceResult` (structured), `results`, `error` |
-| Exact status codes | `serviceResult` and per-item `statusCode` as `{name, code, severity}` — not string summary |
+| Exact status codes | `serviceResult` and per-item `statusCode` as `{name, code, severity}` |
 | Complete NodeId parsing | All forms: `i=`, `ns=N;i=`, `ns=N;s=`, `ns=N;g=`, `ns=N;b=`, `nsu=URI;*` |
 | Hard NodeId failure | Malformed/unknown NodeId → exit 2 before any network activity |
 | Bind vs. advertised | `--bind-address`, `--bind-port`, `--advertised-host`, `--advertised-port` |
@@ -83,98 +75,129 @@ For each item, both adapters must comply before it is considered done.
 | Browse continuation | Handle BrowseNext continuation points |
 | Value encoding | Int64/UInt64 as decimal strings; DateTime RFC 3339 UTC; Guid lowercase UUID; ByteString Base64 |
 
-### Workstream C — Makefile
-
-- ✓ Separate `image-*` (local host-arch) from `buildx-*` (multi-arch push)
-- Remove placeholder `DEBIAN_DIGEST` from Milo Dockerfile or pin properly
-
-### Acceptance
-
-For the same operation against the same fixture, both adapters must produce:
-- output that validates against `schemas/client-result.schema.json`
-- identical `serviceResult.name` and `serviceResult.code` values
-- identical `statusCode.name` and `statusCode.code` per result item
-- identical canonical NodeId strings
-- identical value representations (Int64 as string, not number; etc.)
-- identical exit-code category for the same error type
-- no stdout contamination from logs
-
 ---
 
 ## Phase 5 — Complete reference-client surface ✓
 
-New client subcommands implemented in both adapters:
-- `call` — invoke a method node (`--object`, `--method`, `--input Type:value`)
+New client subcommands in both adapters:
+- `call` — invoke a method node
 - `subscribe` — create a subscription, collect N notifications, emit JSON array, disconnect
 
-Batch read (multiple `--node` flags) was implemented in Phase 4.
-Batch write deferred to Phase 6 (single-item write covers Phase 5 and Phase 6 needs).
-
+Batch read (multiple `--node` flags) implemented in Phase 4.
 Smoke script extended to cover `call` and `subscribe` in all four cross-stack directions.
 
 ---
 
 ## Phase 6 — Cross-stack equivalence smoke ✓
 
-All four directions:
+All four directions verified:
 - open62541 client → open62541 server
 - open62541 client → Milo server
 - Milo client → open62541 server
 - Milo client → Milo server
 
-Assertions limited to fixture realization:
-1. Connect anonymously
-2. Namespace resolution
-3. Browse Compatibility root
-4. Read a representative scalar set
-5. Write Access.ReadWrite
-6. Call Methods.Add
-7. Receive three Dynamic.Counter notifications
-8. Disconnect
-
-`scripts/smoke.sh cross` automates all four directions with exit 0/1.
+`scripts/smoke.sh cross` automates all four directions.
 Cross-stack CI job in `.github/workflows/smoke.yml` runs after both single-adapter jobs pass.
 
 ---
 
-## Phase 7 — First go-opcua consumer integration ← current
+## Phase 7 — First go-opcua consumer integration ✓
 
-Release a provisional tagged image (v0.1.0 candidate) and begin consumer tests in
-`go-opcua/interop/`.
+Released v0.1.0. Consumer tests in `go-opcua/interop/` cover all four directions:
 
-Scope for first integration:
-- Go client → open62541 server
-- Go client → Milo server
-- open62541 client → Go server
-- Milo client → Go server
+| Direction | Coverage |
+|-----------|----------|
+| Go client → open62541 server | connect, namespace, browse, 8 scalar reads, write, read-back, method call, subscription |
+| Go client → Milo server | same |
+| open62541 client → Go server | endpoints, browse, scalar reads, write, method call, subscription |
+| Milo client → Go server | same |
 
-Each direction: connect, namespace, browse, scalar reads (8 types), write, read-back, close.
-
-Methods and subscriptions added in separate commits after baseline passes.
+70 tests passing at None/None; methods and subscriptions included.
 
 ---
 
-## Phase 8 — Security
+## Phase 8 — Security ← current
 
-- `certs/generate.sh` — full test PKI (CA, server certs, client certs)
-- `certs/test-pki/` — checked-in test certificates
-- Security endpoints: None/None, Basic256Sha256/Sign, Basic256Sha256/SignAndEncrypt,
-  Aes128_Sha256_RsaOaep/SignAndEncrypt, Aes256_Sha256_RsaPss/SignAndEncrypt
-- Client flags: `--security-policy`, `--security-mode`, `--certificate`, `--private-key`,
-  `--trust-list`, `--username`, `--password`
-- Untrusted clients rejected; incorrect credentials rejected
-- Failure output remains machine-readable JSON
+### Infrastructure (done, shipped in v0.1.1)
+
+| Item | Status |
+|------|--------|
+| `certs/generate.sh` — full test PKI (CA + 6 identities) | ✓ |
+| `certs/test-pki/` — checked-in test certificates with SAN URIs | ✓ |
+| Fixture `securityProfiles` field — declares server security policies | ✓ |
+| Fixture `users` field — declares username/password credentials | ✓ |
+| open62541 server: `--certificate`, `--private-key`, `--pki-dir` flags | ✓ |
+| open62541 server: `UA_ServerConfig_setDefaultWithSecurityPolicies` with trust list | ✓ |
+| open62541 server: username/password via `UA_AccessControl_default` | ✓ |
+| Milo server: `FileBasedTrustListManager`, `DefaultServerCertificateValidator` | ✓ |
+| Milo server: `DefaultApplicationGroup`, `DefaultCertificateManager` | ✓ |
+| Milo server: secure endpoints from fixture `securityProfiles` | ✓ |
+| Milo server: username token policy on None/None endpoint | ✓ |
+| Milo server: username token policy on secure endpoints | ✓ |
+| Milo server: `UsernameIdentityValidator` + `CompositeValidator` | ✓ |
+| Bouncy Castle idempotent registration (server + client) | ✓ |
+| go-opcua: PKCS#8 PEM private key support in `loadPrivateKey` | ✓ |
+| go-opcua harness: `pkiDir()`, `startSecureAdapterServer()`, `dialSecureClient()` | ✓ |
+| go-opcua harness: `dialUsernameClient()` for positive/negative username tests | ✓ |
+
+### Verified interoperability (pending — next steps)
+
+The test infrastructure is in place. The following directions need a passing test run
+against the `:dev` images before they can be called verified:
+
+| Scenario | go-opcua client → open62541 | go-opcua client → Milo | open62541 client → go server | Milo client → go server |
+|----------|:---:|:---:|:---:|:---:|
+| Basic256Sha256 / Sign | written | written | not started | not started |
+| Basic256Sha256 / SignAndEncrypt | written | written | not started | not started |
+| Trust rejection (untrusted cert) | written | written | — | — |
+| Username / valid credentials | written | written | not started | not started |
+| Username / invalid credentials | written | written | not started | not started |
+| Aes128_Sha256_RsaOaep / SignAndEncrypt | not started | not started | not started | not started |
+| Aes256_Sha256_RsaPss / SignAndEncrypt | not started | not started | not started | not started |
+
+"written" = test exists in go-opcua/interop/ but has not yet had a confirmed green run.
+
+### Phase 8 acceptance boundary
+
+Phase 8 is complete when:
+
+- Basic256Sha256/Sign — all four directions pass
+- Basic256Sha256/SignAndEncrypt — all four directions pass
+- Username (valid + invalid) — tested against all three server stacks
+- Trust rejection — at least one positive + one negative certificate test per server stack
+- All 70+ existing None/None tests remain green
+
+Aes128 and Aes256 policies are stretch goals for Phase 8; they can move to Phase 9 if
+Basic256Sha256 coverage is solid.
+
+### Remaining work for Phase 8 completion
+
+1. Confirm Basic256Sha256 Sign + SignAndEncrypt against `:dev` Milo and open62541 images
+2. Add go-opcua server TLS support (adapter clients → Go server secure channel)
+3. Add open62541 client and Milo client secure-channel tests (adapter as TLS client)
+4. Confirm username tests against both adapter servers
+5. One negative trust test per server stack
+
+---
+
+## Phase 9 — Arrays, DataValue metadata, complex types
+
+- Array and matrix variables (all built-in scalar types)
+- DataValue timestamp and status-code metadata
+- Structured types, enumerations
+- Edge-case fixture (`fixtures/edge-cases/`)
 
 ---
 
 ## Release sequence
 
-| Release | Content |
-|---------|---------|
-| v0.1.0 | Phases 0–7: open62541 + Milo, anonymous, baseline scalars, methods, subscriptions, cross-stack smoke, first go-opcua integration |
-| v0.2.0 | Phase 8: test PKI, modern security policies, username/password |
-| v0.3.0 | Arrays, matrices, DataValue metadata, custom structures, enumerations |
-| Later | Alarms, history, events, reverse connect, NodeSet2 import, PubSub |
+| Release | Content | Status |
+|---------|---------|--------|
+| v0.1.0 | Phases 0–7: open62541 + Milo, anonymous, baseline scalars, methods, subscriptions, cross-stack smoke, first go-opcua integration | released |
+| v0.1.1 | Phase 8 infrastructure: test PKI, security endpoint scaffolding, Milo security APIs, username token policy, go-opcua PKCS#8 fix | released |
+| v0.2.0 | Phase 8 complete: all four directions verified for Basic256Sha256 Sign/SignAndEncrypt, username auth, trust rejection | pending |
+| v0.3.0 | Phase 9: arrays, DataValue metadata, custom structures, enumerations | pending |
+| Later | Alarms, history, events, reverse connect, NodeSet2 import, PubSub | — |
 
 ---
 
