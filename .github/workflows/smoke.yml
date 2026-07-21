@@ -1,0 +1,131 @@
+name: Smoke
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-open62541:
+    name: open62541 smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build open62541
+        uses: docker/build-push-action@v6
+        with:
+          context: open62541
+          file: open62541/Dockerfile
+          push: false
+          load: true
+          tags: ghcr.io/otfabric/opcua-compat-open62541:smoke
+          cache-from: type=gha
+
+      - name: Run open62541 smoke test
+        run: scripts/smoke.sh open62541 ghcr.io/otfabric/opcua-compat-open62541:smoke
+
+      - name: Test graceful shutdown
+        run: |
+          cname=$(docker run -d \
+            -v "$PWD/fixtures:/fixtures:ro" \
+            ghcr.io/otfabric/opcua-compat-open62541:smoke \
+            server \
+            --fixture /fixtures/baseline/fixture.json \
+            --endpoint opc.tcp://0.0.0.0:4840/opcua-compat \
+            --ready-file /run/opcua-compat/ready)
+          scripts/wait-ready.sh "${cname}" 60
+          docker stop --time=10 "${cname}"
+          exit_code=$(docker inspect --format='{{.State.ExitCode}}' "${cname}")
+          docker rm "${cname}"
+          if [[ "${exit_code}" -ne 0 ]]; then
+            echo "Error: open62541 container exited with code ${exit_code} on SIGTERM" >&2
+            exit 1
+          fi
+          echo "open62541: clean shutdown OK (exit code 0)"
+
+  smoke-milo:
+    name: Milo smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Milo
+        uses: docker/build-push-action@v6
+        with:
+          context: milo
+          file: milo/Dockerfile
+          push: false
+          load: true
+          tags: ghcr.io/otfabric/opcua-compat-milo:smoke
+          cache-from: type=gha
+
+      - name: Run Milo smoke test
+        run: scripts/smoke.sh milo ghcr.io/otfabric/opcua-compat-milo:smoke
+
+      - name: Test graceful shutdown
+        run: |
+          cname=$(docker run -d \
+            -v "$PWD/fixtures:/fixtures:ro" \
+            ghcr.io/otfabric/opcua-compat-milo:smoke \
+            server \
+            --fixture /fixtures/baseline/fixture.json \
+            --endpoint opc.tcp://0.0.0.0:4840/opcua-compat \
+            --ready-file /run/opcua-compat/ready)
+          scripts/wait-ready.sh "${cname}" 60
+          docker stop --time=10 "${cname}"
+          exit_code=$(docker inspect --format='{{.State.ExitCode}}' "${cname}")
+          docker rm "${cname}"
+          if [[ "${exit_code}" -ne 0 ]]; then
+            echo "Error: Milo container exited with code ${exit_code} on SIGTERM" >&2
+            exit 1
+          fi
+          echo "Milo: clean shutdown OK (exit code 0)"
+
+  smoke-cross-stack:
+    name: Cross-stack self-check
+    runs-on: ubuntu-latest
+    needs: [smoke-open62541, smoke-milo]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build open62541
+        uses: docker/build-push-action@v6
+        with:
+          context: open62541
+          file: open62541/Dockerfile
+          push: false
+          load: true
+          tags: ghcr.io/otfabric/opcua-compat-open62541:smoke
+          cache-from: type=gha
+
+      - name: Build Milo
+        uses: docker/build-push-action@v6
+        with:
+          context: milo
+          file: milo/Dockerfile
+          push: false
+          load: true
+          tags: ghcr.io/otfabric/opcua-compat-milo:smoke
+          cache-from: type=gha
+
+      - name: Cross-stack smoke
+        run: |
+          scripts/smoke.sh cross \
+            ghcr.io/otfabric/opcua-compat-open62541:smoke \
+            ghcr.io/otfabric/opcua-compat-milo:smoke
