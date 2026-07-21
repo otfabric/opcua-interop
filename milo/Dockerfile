@@ -1,9 +1,11 @@
 ARG MAVEN_VERSION=3.9.8
+ARG MILO_VERSION=
 
 # Stage 1: build
 FROM eclipse-temurin:21-jdk-jammy AS builder
 
 ARG MAVEN_VERSION
+ARG MILO_VERSION
 
 RUN apt-get update -o Acquire::AllowInsecureRepositories=true \
     -o Acquire::AllowDowngradeToInsecureRepositories=true && \
@@ -17,10 +19,10 @@ RUN apt-get update -o Acquire::AllowInsecureRepositories=true \
 WORKDIR /build
 
 COPY pom.xml .
-RUN mvn -B dependency:go-offline -q
+RUN mvn -B dependency:go-offline -q ${MILO_VERSION:+-Dmilo.version=${MILO_VERSION}}
 
 COPY src/ src/
-RUN mvn -B package -DskipTests && \
+RUN mvn -B package -DskipTests ${MILO_VERSION:+-Dmilo.version=${MILO_VERSION}} && \
     cp target/opcua-interop-milo-*.jar target/opcua-interop-milo.jar
 
 # Stage 2: runtime
