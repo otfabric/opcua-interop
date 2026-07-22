@@ -387,12 +387,17 @@ void output_read_result(const char *nodeId, UA_StatusCode sc,
  * Write result
  * ---------------------------------------------------------------------- */
 
-void output_write_result(const char *nodeId, UA_StatusCode sc) {
-    printf(",\"results\":[{\"nodeId\":");
+void output_write_result_item(const char *nodeId, UA_StatusCode sc) {
+    printf("{\"nodeId\":");
     print_json_string(nodeId);
-    printf(",\"statusCode\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}}]",
+    printf(",\"statusCode\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}}",
            output_status_code_name(sc), (uint32_t)sc, output_severity(sc));
-    printf(",\"error\":null");
+}
+
+void output_write_result(const char *nodeId, UA_StatusCode sc) {
+    printf(",\"results\":[");
+    output_write_result_item(nodeId, sc);
+    printf("],\"error\":null");
 }
 
 /* -------------------------------------------------------------------------

@@ -920,91 +920,144 @@ static UA_Variant build_write_variant(const char *typeStr, const char *valStr) {
         UA_String_clear(&s);
         return var;
     }
+    /* Comma-separated Int32 array, e.g. --type Int32[] --value 1,2,3 */
+    if (strcmp(typeStr, "Int32[]") == 0) {
+        size_t count = 1;
+        for (const char *p = valStr; *p; p++)
+            if (*p == ',') count++;
+        UA_Int32 *arr = (UA_Int32 *)UA_Array_new(count, &UA_TYPES[UA_TYPES_INT32]);
+        if (!arr) return var;
+        size_t idx = 0;
+        char *dup = strdup(valStr);
+        char *tok = strtok(dup, ",");
+        while (tok && idx < count) {
+            arr[idx++] = (UA_Int32)atoi(tok);
+            tok = strtok(NULL, ",");
+        }
+        free(dup);
+        UA_Variant_setArray(&var, arr, idx, &UA_TYPES[UA_TYPES_INT32]);
+        return var;
+    }
 #undef SET_SCALAR
     return var;
 }
 
 static int cmd_write(int argc, char **argv) {
     const char *endpoint = find_arg(argc, argv, "--endpoint");
-    const char *nodeStr  = find_arg(argc, argv, "--node");
-    const char *typeStr  = find_arg(argc, argv, "--type");
-    const char *valStr   = find_arg(argc, argv, "--value");
+    int node_count = count_flag(argc, argv, "--node");
+    int type_count = count_flag(argc, argv, "--type");
+    int val_count  = count_flag(argc, argv, "--value");
 
-    if (!endpoint || !nodeStr || !typeStr || !valStr) {
+    if (!endpoint || node_count == 0 || type_count == 0 || val_count == 0 ||
+        node_count != type_count || node_count != val_count) {
         output_begin("open62541", "write");
         output_success(0);
         output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
         output_error("input",
-                     "usage: write --endpoint <url> --node <id> --type <t> --value <v>");
+                     "usage: write --endpoint <url> --node <id> --type <t> --value <v> "
+                     "[--node ... --type ... --value ...] (equal counts required)");
         output_end();
         return 2;
     }
+    if (node_count > MAX_NODES) node_count = MAX_NODES;
 
-    /* Validate NodeId structure before connecting */
-    if (validate_nodeid_structure(nodeStr) != 0) {
-        char msg[512];
-        snprintf(msg, sizeof(msg), "malformed NodeId: '%s'", nodeStr);
-        output_begin("open62541", "write");
-        output_success(0);
-        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
-        output_error("input", msg);
-        output_end();
-        return 2;
+    const char *nodes[MAX_NODES];
+    const char *types[MAX_NODES];
+    const char *vals[MAX_NODES];
+    int nn = 0, nt = 0, nv = 0;
+    for (int i = 0; i < argc - 1; i++) {
+        if (strcmp(argv[i], "--node") == 0 && nn < MAX_NODES)
+            nodes[nn++] = argv[i + 1];
+        else if (strcmp(argv[i], "--type") == 0 && nt < MAX_NODES)
+            types[nt++] = argv[i + 1];
+        else if (strcmp(argv[i], "--value") == 0 && nv < MAX_NODES)
+            vals[nv++] = argv[i + 1];
     }
 
-    int req_ms = parse_int_flag(argc, argv, "--request-timeout", 5) * 1000;
-    int exit_code = 3;
-    UA_Client *client = make_client(endpoint, req_ms, "write", &exit_code);
-    if (!client) return exit_code;
-
-    UA_NodeId nodeId;
-    UA_NodeId_init(&nodeId);
-
-    if (strncmp(nodeStr, "nsu=", 4) == 0) {
-        int r = resolve_nsu_nodeid(client, nodeStr, &nodeId);
-        if (r != 0) {
-            UA_Client_disconnect(client);
-            UA_Client_delete(client);
+    for (int i = 0; i < node_count; i++) {
+        if (validate_nodeid_structure(nodes[i]) != 0) {
             char msg[512];
-            if (r == -1) {
-                const char *uri_end = strchr(nodeStr + 4, ';');
-                if (uri_end) {
-                    snprintf(msg, sizeof(msg), "unknown namespace URI: '%.*s'",
-                             (int)(uri_end - (nodeStr + 4)), nodeStr + 4);
-                } else {
-                    snprintf(msg, sizeof(msg), "unknown namespace URI in '%s'", nodeStr);
-                }
-            } else {
-                snprintf(msg, sizeof(msg), "failed to resolve NodeId: '%s'", nodeStr);
-            }
+            snprintf(msg, sizeof(msg), "malformed NodeId: '%s'", nodes[i]);
             output_begin("open62541", "write");
             output_success(0);
-            output_service_result(UA_STATUSCODE_BADNAMESPACEURIINVALID);
+            output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
             output_error("input", msg);
             output_end();
             return 2;
         }
-    } else {
-        nodeId = parse_nodeid_local(nodeStr);
     }
 
-    UA_Variant var = build_write_variant(typeStr, valStr);
-    UA_StatusCode sc = UA_Client_writeValueAttribute(client, nodeId, &var);
+    int req_ms = parse_int_flag(argc, argv, "--request-timeout", 5) * 1000;
+    int exit_code = 3;
+    UA_NodeId ids[MAX_NODES];
+    UA_Client *client = resolve_node_ids(nodes, node_count, ids, "write",
+                                         endpoint, req_ms, &exit_code);
+    if (!client) return exit_code;
 
-    int ok = UA_StatusCode_isGood(sc);
+    UA_WriteRequest req;
+    UA_WriteRequest_init(&req);
+    req.nodesToWrite = (UA_WriteValue *)UA_Array_new((size_t)node_count,
+                            &UA_TYPES[UA_TYPES_WRITEVALUE]);
+    req.nodesToWriteSize = (size_t)node_count;
+
+    UA_Variant vars[MAX_NODES];
+    for (int i = 0; i < node_count; i++) {
+        UA_WriteValue_init(&req.nodesToWrite[i]);
+        UA_NodeId_copy(&ids[i], &req.nodesToWrite[i].nodeId);
+        req.nodesToWrite[i].attributeId = UA_ATTRIBUTEID_VALUE;
+        vars[i] = build_write_variant(types[i], vals[i]);
+        UA_Variant_copy(&vars[i], &req.nodesToWrite[i].value.value);
+        req.nodesToWrite[i].value.hasValue = true;
+    }
+
+    UA_WriteResponse resp = UA_Client_Service_write(client, req);
+    UA_WriteRequest_clear(&req);
+
+    UA_StatusCode svc_sc = resp.responseHeader.serviceResult;
+    int all_good = UA_StatusCode_isGood(svc_sc);
+    if (all_good) {
+        for (size_t i = 0; i < resp.resultsSize; i++) {
+            if (!UA_StatusCode_isGood(resp.results[i])) {
+                all_good = 0;
+                break;
+            }
+        }
+    }
+
+    UA_StatusCode emit_sc = svc_sc;
+    if (UA_StatusCode_isGood(svc_sc) && !all_good && resp.resultsSize > 0) {
+        for (size_t i = 0; i < resp.resultsSize; i++) {
+            if (!UA_StatusCode_isGood(resp.results[i])) {
+                emit_sc = resp.results[i];
+                break;
+            }
+        }
+    }
+
     output_begin("open62541", "write");
-    output_success(ok);
-    output_service_result(sc);
-    output_write_result(nodeStr, sc);
+    output_success(all_good);
+    output_service_result(emit_sc);
+    output_open_results();
+    if (UA_StatusCode_isGood(svc_sc)) {
+        for (size_t i = 0; i < resp.resultsSize; i++) {
+            if (i > 0) printf(",");
+            output_write_result_item(nodes[i], resp.results[i]);
+        }
+    }
+    output_close_results();
+    output_null_error();
     output_end();
 
     int ret;
-    if (sc == UA_STATUSCODE_BADTIMEOUT)     ret = 7;
-    else if (!ok)                            ret = 4;
-    else                                     ret = 0;
+    if (svc_sc == UA_STATUSCODE_BADTIMEOUT) ret = 7;
+    else if (!UA_StatusCode_isGood(svc_sc) || !all_good) ret = 4;
+    else ret = 0;
 
-    UA_Variant_clear(&var);
-    UA_NodeId_clear(&nodeId);
+    for (int i = 0; i < node_count; i++) {
+        UA_Variant_clear(&vars[i]);
+        UA_NodeId_clear(&ids[i]);
+    }
+    UA_WriteResponse_clear(&resp);
     UA_Client_disconnect(client);
     UA_Client_delete(client);
     return ret;
@@ -1042,6 +1095,14 @@ static int cmd_browse(int argc, char **argv) {
 
     int max_refs = parse_int_flag(argc, argv, "--max-refs", 0);
     int req_ms   = parse_int_flag(argc, argv, "--request-timeout", 5) * 1000;
+    /* NodeClassMask: 0 = all classes. Variable = 2. */
+    const char *ncmStr = find_arg(argc, argv, "--node-class-mask");
+    UA_UInt32 nodeClassMask = ncmStr ? (UA_UInt32)strtoul(ncmStr, NULL, 0) : 0;
+    /* IncludeSubtypes: default true; --include-subtypes false for exact RefType match. */
+    const char *incStr = find_arg(argc, argv, "--include-subtypes");
+    UA_Boolean includeSubtypes = UA_TRUE;
+    if (incStr && (strcmp(incStr, "false") == 0 || strcmp(incStr, "0") == 0))
+        includeSubtypes = UA_FALSE;
 
     int exit_code = 3;
     UA_Client *client = make_client(endpoint, req_ms, "browse", &exit_code);
@@ -1085,12 +1146,20 @@ static int cmd_browse(int argc, char **argv) {
     req.nodesToBrowseSize = 1;
     UA_NodeId_copy(&nodeId, &req.nodesToBrowse[0].nodeId);
     req.nodesToBrowse[0].browseDirection = UA_BROWSEDIRECTION_FORWARD;
-    req.nodesToBrowse[0].resultMask      = UA_BROWSERESULTMASK_ALL;
+    req.nodesToBrowse[0].referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
+    req.nodesToBrowse[0].includeSubtypes  = includeSubtypes;
+    req.nodesToBrowse[0].nodeClassMask    = nodeClassMask;
+    req.nodesToBrowse[0].resultMask       = UA_BROWSERESULTMASK_ALL;
 
     UA_BrowseResponse resp = UA_Client_Service_browse(client, req);
     UA_BrowseRequest_clear(&req);
 
     UA_StatusCode sc = resp.responseHeader.serviceResult;
+    /* Promote per-item BrowseResult status when the service header is Good. */
+    if (UA_StatusCode_isGood(sc) && resp.resultsSize > 0 &&
+        !UA_StatusCode_isGood(resp.results[0].statusCode)) {
+        sc = resp.results[0].statusCode;
+    }
 
     /* Accumulate all references, following continuation points */
     UA_ReferenceDescription *allRefs  = NULL;
@@ -1410,6 +1479,16 @@ static int cmd_subscribe(int argc, char **argv) {
     if (nWanted <= 0) nWanted = 5;
     if (nWanted > MAX_NOTIFICATIONS) nWanted = MAX_NOTIFICATIONS;
 
+    /* Queue-size and discard-oldest options. */
+    const char *qsStr     = find_arg(argc, argv, "--queue-size");
+    const char *doStr     = find_arg(argc, argv, "--discard-oldest");
+    UA_UInt32   queueSize = qsStr ? (UA_UInt32)atoi(qsStr) : 1;
+    UA_Boolean  discardOldest = UA_TRUE; /* default: keep newest */
+    if (doStr) {
+        discardOldest = (strcmp(doStr, "false") == 0) ? UA_FALSE : UA_TRUE;
+    }
+    if (queueSize < 1) queueSize = 1;
+
     int exit_code = 3;
     UA_Client *client = make_client(endpoint, 5000, "subscribe", &exit_code);
     if (!client) return exit_code;
@@ -1456,6 +1535,8 @@ static int cmd_subscribe(int argc, char **argv) {
     UA_MonitoredItemCreateRequest monReq =
         UA_MonitoredItemCreateRequest_default(nodeId);
     monReq.requestedParameters.samplingInterval = siMs;
+    monReq.requestedParameters.queueSize        = queueSize;
+    monReq.requestedParameters.discardOldest    = discardOldest;
     UA_MonitoredItemCreateResult monResp =
         UA_Client_MonitoredItems_createDataChange(
             client, subResp.subscriptionId, UA_TIMESTAMPSTORETURN_BOTH,

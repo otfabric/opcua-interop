@@ -67,6 +67,10 @@ void output_read_result(const char *nodeId, UA_StatusCode sc,
 /* Emit: ,"results":[{"nodeId":"...","statusCode":{...}}],"error":null */
 void output_write_result(const char *nodeId, UA_StatusCode sc);
 
+/* Emit a single write-result JSON object (no leading comma).
+ * Call between output_open_results() / output_close_results(). */
+void output_write_result_item(const char *nodeId, UA_StatusCode sc);
+
 /*
  * Emit: ,"results":[...all refs...],"error":null
  * refs may be NULL when count == 0.

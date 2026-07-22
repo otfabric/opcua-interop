@@ -192,11 +192,13 @@ public class ClientCommand {
 
     private static int cmdWrite(String[] args) throws Exception {
         String endpointUrl = findArg(args, "--endpoint");
-        String nodeStr     = findArg(args, "--node");
-        String typeStr     = findArg(args, "--type");
-        String valStr      = findArg(args, "--value");
-        if (endpointUrl == null || nodeStr == null || typeStr == null || valStr == null) {
-            System.out.println(new ResultBuilder("write").error("input", "missing required flags for write").toJson());
+        List<String> nodeStrs = findAllArgs(args, "--node");
+        List<String> typeStrs = findAllArgs(args, "--type");
+        List<String> valStrs  = findAllArgs(args, "--value");
+        if (endpointUrl == null || nodeStrs.isEmpty() || typeStrs.isEmpty() || valStrs.isEmpty()
+                || nodeStrs.size() != typeStrs.size() || nodeStrs.size() != valStrs.size()) {
+            System.out.println(new ResultBuilder("write").error("input",
+                    "write requires equal counts of --node, --type, and --value").toJson());
             return 2;
         }
         long cto = connectTimeoutMs(args);
@@ -205,28 +207,41 @@ public class ClientCommand {
 
         OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
-            NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
-            Variant var   = buildWriteVariant(typeStr, valStr);
-            // Build a write DataValue with only the Value field.
-            // - Explicit StatusCode.GOOD (not null): avoids NPE in Milo's encoder which calls
-            //   statusCode.getValue() unconditionally, but a Good status won't set HasStatus=1.
-            // - Explicit null timestamps: the default DataValue(Variant) constructor sets
-            //   sourceTime=DateTime.now(), which sets HasSourceTimestamp=1.  open62541 rejects
-            //   writes that include any timestamp/status field with BadWriteNotSupported.
-            DataValue writeDataValue = new DataValue(var, StatusCode.GOOD, null, null);
-            List<StatusCode> scList = client.writeValues(List.of(nodeId), List.of(writeDataValue));
-            StatusCode sc = scList.get(0);
+            List<NodeId> nodeIds = new ArrayList<>();
+            List<DataValue> values = new ArrayList<>();
+            for (int i = 0; i < nodeStrs.size(); i++) {
+                nodeIds.add(NodeIdParser.resolveWithClient(nodeStrs.get(i), client, rto));
+                Variant var = buildWriteVariant(typeStrs.get(i), valStrs.get(i));
+                // Explicit StatusCode.GOOD + null timestamps: open62541 rejects writes that
+                // include timestamp/status fields with BadWriteNotSupported.
+                values.add(new DataValue(var, StatusCode.GOOD, null, null));
+            }
 
-            Map<String, Object> writeResult = new LinkedHashMap<>();
-            writeResult.put("nodeId",     ResultBuilder.nodeIdToString(nodeId));
-            writeResult.put("statusCode", ResultBuilder.statusCodeJson(sc));
+            List<StatusCode> scList = client.writeValues(nodeIds, values);
 
-            System.out.println(new ResultBuilder("write")
-                    .success(sc.isGood())
-                    .serviceResult(sc)
-                    .addResult(writeResult)
-                    .toJson());
-            return sc.isGood() ? 0 : 4;
+            ResultBuilder rb = new ResultBuilder("write");
+            boolean anyBad = false;
+            StatusCode firstBad = StatusCode.GOOD;
+            for (int i = 0; i < nodeIds.size(); i++) {
+                StatusCode sc = scList.get(i);
+                Map<String, Object> writeResult = new LinkedHashMap<>();
+                writeResult.put("nodeId", ResultBuilder.nodeIdToString(nodeIds.get(i)));
+                writeResult.put("statusCode", ResultBuilder.statusCodeJson(sc));
+                rb.addResult(writeResult);
+                if (!sc.isGood()) {
+                    anyBad = true;
+                    if (firstBad.isGood()) firstBad = sc;
+                }
+            }
+            if (nodeIds.size() == 1) {
+                rb.serviceResult(scList.get(0));
+            } else if (anyBad) {
+                rb.serviceResult(firstBad);
+            }
+            if (anyBad) rb.success(false);
+
+            System.out.println(rb.toJson());
+            return anyBad ? 4 : 0;
         } finally {
             safeDisconnect(client, dto);
         }
@@ -245,6 +260,10 @@ public class ClientCommand {
             return 2;
         }
         long maxRefs = parseLongArg(args, "--max-refs", 0);
+        long nodeClassMask = parseLongArg(args, "--node-class-mask", 0);
+        // IncludeSubtypes defaults to true; pass --include-subtypes false for exact match.
+        boolean includeSubtypes = !hasFlagValue(args, "--include-subtypes", "false")
+                && !hasFlagValue(args, "--include-subtypes", "0");
         long cto = connectTimeoutMs(args);
         long rto = requestTimeoutMs(args);
         long dto = disconnectTimeoutMs(args);
@@ -257,8 +276,8 @@ public class ClientCommand {
                     nodeId,
                     BrowseDirection.Forward,
                     Identifiers.HierarchicalReferences,
-                    true,
-                    UInteger.valueOf(0xFF),
+                    includeSubtypes,
+                    UInteger.valueOf(nodeClassMask),
                     UInteger.valueOf(BrowseResultMask.All.getValue()));
 
             BrowseResult firstResult = client.browse(bd);
@@ -283,9 +302,10 @@ public class ClientCommand {
                 contPoint = next.getContinuationPoint();
             }
 
+            StatusCode browseSc = firstResult.getStatusCode();
             ResultBuilder rb = new ResultBuilder("browse")
-                    .serviceResult(firstResult.getStatusCode())
-                    .success(firstResult.getStatusCode().isGood());
+                    .serviceResult(browseSc)
+                    .success(browseSc.isGood());
 
             for (ReferenceDescription rd : allRefs) {
                 Map<String, Object> m = new LinkedHashMap<>();
@@ -398,6 +418,8 @@ public class ClientCommand {
         double siMs   = parseDoubleArg(args, "--sampling-interval-ms",   100.0);
         int    nWanted = parseIntArg(args,   "--notifications", 5);
         long   toMs   = parseLongArg(args,   "--timeout-ms",   10000L);
+        int    queueSize    = parseIntArg(args, "--queue-size",    1);
+        boolean discardOld = !hasFlagValue(args, "--discard-oldest", "false");
 
         OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
@@ -413,7 +435,8 @@ public class ClientCommand {
                 QualifiedName.NULL_VALUE);
             OpcUaMonitoredItem monItem = new OpcUaMonitoredItem(readValueId);
             monItem.setSamplingInterval(siMs);
-            monItem.setQueueSize(uint(10));
+            monItem.setQueueSize(uint(Math.max(1, queueSize)));
+            monItem.setDiscardOldest(discardOld);
 
             subscription.addMonitoredItem(monItem);
             subscription.createMonitoredItems();
@@ -609,6 +632,15 @@ public class ClientCommand {
             case "Float":    return new Variant(Float.parseFloat(val));
             case "Double":   return new Variant(Double.parseDouble(val));
             case "String":   return new Variant(val);
+            case "Int32[]": {
+                // Comma-separated Int32 array, e.g. --type Int32[] --value 1,2,3
+                String[] parts = val.split(",");
+                Integer[] arr = new Integer[parts.length];
+                for (int i = 0; i < parts.length; i++) {
+                    arr[i] = Integer.parseInt(parts[i].trim());
+                }
+                return new Variant(arr);
+            }
             default:         return new Variant(val);
         }
     }
@@ -644,6 +676,12 @@ public class ClientCommand {
         String val = findArg(args, flag);
         if (val == null) return defaultVal;
         try { return Integer.parseInt(val); } catch (NumberFormatException e) { return defaultVal; }
+    }
+
+    /** Returns true unless the flag is explicitly present with the given value. */
+    private static boolean hasFlagValue(String[] args, String flag, String value) {
+        String val = findArg(args, flag);
+        return val != null && val.equalsIgnoreCase(value);
     }
 
     private static long connectTimeoutMs(String[] args)    { return parseLongArg(args, "--connect-timeout",    5) * 1000; }
