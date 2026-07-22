@@ -130,6 +130,12 @@ public class ResultBuilder {
         if (val instanceof StatusCode) {
             return statusCodeJson((StatusCode) val);
         }
+        if (val instanceof org.eclipse.milo.opcua.stack.core.types.builtin.XmlElement) {
+            return ((org.eclipse.milo.opcua.stack.core.types.builtin.XmlElement) val).getFragment();
+        }
+        if (val instanceof org.eclipse.milo.opcua.stack.core.types.builtin.Matrix) {
+            return ((org.eclipse.milo.opcua.stack.core.types.builtin.Matrix) val).nestedArrayValue();
+        }
         return val;
     }
 
@@ -156,6 +162,8 @@ public class ResultBuilder {
         if (val instanceof org.eclipse.milo.opcua.stack.core.types.builtin.QualifiedName) return "QualifiedName";
         if (val instanceof org.eclipse.milo.opcua.stack.core.types.builtin.LocalizedText) return "LocalizedText";
         if (val instanceof StatusCode) return "StatusCode";
+        if (val instanceof org.eclipse.milo.opcua.stack.core.types.builtin.XmlElement) return "XmlElement";
+        if (val instanceof org.eclipse.milo.opcua.stack.core.types.builtin.Matrix) return "Unknown";
         return "Unknown";
     }
 

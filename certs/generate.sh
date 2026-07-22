@@ -16,6 +16,7 @@ CA_DAYS=3650    # 10 years
 CERT_DAYS=1825  # 5 years
 
 SERVER_APP_URI="urn:otfabric:opcua-interop:server"
+GO_SERVER_URI="urn:otfabric:opcua-interop:server:go-opcua"
 OPEN62541_CLIENT_URI="urn:otfabric:opcua-interop:client:open62541"
 MILO_CLIENT_URI="urn:otfabric:opcua-interop:client:milo"
 CONSUMER_CLIENT_URI="urn:otfabric:opcua-interop:client:consumer"
@@ -64,7 +65,7 @@ gen_cert() {
         -CAcreateserial \
         -out    "${dir}/cert.crt" \
         -days   "${CERT_DAYS}" \
-        -extfile <(printf "subjectAltName=%s\nextendedKeyUsage=serverAuth,clientAuth\nkeyUsage=critical,digitalSignature,keyEncipherment\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid" "${san}") \
+        -extfile <(printf "subjectAltName=%s\nextendedKeyUsage=serverAuth,clientAuth\nkeyUsage=critical,digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment\nbasicConstraints=critical,CA:FALSE\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid" "${san}") \
         2>/dev/null
 
     rm -f "${dir}/cert.csr"
@@ -82,6 +83,42 @@ gen_cert() {
         2>/dev/null
 
     log "Cert: ${cn} (${app_uri})"
+}
+
+gen_crl() {
+    local out_file="$1"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    touch "${tmpdir}/index.txt"
+    printf '01\n' > "${tmpdir}/crlnumber"
+
+    # Minimal openssl ca config — only needs a database and crlnumber.
+    cat > "${tmpdir}/openssl.cnf" << EOF
+[ ca ]
+default_ca = myca
+[ myca ]
+dir = ${tmpdir}
+certificate = ${PKI_DIR}/ca/ca.crt
+private_key = ${PKI_DIR}/ca/ca.key
+database = \$dir/index.txt
+crlnumber = \$dir/crlnumber
+default_md = sha256
+default_crl_days = 3650
+[ crl_ext ]
+authorityKeyIdentifier = keyid:always
+EOF
+
+    openssl ca -gencrl \
+        -config "${tmpdir}/openssl.cnf" \
+        -keyfile "${PKI_DIR}/ca/ca.key" \
+        -cert    "${PKI_DIR}/ca/ca.crt" \
+        -crlexts crl_ext \
+        -out     "${out_file}" \
+        2>/dev/null
+
+    rm -rf "${tmpdir}"
+    log "CRL: ${out_file}"
 }
 
 gen_untrusted_cert() {
@@ -108,7 +145,8 @@ populate_trust_dir() {
 
     mkdir -p "${trusted_certs_dir}" "${trusted_crl_dir}" "${issuers_dir}" "${rejected_dir}"
 
-    cp "${PKI_DIR}/ca/ca.crt" "${trusted_certs_dir}/ca.crt"
+    cp "${PKI_DIR}/ca/ca.crt"       "${trusted_certs_dir}/ca.crt"
+    cp "${PKI_DIR}/ca/ca.crl"       "${trusted_crl_dir}/ca.crl"
     log "Trust dir populated: ${adapter_pki_dir}"
 }
 
@@ -120,6 +158,12 @@ rm -rf "${PKI_DIR}"
 mkdir -p "${PKI_DIR}"
 
 gen_ca "${PKI_DIR}/ca" "OTFabric Test CA"
+
+# Generate an empty CRL so OPC UA PKI managers (e.g. Milo's
+# DefaultServerCertificateValidator) find a valid CRL for the CA.
+# Without a CRL file, some PKIX validators fall back to online revocation
+# checking, which fails for test-only certificates.
+gen_crl "${PKI_DIR}/ca/ca.crl"
 
 gen_cert "${PKI_DIR}/open62541-server" \
     "open62541 Server" \
@@ -146,6 +190,11 @@ gen_cert "${PKI_DIR}/consumer" \
     "${CONSUMER_CLIENT_URI}" \
     ""
 
+gen_cert "${PKI_DIR}/go-server" \
+    "Go OPC UA Server" \
+    "${GO_SERVER_URI}" \
+    "DNS:host.docker.internal"
+
 gen_untrusted_cert "${PKI_DIR}/untrusted" "Untrusted Client"
 
 populate_trust_dir "${PKI_DIR}/open62541-server/pki"
@@ -153,11 +202,16 @@ populate_trust_dir "${PKI_DIR}/open62541-client/pki"
 populate_trust_dir "${PKI_DIR}/milo-server/pki"
 populate_trust_dir "${PKI_DIR}/milo-client/pki"
 populate_trust_dir "${PKI_DIR}/consumer/pki"
+populate_trust_dir "${PKI_DIR}/go-server/pki"
 
 cp "${PKI_DIR}/open62541-client/cert.crt" "${PKI_DIR}/milo-server/pki/trusted/certs/open62541-client.crt"
 cp "${PKI_DIR}/milo-client/cert.crt"      "${PKI_DIR}/open62541-server/pki/trusted/certs/milo-client.crt"
 cp "${PKI_DIR}/consumer/cert.crt"         "${PKI_DIR}/open62541-server/pki/trusted/certs/consumer.crt"
 cp "${PKI_DIR}/consumer/cert.crt"         "${PKI_DIR}/milo-server/pki/trusted/certs/consumer.crt"
+# go-server trusts CA only; adapter clients are CA-signed so the chain resolves.
+cp "${PKI_DIR}/open62541-client/cert.crt" "${PKI_DIR}/go-server/pki/trusted/certs/open62541-client.crt"
+cp "${PKI_DIR}/milo-client/cert.crt"      "${PKI_DIR}/go-server/pki/trusted/certs/milo-client.crt"
+cp "${PKI_DIR}/consumer/cert.crt"         "${PKI_DIR}/go-server/pki/trusted/certs/consumer.crt"
 
 log ""
 log "Test PKI generated:"

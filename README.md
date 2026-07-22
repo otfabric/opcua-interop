@@ -165,6 +165,7 @@ certs/test-pki/
 ├── milo-server/           # Milo server identity
 ├── milo-client/           # Milo client identity
 ├── consumer/              # Consumer client identity (used by go-opcua test client)
+├── go-server/             # go-opcua server identity (DNS:host.docker.internal SAN)
 └── untrusted/             # Self-signed cert for trust-rejection tests
 ```
 
@@ -246,21 +247,24 @@ make release VERSION=v0.1.1  # Build and push multi-arch release images
 ## Security
 
 The test PKI (`certs/test-pki/`) and security infrastructure are in place as of v0.1.1.
-Security endpoint verification (Basic256Sha256 and above) is being validated in Phase 8
-and will be considered stable at v0.2.0.
 
-**What is implemented (v0.1.1):**
-- Full test PKI with CA, six identities, and OPC UA PKI directory layout
+**What is implemented and verified:**
+- Full test PKI with CA, seven identities (including go-server), and OPC UA PKI directory layout
 - Server `--certificate`, `--private-key`, `--pki-dir` flags on both adapters
 - Secure endpoint advertisement driven by fixture `securityProfiles`
 - Trust list validation via open62541 `UA_ServerConfig_setDefaultWithSecurityPolicies`
 - Trust list validation via Milo `FileBasedTrustListManager` + `DefaultServerCertificateValidator`
 - Username/password authentication on both None/None and secure endpoints
-- Test harness in go-opcua for secure-channel and username tests
+- Basic256Sha256 / Sign — all four directions: go-opcua client ↔ adapter servers; adapter clients ↔ go-opcua server
+- Basic256Sha256 / SignAndEncrypt — all four directions
+- Untrusted certificate rejection — go-opcua client vs. both adapter servers
+- Username valid/invalid — all four directions (go-opcua client ↔ adapter servers; adapter clients ↔ go-opcua server)
+- go-opcua server OPN asymmetric decryption (Part 6 §6.7.4 conformance fix)
+- open62541 client `UA_ExtensionObject_setValueCopy` argument-order fix (data first, type second)
 
-**What is not yet verified (v0.2.0 target):**
-- Confirmed green test runs for Basic256Sha256/Sign and SignAndEncrypt in all four directions
-- Adapter clients as TLS clients (open62541 client → Go server secure, Milo client → Go server secure)
+**Test PKI runtime note:** PKI directories must be writable at container runtime because rejected certificates may be quarantined. The go-opcua test harness copies the PKI tree to a writable temporary directory before mounting it.
+
+**What is not yet verified (Phase 9 target):**
 - Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss policies
 
 ## License

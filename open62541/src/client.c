@@ -496,6 +496,19 @@ static UA_Client *make_client(const char *url,
         cfg->securityMode = security_mode_enum(g_sec.modeName);
     } else {
         UA_ClientConfig_setDefault(cfg);
+        /* open62541 v1.5.x endpoint selection: when a server advertises multiple
+         * security endpoints, the client picks the highest-security endpoint that
+         * has a matching user token policy, regardless of the client's configured
+         * security mode.  Explicitly pinning None here forces the client to
+         * select the None/None endpoint even when secure endpoints are available. */
+        cfg->securityPolicyUri = UA_STRING_ALLOC(security_policy_uri("None"));
+        cfg->securityMode = UA_MESSAGESECURITYMODE_NONE;
+        /* open62541 v1.5.x rejects UserName token policies on None/None endpoints
+         * by default to prevent cleartext password transmission.  For test
+         * deployments where None/None username auth is deliberately used,
+         * set allowNonePolicyPassword = UA_TRUE (same flag as on the server). */
+        if (g_sec.username)
+            cfg->allowNonePolicyPassword = UA_TRUE;
     }
 #else
     UA_ClientConfig_setDefault(cfg);
@@ -518,8 +531,9 @@ static UA_Client *make_client(const char *url,
         const char *pw = g_sec.password ? g_sec.password : "";
         token.password = UA_BYTESTRING_ALLOC(pw);
         UA_ExtensionObject_clear(&cfg->userIdentityToken);
+        /* UA_ExtensionObject_setValueCopy(eo, p, type): data first, type second. */
         UA_ExtensionObject_setValueCopy(&cfg->userIdentityToken,
-            &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN], &token);
+            &token, &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN]);
         UA_UserNameIdentityToken_clear(&token);
     }
 

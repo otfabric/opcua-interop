@@ -38,7 +38,7 @@ These two stacks provide the strongest initial implementation diversity. A third
 
 ### v0.1.1 (released) — Security infrastructure
 
-- Full test PKI: CA, open62541-server, open62541-client, milo-server, milo-client, consumer, untrusted identities
+- Full test PKI: CA, open62541-server, open62541-client, milo-server, milo-client, consumer, go-server, untrusted identities
 - Server security flags: `--certificate`, `--private-key`, `--pki-dir` (both adapters)
 - Secure endpoint advertisement from fixture `securityProfiles`
 - Trust list validation (both adapters)
@@ -49,16 +49,17 @@ These two stacks provide the strongest initial implementation diversity. A third
 
 ### v0.2.0 (target) — Security verification complete
 
-All of the following confirmed with green test runs in go-opcua:
+Confirmed with green test runs in go-opcua (125 tests, 0 skips, 0 failures):
 
-- Basic256Sha256/Sign — all four directions
-- Basic256Sha256/SignAndEncrypt — all four directions
-- Trust rejection — positive and negative certificate test per server stack
-- Username/valid credentials — all three server stacks
-- Username/invalid credentials — rejected by all three server stacks
-- go-opcua server with TLS (adapter clients → Go server secure channel)
+- Basic256Sha256/Sign — all four directions ✓
+- Basic256Sha256/SignAndEncrypt — all four directions ✓
+- Trust rejection — positive and negative certificate test per server stack (open62541 ✓, Milo ✓)
+- Username/valid credentials — all four directions ✓ (open62541 ✓, Milo ✓, go-server ✓)
+- Username/invalid credentials — all four directions ✓ (open62541 ✓, Milo ✓, go-server ✓)
+- go-opcua server with OPC UA SecureChannel (adapter clients → Go server, both Sign and SignAndEncrypt) ✓
+- open62541 client `UA_ExtensionObject_setValueCopy` argument-order bug fix ✓
 
-Stretch goal (may move to v0.3.0 if Basic256Sha256 coverage is solid first):
+Deferred to v0.3.0:
 - Aes128_Sha256_RsaOaep/SignAndEncrypt
 - Aes256_Sha256_RsaPss/SignAndEncrypt
 

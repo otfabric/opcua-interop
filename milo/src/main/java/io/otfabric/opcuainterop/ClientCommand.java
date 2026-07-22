@@ -548,6 +548,7 @@ public class ClientCommand {
                 X509Certificate clientCert = loadCertificate(certFile);
                 PrivateKey      clientKey  = loadPrivateKey(keyFile);
                 cfgBuilder.setCertificate(clientCert)
+                          .setCertificateChain(new X509Certificate[]{clientCert})
                           .setKeyPair(new KeyPair(clientCert.getPublicKey(), clientKey));
 
                 // Trust list for server certificate validation

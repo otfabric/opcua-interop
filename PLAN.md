@@ -122,7 +122,7 @@ Released v0.1.0. Consumer tests in `go-opcua/interop/` cover all four directions
 
 | Item | Status |
 |------|--------|
-| `certs/generate.sh` — full test PKI (CA + 6 identities) | ✓ |
+| `certs/generate.sh` — full test PKI (CA + 6 identities + go-server identity) | ✓ |
 | `certs/test-pki/` — checked-in test certificates with SAN URIs | ✓ |
 | Fixture `securityProfiles` field — declares server security policies | ✓ |
 | Fixture `users` field — declares username/password credentials | ✓ |
@@ -139,44 +139,35 @@ Released v0.1.0. Consumer tests in `go-opcua/interop/` cover all four directions
 | go-opcua: PKCS#8 PEM private key support in `loadPrivateKey` | ✓ |
 | go-opcua harness: `pkiDir()`, `startSecureAdapterServer()`, `dialSecureClient()` | ✓ |
 | go-opcua harness: `dialUsernameClient()` for positive/negative username tests | ✓ |
+| go-opcua harness: `startSecureGoServer()` with Basic256Sha256 endpoints | ✓ |
+| go-opcua harness: `runSecureAdapterClient()` for adapter→Go server tests | ✓ |
+| go-opcua server: OPN asymmetric decryption fixed (was incorrectly skipped when SecurityMode=None) | ✓ |
 
-### Verified interoperability (pending — next steps)
-
-The test infrastructure is in place. The following directions need a passing test run
-against the `:dev` images before they can be called verified:
+### Verified interoperability
 
 | Scenario | go-opcua client → open62541 | go-opcua client → Milo | open62541 client → go server | Milo client → go server |
 |----------|:---:|:---:|:---:|:---:|
-| Basic256Sha256 / Sign | written | written | not started | not started |
-| Basic256Sha256 / SignAndEncrypt | written | written | not started | not started |
-| Trust rejection (untrusted cert) | written | written | — | — |
-| Username / valid credentials | written | written | not started | not started |
-| Username / invalid credentials | written | written | not started | not started |
+| Basic256Sha256 / Sign | **verified** | **verified** | **verified** | **verified** |
+| Basic256Sha256 / SignAndEncrypt | **verified** | **verified** | **verified** | **verified** |
+| Trust rejection (untrusted cert) | **verified** | **verified** | — | — |
+| Username / valid credentials | **verified** | **verified** | **verified** | **verified** |
+| Username / invalid credentials | **verified** | **verified** | **verified** | **verified** |
 | Aes128_Sha256_RsaOaep / SignAndEncrypt | not started | not started | not started | not started |
 | Aes256_Sha256_RsaPss / SignAndEncrypt | not started | not started | not started | not started |
 
-"written" = test exists in go-opcua/interop/ but has not yet had a confirmed green run.
+"verified" = confirmed green run with exact `:dev` adapter images on the test machine.
 
 ### Phase 8 acceptance boundary
 
-Phase 8 is complete when:
+**Phase 8 is complete.**
 
-- Basic256Sha256/Sign — all four directions pass
-- Basic256Sha256/SignAndEncrypt — all four directions pass
-- Username (valid + invalid) — tested against all three server stacks
-- Trust rejection — at least one positive + one negative certificate test per server stack
-- All 70+ existing None/None tests remain green
+- Basic256Sha256/Sign — all four directions pass ✓
+- Basic256Sha256/SignAndEncrypt — all four directions pass ✓
+- Username (valid + invalid) — all three server stacks ✓ (open62541 ✓, Milo ✓, go-server ✓)
+- Trust rejection — open62541 ✓, Milo ✓
+- All 125 tests pass, 0 skips ✓
 
-Aes128 and Aes256 policies are stretch goals for Phase 8; they can move to Phase 9 if
-Basic256Sha256 coverage is solid.
-
-### Remaining work for Phase 8 completion
-
-1. Confirm Basic256Sha256 Sign + SignAndEncrypt against `:dev` Milo and open62541 images
-2. Add go-opcua server TLS support (adapter clients → Go server secure channel)
-3. Add open62541 client and Milo client secure-channel tests (adapter as TLS client)
-4. Confirm username tests against both adapter servers
-5. One negative trust test per server stack
+Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss are stretch goals deferred to Phase 9.
 
 ---
 
@@ -195,7 +186,7 @@ Basic256Sha256 coverage is solid.
 |---------|---------|--------|
 | v0.1.0 | Phases 0–7: open62541 + Milo, anonymous, baseline scalars, methods, subscriptions, cross-stack smoke, first go-opcua integration | released |
 | v0.1.1 | Phase 8 infrastructure: test PKI, security endpoint scaffolding, Milo security APIs, username token policy, go-opcua PKCS#8 fix | released |
-| v0.2.0 | Phase 8 complete: all four directions verified for Basic256Sha256 Sign/SignAndEncrypt, username auth, trust rejection | pending |
+| v0.2.0 | Phase 8 complete: Basic256Sha256 Sign/SignAndEncrypt and username auth verified in all four directions; trust rejection verified; 125 tests, 0 skips | pending |
 | v0.3.0 | Phase 9: arrays, DataValue metadata, custom structures, enumerations | pending |
 | Later | Alarms, history, events, reverse connect, NodeSet2 import, PubSub | — |
 

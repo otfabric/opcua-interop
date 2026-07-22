@@ -54,6 +54,7 @@ public class FixtureModel {
         // Variable fields
         public String       dataType;
         public int          valueRank = -1;
+        public List<Integer> arrayDimensions = new ArrayList<>();
         @JsonProperty("accessLevel")
         public List<String> accessLevel = new ArrayList<>();
         @JsonProperty("initialValue")
