@@ -76,7 +76,7 @@ docker run --rm ghcr.io/otfabric/opcua-interop-milo:latest print-capabilities
 opcua-interop/
 ├── fixtures/           # Shared, stack-neutral fixture definitions
 │   ├── schema/         # JSON Schema for fixture validation
-│   ├── baseline/       # Baseline fixture (scalars, access, browse, methods, subscriptions)
+│   ├── baseline/       # Baseline fixture (scalars, access, browse, methods, subscriptions, events, history)
 │   ├── subscriptions/  # Dynamic-value and subscription fixture
 │   ├── methods/        # Method fixture
 │   ├── security/       # Security policy fixture (Phase 8)
@@ -142,19 +142,28 @@ The fixture's `users` array controls which username/password credentials are acc
 
 ### Client commands
 
-Seven client operations (see `print-capabilities` → `clientOperations` and
+Thirteen client operations (see `print-capabilities` → `clientOperations` and
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
 
 ```sh
 client endpoints --endpoint opc.tcp://host:4840/opcua-interop
+client find-servers --endpoint ...
 client read      --endpoint ... --node 'nsu=...;s=Scalar.Int32' [--index-range '1:3']
 client write     --endpoint ... --node '...' --type Int32 --value 100 [--index-range '0']
 client browse    --endpoint ... --node 'i=85'
+client translate --endpoint ... --starting-node 'i=85' --path 'Server' [--namespace 0]
 client call      --endpoint ... --object '...' --method '...' --input 'Int32:10' --input 'Int32:20'
 client subscribe --endpoint ... --node '...' --notifications 5 --timeout-ms 10000 \
                  [--queue-size 3] [--discard-oldest true] [--timestamps Both]
 client subscription-lifecycle --endpoint ... --node '...' \
                  --scenario revise|publishing-mode|monitoring-mode|delete
+client event-subscribe --endpoint ... --node '...' [--events 1] [--timeout-ms 10000] \
+                 [--of-type i=2041] [--min-severity 100]
+client history-read --endpoint ... --node '...' --start <rfc3339> --end <rfc3339> \
+                 [--num-values 0] [--timestamps Both] [--scenario continue]
+client republish --endpoint ... --subscription-id <n> --sequence-number <n>
+client transfer-subscriptions --endpoint ... --subscription-id <n> \
+                 [--send-initial-values false]
 ```
 
 `subscribe` JSON includes `subscriptionId` and revised CreateSubscription fields
@@ -236,20 +245,21 @@ make run-open62541       # Start open62541 server (foreground, port 4840)
 make run-milo            # Start Milo server (foreground, port 4841)
 make certs               # Generate test PKI (requires openssl >= 1.1)
 make clean               # Remove build artifacts and containers
-make release VERSION=v0.4.0  # Build and push multi-arch release images
+make release VERSION=v0.5.0  # Build and push multi-arch release images
 ```
 
 ## Versioning
 
 | Version type | Location |
 |---|---|
-| Repository release | Git tag and image tag — latest **`v0.4.0`** |
-| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.4.0`** |
+| Repository release | Git tag and image tag — latest **`v0.5.0`** (fix-forward republish on the same tag) |
+| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.5.0`** (must match tag; fix-forward if drifted) |
 | Upstream stack version | Image label and `print-capabilities` → `stack.version` |
 | Fixture schema version | `schemaVersion` field in every fixture |
 
-Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`.
-See `PLAN.md` release sequence and `RELEASE_NOTES_v0.3.0.md` / `RELEASE_NOTES_v0.4.0.md`.
+Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`, `v0.5.0`
+([latest release](https://github.com/otfabric/opcua-interop/releases/tag/v0.5.0)).
+`v0.5.0` is the WP1B baseline; fix-forward by republishing the `v0.5.0` tag / GHCR images when requirements change — no `v0.5.1` or RC tags.
 
 ## Reference stacks
 

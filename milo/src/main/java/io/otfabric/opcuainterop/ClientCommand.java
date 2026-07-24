@@ -4,6 +4,7 @@ import org.eclipse.milo.opcua.sdk.client.DiscoveryClient;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClientConfig;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClientConfigBuilder;
+import org.eclipse.milo.opcua.sdk.client.OpcUaSession;
 import org.eclipse.milo.opcua.sdk.client.subscriptions.CreateMonitoredItemsWithTimestamps;
 import org.eclipse.milo.opcua.sdk.client.subscriptions.OpcUaMonitoredItem;
 import org.eclipse.milo.opcua.sdk.client.subscriptions.OpcUaSubscription;
@@ -18,6 +19,7 @@ import org.eclipse.milo.opcua.stack.core.types.builtin.*;
 import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.*;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.BrowseDirection;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.BrowseResultMask;
+import org.eclipse.milo.opcua.stack.core.types.enumerated.FilterOperator;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.MessageSecurityMode;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.MonitoringMode;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
@@ -36,12 +38,15 @@ import java.security.Security;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.ubyte;
 import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.uint;
+import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.ushort;
 
 public class ClientCommand {
 
@@ -60,7 +65,9 @@ public class ClientCommand {
 
     public static int run(String[] args) {
         if (args.length < 1) {
-            System.err.println("usage: client <endpoints|read|write|browse|call|subscribe|subscription-lifecycle> ...");
+            System.err.println("usage: client <endpoints|find-servers|read|write|browse|translate|"
+                + "call|subscribe|subscription-lifecycle|event-subscribe|history-read|"
+                + "republish|transfer-subscriptions> ...");
             return 1;
         }
         String op = args[0];
@@ -68,13 +75,19 @@ public class ClientCommand {
 
         try {
             switch (op) {
-                case "endpoints": return cmdEndpoints(rest);
-                case "read":      return cmdRead(rest);
-                case "write":     return cmdWrite(rest);
-                case "browse":    return cmdBrowse(rest);
-                case "call":      return cmdCall(rest);
-                case "subscribe": return cmdSubscribe(rest);
+                case "endpoints":    return cmdEndpoints(rest);
+                case "find-servers": return cmdFindServers(rest);
+                case "read":         return cmdRead(rest);
+                case "write":        return cmdWrite(rest);
+                case "browse":       return cmdBrowse(rest);
+                case "translate":    return cmdTranslate(rest);
+                case "call":         return cmdCall(rest);
+                case "subscribe":    return cmdSubscribe(rest);
                 case "subscription-lifecycle": return cmdSubscriptionLifecycle(rest);
+                case "event-subscribe":        return cmdEventSubscribe(rest);
+                case "history-read":           return cmdHistoryRead(rest);
+                case "republish":              return cmdRepublish(rest);
+                case "transfer-subscriptions": return cmdTransferSubscriptions(rest);
                 default:
                     System.err.println("unknown client subcommand: " + op);
                     return 1;
@@ -102,6 +115,7 @@ public class ClientCommand {
             System.out.println(new ResultBuilder(op).error("transport", msg).toJson());
             return 3;
         } catch (Exception e) {
+            LOG.error("client op {} failed", op, e);
             System.out.println(new ResultBuilder(op).error("internal", e.getMessage()).toJson());
             return 6;
         }
@@ -126,6 +140,43 @@ public class ClientCommand {
             m.put("url",            ep.getEndpointUrl());
             m.put("securityPolicy", ep.getSecurityPolicyUri());
             m.put("securityMode",   ep.getSecurityMode().toString());
+            rb.addResult(m);
+        }
+        System.out.println(rb.toJson());
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // find-servers
+    // -------------------------------------------------------------------------
+
+    private static int cmdFindServers(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        if (endpointUrl == null) {
+            System.out.println(new ResultBuilder("find-servers").error("input", "missing --endpoint").toJson());
+            return 2;
+        }
+        long rto = requestTimeoutMs(args);
+
+        List<ApplicationDescription> apps =
+                DiscoveryClient.findServers(endpointUrl).get(rto, MILLISECONDS);
+        ResultBuilder rb = new ResultBuilder("find-servers");
+        for (ApplicationDescription app : apps) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("applicationUri", app.getApplicationUri() != null ? app.getApplicationUri() : "");
+            Map<String, Object> name = new LinkedHashMap<>();
+            LocalizedText an = app.getApplicationName();
+            name.put("locale", an != null && an.getLocale() != null ? an.getLocale() : "");
+            name.put("text",   an != null && an.getText()   != null ? an.getText()   : "");
+            m.put("applicationName", name);
+            m.put("productUri", app.getProductUri() != null ? app.getProductUri() : "");
+            List<String> urls = new ArrayList<>();
+            if (app.getDiscoveryUrls() != null) {
+                for (String u : app.getDiscoveryUrls()) {
+                    if (u != null) urls.add(u);
+                }
+            }
+            m.put("discoveryUrls", urls);
             rb.addResult(m);
         }
         System.out.println(rb.toJson());
@@ -349,6 +400,84 @@ public class ClientCommand {
 
             System.out.println(rb.toJson());
             return firstResult.getStatusCode().isGood() ? 0 : 4;
+        } finally {
+            safeDisconnect(client, dto);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // translate
+    // -------------------------------------------------------------------------
+
+    private static int cmdTranslate(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        String startStr    = findArg(args, "--starting-node");
+        String pathStr     = findArg(args, "--path");
+        if (startStr == null) startStr = "i=85";
+        if (endpointUrl == null) {
+            System.out.println(new ResultBuilder("translate").error("input", "missing --endpoint").toJson());
+            return 2;
+        }
+        if (pathStr == null || pathStr.isEmpty()) {
+            System.out.println(new ResultBuilder("translate").error("input", "missing --path").toJson());
+            return 2;
+        }
+
+        int ns = (int) parseLongArg(args, "--namespace", 0);
+        String[] segments = Arrays.stream(pathStr.split("\\."))
+                .filter(s -> !s.isEmpty())
+                .toArray(String[]::new);
+        if (segments.length == 0) {
+            System.out.println(new ResultBuilder("translate").error("input", "empty --path").toJson());
+            return 2;
+        }
+
+        long cto = connectTimeoutMs(args);
+        long rto = requestTimeoutMs(args);
+        long dto = disconnectTimeoutMs(args);
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
+        try {
+            NodeId startingNode = NodeIdParser.resolveWithClient(startStr, client, rto);
+
+            RelativePathElement[] elements = new RelativePathElement[segments.length];
+            for (int i = 0; i < segments.length; i++) {
+                elements[i] = new RelativePathElement(
+                        Identifiers.HierarchicalReferences,
+                        false,
+                        true,
+                        new QualifiedName(ns, segments[i]));
+            }
+            BrowsePath browsePath = new BrowsePath(startingNode, new RelativePath(elements));
+            TranslateBrowsePathsToNodeIdsResponse resp =
+                    client.translateBrowsePaths(Collections.singletonList(browsePath));
+
+            StatusCode serviceSc = resp.getResponseHeader().getServiceResult();
+            BrowsePathResult[] results = resp.getResults();
+            StatusCode pathSc = (results != null && results.length > 0)
+                    ? results[0].getStatusCode() : serviceSc;
+            boolean ok = serviceSc.isGood() && pathSc.isGood();
+
+            ResultBuilder rb = new ResultBuilder("translate")
+                    .serviceResult(serviceSc)
+                    .success(ok);
+
+            if (serviceSc.isGood() && results != null && results.length > 0) {
+                BrowsePathResult bpr = results[0];
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("statusCode", ResultBuilder.statusCodeJson(bpr.getStatusCode()));
+                List<String> targets = new ArrayList<>();
+                if (bpr.getTargets() != null) {
+                    for (BrowsePathTarget t : bpr.getTargets()) {
+                        targets.add(ResultBuilder.nodeIdToString(expandedToLocalNodeId(t.getTargetId())));
+                    }
+                }
+                item.put("targets", targets);
+                rb.addResult(item);
+            }
+
+            System.out.println(rb.toJson());
+            return ok ? 0 : 4;
         } finally {
             safeDisconnect(client, dto);
         }
@@ -849,6 +978,578 @@ public class ClientCommand {
     }
 
     // -------------------------------------------------------------------------
+    // event-subscribe
+    // -------------------------------------------------------------------------
+
+    private static int cmdEventSubscribe(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        String nodeStr     = findArg(args, "--node");
+        if (endpointUrl == null || nodeStr == null) {
+            System.out.println(new ResultBuilder("event-subscribe")
+                .error("input", "missing --endpoint or --node").toJson());
+            return 2;
+        }
+        long   cto      = connectTimeoutMs(args);
+        long   rto      = requestTimeoutMs(args);
+        long   dto      = disconnectTimeoutMs(args);
+        double piMs     = parseDoubleArg(args, "--publishing-interval-ms", 500.0);
+        int    nEvents  = parseIntArg(args, "--events", 1);
+        long   toMs     = parseLongArg(args, "--timeout-ms", 10000L);
+        int    queueSz  = parseIntArg(args, "--queue-size", 10);
+        String ofTypeStr = findArg(args, "--of-type");
+        String minSevStr = findArg(args, "--min-severity");
+
+        String[] fieldNames = {
+            "EventId", "EventType", "SourceName", "Message", "Severity", "Time"
+        };
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
+        try {
+            NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
+
+            // Build BaseEvent EventFilter select clauses
+            SimpleAttributeOperand[] selectClauses =
+                    new SimpleAttributeOperand[fieldNames.length];
+            for (int i = 0; i < fieldNames.length; i++) {
+                selectClauses[i] = new SimpleAttributeOperand(
+                    Identifiers.BaseEventType,
+                    new QualifiedName[]{ new QualifiedName(0, fieldNames[i]) },
+                    AttributeId.Value.uid(),
+                    null);
+            }
+            ContentFilter where = buildEventWhereClause(
+                client, ofTypeStr, minSevStr);
+            EventFilter eventFilter = new EventFilter(selectClauses, where);
+
+            ExtensionObject filterEO = ExtensionObject.encode(
+                client.getStaticEncodingContext(), eventFilter);
+
+            MonitoringParameters monParams = new MonitoringParameters(
+                uint(1),
+                0.0,
+                filterEO,
+                uint(Math.max(1, queueSz)),
+                true);
+
+            // CreateSubscription via raw service (no Milo publish loop)
+            CreateSubscriptionResponse csResp =
+                (CreateSubscriptionResponse) client.sendRequest(
+                    new CreateSubscriptionRequest(newRequestHeader(client, rto), piMs,
+                        uint(10000), uint(10), uint(0), true,
+                        ubyte(0)));
+            StatusCode csStatus = csResp.getResponseHeader().getServiceResult();
+            if (!csStatus.isGood()) {
+                System.out.println(new ResultBuilder("event-subscribe")
+                    .success(false).serviceResult(csStatus)
+                    .error("service", "CreateSubscription failed").toJson());
+                return 4;
+            }
+            UInteger subId = csResp.getSubscriptionId();
+            double   rpi   = csResp.getRevisedPublishingInterval();
+
+            // CreateMonitoredItems with EventFilter
+            MonitoredItemCreateRequest monReq = new MonitoredItemCreateRequest(
+                new ReadValueId(nodeId, AttributeId.EventNotifier.uid(),
+                    null, QualifiedName.NULL_VALUE),
+                MonitoringMode.Reporting,
+                monParams);
+
+            CreateMonitoredItemsResponse cmResp =
+                (CreateMonitoredItemsResponse) client.sendRequest(
+                    new CreateMonitoredItemsRequest(newRequestHeader(client, rto),
+                        subId, TimestampsToReturn.Both,
+                        new MonitoredItemCreateRequest[]{ monReq }));
+            StatusCode monSc = StatusCode.GOOD;
+            UInteger   monId = uint(1); // client handle assigned above
+            if (cmResp.getResults() != null && cmResp.getResults().length > 0) {
+                monSc = cmResp.getResults()[0].getStatusCode();
+            }
+
+            // Collect events via manual Publish loop
+            List<Variant[]> collectedEvents =
+                Collections.synchronizedList(new ArrayList<>());
+            boolean timedOut = false;
+
+            if (monSc.isGood()) {
+                long deadline = System.currentTimeMillis() + toMs;
+                List<SubscriptionAcknowledgement> acks = new ArrayList<>();
+
+                while (collectedEvents.size() < nEvents) {
+                    long remaining = deadline - System.currentTimeMillis();
+                    if (remaining <= 0) { timedOut = true; break; }
+
+                    PublishResponse pubResp;
+                    try {
+                        pubResp = (PublishResponse) client.sendRequest(
+                            new PublishRequest(
+                                newRequestHeader(client, Math.min(remaining + 2000, rto + 2000)),
+                                acks.toArray(new SubscriptionAcknowledgement[0])));
+                    } catch (Exception e) {
+                        if (System.currentTimeMillis() >= deadline) timedOut = true;
+                        break;
+                    }
+
+                    acks.clear();
+                    NotificationMessage nm = pubResp.getNotificationMessage();
+                    if (nm != null) {
+                        UInteger seq = nm.getSequenceNumber();
+                        if (seq != null && pubResp.getSubscriptionId() != null) {
+                            acks.add(new SubscriptionAcknowledgement(
+                                pubResp.getSubscriptionId(), seq));
+                        }
+                        if (nm.getNotificationData() != null) {
+                            for (ExtensionObject eo : nm.getNotificationData()) {
+                                Object decoded = eo.decode(
+                                    client.getStaticEncodingContext());
+                                if (decoded instanceof EventNotificationList) {
+                                    EventFieldList[] evts =
+                                        ((EventNotificationList) decoded).getEvents();
+                                    if (evts != null) {
+                                        for (EventFieldList ev : evts) {
+                                            // client handle 1 was assigned in MonitoringParameters
+                                            if (monId.equals(ev.getClientHandle())) {
+                                                Variant[] fields = ev.getEventFields();
+                                                collectedEvents.add(
+                                                    fields != null ? fields : new Variant[0]);
+                                                if (collectedEvents.size() >= nEvents) break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!timedOut && collectedEvents.size() < nEvents)
+                    timedOut = (System.currentTimeMillis() >= deadline);
+            }
+
+            // Delete subscription
+            try {
+                client.sendRequest(new DeleteSubscriptionsRequest(
+                    newRequestHeader(client, dto), new UInteger[]{ subId }));
+            } catch (Exception ignored) {}
+
+            // Build result
+            List<Map<String, Object>> eventList = new ArrayList<>();
+            int seqNum = 0;
+            for (Variant[] vs : collectedEvents) {
+                seqNum++;
+                List<Map<String, Object>> fields = new ArrayList<>();
+                for (int i = 0; i < Math.min(vs.length, fieldNames.length); i++) {
+                    String typeName = ResultBuilder.builtInTypeName(vs[i]);
+                    Map<String, Object> fld = new LinkedHashMap<>();
+                    fld.put("name",        fieldNames[i]);
+                    fld.put("dataType",    typeName);
+                    fld.put("builtInType", ResultBuilder.builtInTypeId(typeName));
+                    fld.put("value",       ResultBuilder.encodeVariantValue(vs[i]));
+                    fields.add(fld);
+                }
+                Map<String, Object> evt = new LinkedHashMap<>();
+                evt.put("sequenceNumber", seqNum);
+                evt.put("fields", fields);
+                eventList.add(evt);
+            }
+
+            Map<String, Object> resultItem = new LinkedHashMap<>();
+            resultItem.put("nodeId",                    ResultBuilder.nodeIdToString(nodeId));
+            resultItem.put("subscriptionId",            subId.longValue());
+            resultItem.put("revisedPublishingInterval", rpi);
+            resultItem.put("monitoredItemStatusCode",   ResultBuilder.statusCodeJson(monSc));
+            resultItem.put("selectClauses",             Arrays.asList(fieldNames));
+            resultItem.put("events",                    eventList);
+
+            ResultBuilder rb = new ResultBuilder("event-subscribe")
+                .success(monSc.isGood() && !timedOut)
+                .serviceResult(monSc)
+                .addResult(resultItem);
+            if (timedOut) rb.error("timeout", "timeout waiting for events");
+            System.out.println(rb.toJson());
+            return timedOut ? 7 : (monSc.isGood() ? 0 : 4);
+        } finally {
+            safeDisconnect(client, dto);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // history-read
+    // -------------------------------------------------------------------------
+
+    private static int cmdHistoryRead(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        String nodeStr     = findArg(args, "--node");
+        String startStr    = findArg(args, "--start");
+        String endStr      = findArg(args, "--end");
+        if (endpointUrl == null || nodeStr == null || startStr == null || endStr == null) {
+            System.out.println(new ResultBuilder("history-read")
+                .error("input", "missing --endpoint, --node, --start, or --end"
+                    + " [--scenario continue]").toJson());
+            return 2;
+        }
+        long   cto         = connectTimeoutMs(args);
+        long   rto         = requestTimeoutMs(args);
+        long   dto         = disconnectTimeoutMs(args);
+        int    numValues   = parseIntArg(args, "--num-values", 0);
+        String cpStr       = findArg(args, "--continuation-point");
+        boolean releaseCp  = hasFlagValue(args, "--release-continuation-point", "true");
+        boolean retBounds  = hasFlagValue(args, "--return-bounds", "true");
+        String scenario    = findArg(args, "--scenario");
+        TimestampsToReturn ts = parseTimestamps(args);
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
+        try {
+            NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
+            DateTime startTime = instantToDateTime(Instant.parse(startStr));
+            DateTime endTime   = instantToDateTime(Instant.parse(endStr));
+
+            if ("continue".equals(scenario)) {
+                return historyReadContinueScenario(
+                    client, rto, nodeId, startTime, endTime, numValues, retBounds, ts);
+            }
+
+            HistoryPage page = historyReadOnce(
+                client, rto, nodeId, startTime, endTime, numValues, retBounds, ts,
+                cpStr, releaseCp);
+
+            Map<String, Object> resultItem = new LinkedHashMap<>();
+            resultItem.put("nodeId",            ResultBuilder.nodeIdToString(nodeId));
+            resultItem.put("statusCode",        ResultBuilder.statusCodeJson(page.itemSc));
+            resultItem.put("continuationPoint", page.cpOut);
+            resultItem.put("values",            page.values);
+
+            boolean ok = page.svcSc.isGood() && page.itemSc.isGood();
+            StatusCode emitSc = page.svcSc.isGood() ? page.itemSc : page.svcSc;
+            System.out.println(new ResultBuilder("history-read")
+                .success(ok).serviceResult(emitSc).addResult(resultItem).toJson());
+            return ok ? 0 : 4;
+        } finally {
+            safeDisconnect(client, dto);
+        }
+    }
+
+    private static final class HistoryPage {
+        final StatusCode svcSc;
+        final StatusCode itemSc;
+        final String cpOut;
+        final List<Map<String, Object>> values;
+        HistoryPage(StatusCode svcSc, StatusCode itemSc, String cpOut,
+                    List<Map<String, Object>> values) {
+            this.svcSc = svcSc; this.itemSc = itemSc; this.cpOut = cpOut; this.values = values;
+        }
+    }
+
+    private static HistoryPage historyReadOnce(
+            OpcUaClient client, long rto, NodeId nodeId,
+            DateTime startTime, DateTime endTime, int numValues, boolean retBounds,
+            TimestampsToReturn ts, String cpStr, boolean releaseCp) throws Exception {
+
+        ReadRawModifiedDetails readDetails = new ReadRawModifiedDetails(
+            false, startTime, endTime, UInteger.valueOf(Math.max(0, numValues)), retBounds);
+        ExtensionObject histDetails = ExtensionObject.encode(
+            client.getStaticEncodingContext(), readDetails);
+
+        ByteString continuationPoint = (cpStr != null && !cpStr.isEmpty())
+            ? ByteString.of(java.util.Base64.getDecoder().decode(cpStr))
+            : ByteString.NULL_VALUE;
+
+        HistoryReadValueId hvId = new HistoryReadValueId(
+            nodeId, null, QualifiedName.NULL_VALUE, continuationPoint);
+
+        HistoryReadResponse resp = (HistoryReadResponse) client.sendRequest(
+            new HistoryReadRequest(
+                newRequestHeader(client, rto), histDetails, ts, releaseCp,
+                new HistoryReadValueId[]{ hvId }));
+
+        StatusCode svcSc  = resp.getResponseHeader().getServiceResult();
+        StatusCode itemSc = StatusCode.GOOD;
+        String     cpOut  = null;
+        List<Map<String, Object>> valuesList = new ArrayList<>();
+
+        if (svcSc.isGood() && resp.getResults() != null && resp.getResults().length > 0) {
+            HistoryReadResult hr = resp.getResults()[0];
+            itemSc = hr.getStatusCode() != null ? hr.getStatusCode() : StatusCode.GOOD;
+
+            ByteString cp = hr.getContinuationPoint();
+            if (cp != null && cp.bytes() != null && cp.bytes().length > 0) {
+                cpOut = java.util.Base64.getEncoder().encodeToString(cp.bytes());
+            }
+
+            ExtensionObject histDataEO = hr.getHistoryData();
+            if (histDataEO != null && !histDataEO.isNull()) {
+                try {
+                    Object decoded = histDataEO.decode(client.getStaticEncodingContext());
+                    if (decoded instanceof HistoryData) {
+                        DataValue[] dvs = ((HistoryData) decoded).getDataValues();
+                        if (dvs != null) {
+                            for (DataValue dv : dvs) {
+                                Map<String, Object> v = new LinkedHashMap<>();
+                                String typeName = ResultBuilder.builtInTypeName(dv.getValue());
+                                v.put("value",       ResultBuilder.encodeVariantValue(dv.getValue()));
+                                v.put("dataType",    typeName);
+                                v.put("builtInType", ResultBuilder.builtInTypeId(typeName));
+                                v.put("statusCode",  ResultBuilder.statusCodeJson(
+                                    dv.getStatusCode() != null ? dv.getStatusCode() : StatusCode.GOOD));
+                                if (dv.getSourceTime() != null && dv.getSourceTime().getJavaTime() != 0) {
+                                    v.put("sourceTimestamp",
+                                        dv.getSourceTime().getJavaInstant().toString());
+                                }
+                                if (dv.getServerTime() != null && dv.getServerTime().getJavaTime() != 0) {
+                                    v.put("serverTimestamp",
+                                        dv.getServerTime().getJavaInstant().toString());
+                                }
+                                valuesList.add(v);
+                            }
+                        }
+                    }
+                } catch (RuntimeException decodeEx) {
+                    // Release / empty pages may carry a null-typed ExtensionObject (i=0).
+                    LOG.debug("HistoryData decode skipped: {}", decodeEx.getMessage());
+                }
+            }
+        }
+        return new HistoryPage(svcSc, itemSc, cpOut, valuesList);
+    }
+
+    /**
+     * Single-session page → continue → release → reuse-after-release baseline
+     * for history.read.continuation peer evidence.
+     */
+    private static int historyReadContinueScenario(
+            OpcUaClient client, long rto, NodeId nodeId,
+            DateTime startTime, DateTime endTime, int numValues, boolean retBounds,
+            TimestampsToReturn ts) throws Exception {
+
+        if (numValues <= 0) numValues = 2;
+
+        List<Map<String, Object>> pages = new ArrayList<>();
+        String cp = null;
+        StatusCode lastItem = StatusCode.GOOD;
+        StatusCode lastSvc = StatusCode.GOOD;
+
+        // First page + follow continuation until cleared (cap pages for safety).
+        for (int i = 0; i < 8; i++) {
+            HistoryPage page = historyReadOnce(
+                client, rto, nodeId, startTime, endTime, numValues, retBounds, ts,
+                cp, false);
+            lastSvc = page.svcSc;
+            lastItem = page.itemSc;
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("values", page.values);
+            p.put("continuationPoint", page.cpOut);
+            p.put("statusCode", ResultBuilder.statusCodeJson(page.itemSc));
+            pages.add(p);
+            if (!page.svcSc.isGood() || !page.itemSc.isGood()) break;
+            if (page.cpOut == null || page.cpOut.isEmpty()) break;
+            cp = page.cpOut;
+        }
+
+        StatusCode releaseSc = StatusCode.GOOD;
+        StatusCode reuseSc = StatusCode.GOOD;
+        if (cp != null && !cp.isEmpty()) {
+            HistoryPage released = historyReadOnce(
+                client, rto, nodeId, startTime, endTime, numValues, retBounds, ts,
+                cp, true);
+            releaseSc = released.svcSc.isGood() ? released.itemSc : released.svcSc;
+
+            HistoryPage reuse = historyReadOnce(
+                client, rto, nodeId, startTime, endTime, numValues, retBounds, ts,
+                cp, false);
+            reuseSc = reuse.svcSc.isGood() ? reuse.itemSc : reuse.svcSc;
+        } else if (!pages.isEmpty()) {
+            // Final page already cleared CP; release of empty CP should still be Good/no-op.
+            HistoryPage released = historyReadOnce(
+                client, rto, nodeId, startTime, endTime, numValues, retBounds, ts,
+                null, true);
+            releaseSc = released.svcSc.isGood() ? released.itemSc : released.svcSc;
+            // Reuse of a cleared/empty CP: attempt with last non-null CP from earlier pages.
+            String lastCp = null;
+            for (int i = pages.size() - 1; i >= 0; i--) {
+                Object v = pages.get(i).get("continuationPoint");
+                if (v instanceof String && !((String) v).isEmpty()) { lastCp = (String) v; break; }
+            }
+            if (lastCp != null) {
+                HistoryPage reuse = historyReadOnce(
+                    client, rto, nodeId, startTime, endTime, numValues, retBounds, ts,
+                    lastCp, false);
+                reuseSc = reuse.svcSc.isGood() ? reuse.itemSc : reuse.svcSc;
+            }
+        }
+
+        Map<String, Object> resultItem = new LinkedHashMap<>();
+        resultItem.put("scenario", "continue");
+        resultItem.put("nodeId", ResultBuilder.nodeIdToString(nodeId));
+        resultItem.put("pages", pages);
+        resultItem.put("releaseStatusCode", ResultBuilder.statusCodeJson(releaseSc));
+        resultItem.put("reuseAfterReleaseStatusCode", ResultBuilder.statusCodeJson(reuseSc));
+
+        boolean ok = lastSvc.isGood() && lastItem.isGood() && !pages.isEmpty();
+        System.out.println(new ResultBuilder("history-read")
+            .success(ok).serviceResult(lastSvc.isGood() ? lastItem : lastSvc)
+            .addResult(resultItem).toJson());
+        return ok ? 0 : 4;
+    }
+
+    private static ContentFilter buildEventWhereClause(
+            OpcUaClient client, String ofTypeStr, String minSevStr) throws Exception {
+        List<ContentFilterElement> elements = new ArrayList<>();
+        var enc = client.getStaticEncodingContext();
+
+        if (ofTypeStr != null && !ofTypeStr.isEmpty()) {
+            NodeId typeId = NodeIdParser.resolveWithClient(ofTypeStr, client, 5000);
+            LiteralOperand lit = new LiteralOperand(new Variant(typeId));
+            elements.add(new ContentFilterElement(
+                FilterOperator.OfType,
+                new ExtensionObject[]{ ExtensionObject.encode(enc, lit) }));
+        }
+        if (minSevStr != null && !minSevStr.isEmpty()) {
+            int minSev = Integer.parseInt(minSevStr);
+            SimpleAttributeOperand sevOp = new SimpleAttributeOperand(
+                Identifiers.BaseEventType,
+                new QualifiedName[]{ new QualifiedName(0, "Severity") },
+                AttributeId.Value.uid(),
+                null);
+            LiteralOperand lit = new LiteralOperand(new Variant(ushort(minSev)));
+            elements.add(new ContentFilterElement(
+                FilterOperator.GreaterThanOrEqual,
+                new ExtensionObject[]{
+                    ExtensionObject.encode(enc, sevOp),
+                    ExtensionObject.encode(enc, lit)
+                }));
+        }
+        if (elements.size() == 2) {
+            ElementOperand a = new ElementOperand(uint(0));
+            ElementOperand b = new ElementOperand(uint(1));
+            elements.add(new ContentFilterElement(
+                FilterOperator.And,
+                new ExtensionObject[]{
+                    ExtensionObject.encode(enc, a),
+                    ExtensionObject.encode(enc, b)
+                }));
+        }
+        return new ContentFilter(elements.toArray(new ContentFilterElement[0]));
+    }
+
+    // -------------------------------------------------------------------------
+    // republish
+    // -------------------------------------------------------------------------
+
+    private static int cmdRepublish(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        String subIdStr    = findArg(args, "--subscription-id");
+        String seqStr      = findArg(args, "--sequence-number");
+        if (endpointUrl == null || subIdStr == null || seqStr == null) {
+            System.out.println(new ResultBuilder("republish")
+                .error("input",
+                    "missing --endpoint, --subscription-id, or --sequence-number").toJson());
+            return 2;
+        }
+        long     cto    = connectTimeoutMs(args);
+        long     rto    = requestTimeoutMs(args);
+        long     dto    = disconnectTimeoutMs(args);
+        UInteger subId  = uint((int) Long.parseLong(subIdStr));
+        UInteger seqNum = uint((int) Long.parseLong(seqStr));
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
+        try {
+            RepublishResponse resp = (RepublishResponse) client.sendRequest(
+                new RepublishRequest(newRequestHeader(client, rto), subId, seqNum));
+
+            StatusCode sc = resp.getResponseHeader().getServiceResult();
+            boolean ok = sc.isGood();
+
+            Map<String, Object> resultItem = new LinkedHashMap<>();
+            resultItem.put("subscriptionId",           subId.longValue());
+            resultItem.put("retransmitSequenceNumber", seqNum.longValue());
+            if (ok) {
+                NotificationMessage nm = resp.getNotificationMessage();
+                if (nm != null) {
+                    resultItem.put("sequenceNumber",
+                        nm.getSequenceNumber() != null ? nm.getSequenceNumber().longValue() : 0L);
+                    if (nm.getPublishTime() != null && nm.getPublishTime().getJavaTime() != 0) {
+                        resultItem.put("publishTime",
+                            nm.getPublishTime().getJavaInstant().toString());
+                    }
+                    int ndCount = nm.getNotificationData() != null
+                        ? nm.getNotificationData().length : 0;
+                    resultItem.put("notificationDataCount", ndCount);
+                }
+            }
+
+            System.out.println(new ResultBuilder("republish")
+                .success(ok).serviceResult(sc).addResult(resultItem).toJson());
+            return ok ? 0 : 4;
+        } finally {
+            safeDisconnect(client, dto);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // transfer-subscriptions
+    // -------------------------------------------------------------------------
+
+    private static int cmdTransferSubscriptions(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        List<String> subIdStrs = findAllArgs(args, "--subscription-id");
+        if (endpointUrl == null || subIdStrs.isEmpty()) {
+            System.out.println(new ResultBuilder("transfer-subscriptions")
+                .error("input",
+                    "missing --endpoint or --subscription-id").toJson());
+            return 2;
+        }
+        long    cto          = connectTimeoutMs(args);
+        long    rto          = requestTimeoutMs(args);
+        long    dto          = disconnectTimeoutMs(args);
+        boolean sendInitial  = hasFlagValue(args, "--send-initial-values", "true");
+
+        UInteger[] subIds = subIdStrs.stream()
+            .map(s -> uint((int) Long.parseLong(s)))
+            .toArray(UInteger[]::new);
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
+        try {
+            TransferSubscriptionsResponse resp =
+                (TransferSubscriptionsResponse) client.sendRequest(
+                    new TransferSubscriptionsRequest(
+                        newRequestHeader(client, rto), subIds, sendInitial));
+
+            StatusCode sc = resp.getResponseHeader().getServiceResult();
+            boolean ok = sc.isGood();
+            TransferResult[] results = resp.getResults();
+
+            List<Map<String, Object>> resultList = new ArrayList<>();
+            if (sc.isGood() && results != null) {
+                for (int i = 0; i < results.length; i++) {
+                    TransferResult r = results[i];
+                    StatusCode rSc = r.getStatusCode() != null
+                        ? r.getStatusCode() : StatusCode.GOOD;
+                    if (!rSc.isGood()) ok = false;
+
+                    List<Long> seqNums = new ArrayList<>();
+                    if (r.getAvailableSequenceNumbers() != null) {
+                        for (UInteger sn : r.getAvailableSequenceNumbers()) {
+                            seqNums.add(sn.longValue());
+                        }
+                    }
+
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("subscriptionId",           subIds[i].longValue());
+                    m.put("statusCode",               ResultBuilder.statusCodeJson(rSc));
+                    m.put("availableSequenceNumbers", seqNums);
+                    resultList.add(m);
+                }
+            }
+
+            ResultBuilder rb = new ResultBuilder("transfer-subscriptions")
+                .success(ok).serviceResult(sc);
+            for (Map<String, Object> r : resultList) rb.addResult(r);
+            System.out.println(rb.toJson());
+            return ok ? 0 : 4;
+        } finally {
+            safeDisconnect(client, dto);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // helpers
     // -------------------------------------------------------------------------
 
@@ -1050,6 +1751,39 @@ public class ClientCommand {
     private static long connectTimeoutMs(String[] args)    { return parseLongArg(args, "--connect-timeout",    5) * 1000; }
     private static long requestTimeoutMs(String[] args)    { return parseLongArg(args, "--request-timeout",    5) * 1000; }
     private static long disconnectTimeoutMs(String[] args) { return parseLongArg(args, "--disconnect-timeout", 2) * 1000; }
+
+    /**
+     * Build a RequestHeader with the active session AuthenticationToken.
+     * Raw {@code client.sendRequest(...)} calls do not inject the token; a NULL
+     * token makes CreateMonitoredItems fail ownership checks on go-opcua.
+     */
+    private static RequestHeader newRequestHeader(OpcUaClient client, long timeoutMs)
+            throws UaException {
+        NodeId auth = NodeId.NULL_VALUE;
+        if (client != null) {
+            OpcUaSession session = client.getSession();
+            if (session != null && session.getAuthenticationToken() != null) {
+                auth = session.getAuthenticationToken();
+            }
+        }
+        return new RequestHeader(
+            auth,
+            DateTime.now(),
+            UInteger.valueOf(0),
+            UInteger.valueOf(0),
+            null,
+            UInteger.valueOf((int) Math.min(timeoutMs, Integer.MAX_VALUE)),
+            null);
+    }
+
+    /** Convert java.time.Instant to OPC UA DateTime (100-ns ticks since 1601-01-01). */
+    private static DateTime instantToDateTime(Instant instant) {
+        // OPC UA epoch offset: 116444736000000000 100-ns ticks from 1601-01-01 to 1970-01-01
+        final long OPC_UA_EPOCH_OFFSET_MILLIS = 11644473600000L;
+        long javaMs = instant.toEpochMilli();
+        long javaOpcNs100 = (javaMs + OPC_UA_EPOCH_OFFSET_MILLIS) * 10_000L;
+        return new DateTime(javaOpcNs100);
+    }
 
     /**
      * Convert a local ExpandedNodeId (no namespace URI form) to a NodeId.

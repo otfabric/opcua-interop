@@ -2,41 +2,65 @@ package io.otfabric.opcuainterop;
 
 import org.eclipse.milo.opcua.sdk.core.AccessLevel;
 import org.eclipse.milo.opcua.sdk.core.Reference;
+import org.eclipse.milo.opcua.sdk.server.AddressSpace;
 import org.eclipse.milo.opcua.sdk.server.OpcUaServer;
 import org.eclipse.milo.opcua.sdk.server.UaNodeManager;
 import org.eclipse.milo.opcua.sdk.server.ManagedNamespaceWithLifecycle;
 import org.eclipse.milo.opcua.sdk.server.items.DataItem;
+import org.eclipse.milo.opcua.sdk.server.items.EventItem;
 import org.eclipse.milo.opcua.sdk.server.items.MonitoredItem;
 import org.eclipse.milo.opcua.sdk.server.methods.AbstractMethodInvocationHandler;
 import org.eclipse.milo.opcua.sdk.server.methods.MethodInvocationHandler;
+import org.eclipse.milo.opcua.sdk.server.model.objects.BaseEventTypeNode;
 import org.eclipse.milo.opcua.sdk.server.nodes.UaFolderNode;
 import org.eclipse.milo.opcua.sdk.server.nodes.UaMethodNode;
 import org.eclipse.milo.opcua.sdk.server.nodes.UaNode;
+import org.eclipse.milo.opcua.sdk.server.nodes.UaObjectNode;
 import org.eclipse.milo.opcua.sdk.server.nodes.UaVariableNode;
 import org.eclipse.milo.opcua.sdk.server.util.SubscriptionModel;
+import org.eclipse.milo.opcua.stack.core.AttributeId;
 import org.eclipse.milo.opcua.stack.core.Identifiers;
+import org.eclipse.milo.opcua.stack.core.StatusCodes;
 import org.eclipse.milo.opcua.stack.core.UaException;
 import org.eclipse.milo.opcua.stack.core.types.builtin.*;
 import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.*;
+import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
 import org.eclipse.milo.opcua.stack.core.types.structured.Argument;
+import org.eclipse.milo.opcua.stack.core.types.structured.HistoryData;
+import org.eclipse.milo.opcua.stack.core.types.structured.HistoryReadDetails;
+import org.eclipse.milo.opcua.stack.core.types.structured.HistoryReadResult;
+import org.eclipse.milo.opcua.stack.core.types.structured.HistoryReadValueId;
+import org.eclipse.milo.opcua.stack.core.types.structured.ReadRawModifiedDetails;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 
+import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.ubyte;
+import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.ushort;
+
 public class InteropNamespace extends ManagedNamespaceWithLifecycle {
 
     private static final Logger LOG = LoggerFactory.getLogger(InteropNamespace.class);
+
+    private static final String EVENTS_SOURCE_ID =
+            "nsu=urn:otfabric:opcua-interop:model;s=Events.Source";
+    private static final String HISTORY_TEMP_ID =
+            "nsu=urn:otfabric:opcua-interop:model;s=History.Temperature";
 
     private final FixtureModel fixture;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2,
             r -> { Thread t = new Thread(r, "interop-behavior"); t.setDaemon(true); return t; });
 
     private final Map<String, UaNode> nodeByFixtureId = new LinkedHashMap<>();
+    private final List<DataValue> historyTemperatureSamples = buildHistoryTemperatureSamples();
+    private final Set<Integer> releasedContinuationOffsets = ConcurrentHashMap.newKeySet();
 
     private SubscriptionModel subscriptionModel;
+    private UaObjectNode eventsSource;
 
     public InteropNamespace(OpcUaServer server, FixtureModel fixture) {
         super(server, fixture.namespaces.get(0).uri);
@@ -44,6 +68,7 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
 
         getLifecycleManager().addStartupTask(this::buildAddressSpace);
         getLifecycleManager().addStartupTask(this::setupBehaviors);
+        getLifecycleManager().addStartupTask(this::setupEventEmission);
         getLifecycleManager().addStartupTask(() -> {
             subscriptionModel = new SubscriptionModel(server, this);
             subscriptionModel.startup();
@@ -87,6 +112,11 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
             default:
                 UaFolderNode folder = new UaFolderNode(getNodeContext(), nodeId, bn, dn);
                 folder.setDescription(desc);
+                if (EVENTS_SOURCE_ID.equals(nd.nodeId)) {
+                    // SubscribeToEvents bit (1) — EventNotifier attribute.
+                    folder.setEventNotifier(ubyte(1));
+                    eventsSource = folder;
+                }
                 return folder;
         }
     }
@@ -116,6 +146,9 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
         if (nd.value != null) {
             Variant variant = buildVariant(nd.value, nd.dataType, nd.valueRank, nd.arrayDimensions);
             node.setValue(new DataValue(variant));
+        }
+        if (HISTORY_TEMP_ID.equals(nd.nodeId)) {
+            node.setHistorizing(true);
         }
         return node;
     }
@@ -658,5 +691,163 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
     @Override
     public void onMonitoringModeChanged(List<MonitoredItem> monitoredItems) {
         subscriptionModel.onMonitoringModeChanged(monitoredItems);
+    }
+
+    @Override
+    public void onEventItemsCreated(List<EventItem> eventItems) {
+        eventItems.stream()
+                .filter(MonitoredItem::isSamplingEnabled)
+                .forEach(item -> getServer().getEventNotifier().register(item));
+    }
+
+    @Override
+    public void onEventItemsModified(List<EventItem> eventItems) {
+        for (EventItem item : eventItems) {
+            if (item.isSamplingEnabled()) {
+                getServer().getEventNotifier().register(item);
+            } else {
+                getServer().getEventNotifier().unregister(item);
+            }
+        }
+    }
+
+    @Override
+    public void onEventItemsDeleted(List<EventItem> eventItems) {
+        eventItems.forEach(item -> getServer().getEventNotifier().unregister(item));
+    }
+
+    private void setupEventEmission() {
+        if (eventsSource == null) {
+            UaNode n = nodeByFixtureId.get(EVENTS_SOURCE_ID);
+            if (n instanceof UaObjectNode) {
+                eventsSource = (UaObjectNode) n;
+                eventsSource.setEventNotifier(ubyte(1));
+            }
+        }
+        if (eventsSource == null) {
+            LOG.warn("Events.Source not present; BaseEvent emission disabled");
+            return;
+        }
+        scheduler.scheduleAtFixedRate(this::emitPeerBaseEvent, 500, 2000, TimeUnit.MILLISECONDS);
+        LOG.info("Scheduled BaseEvent emission on {}", EVENTS_SOURCE_ID);
+    }
+
+    private void emitPeerBaseEvent() {
+        if (eventsSource == null) return;
+        try {
+            NodeId eventNodeId = new NodeId(getNamespaceIndex(), "Events.Source.InteropBaseEvent");
+            BaseEventTypeNode eventNode = getServer().getEventFactory()
+                    .createEvent(eventNodeId, Identifiers.BaseEventType);
+            eventNode.setBrowseName(new QualifiedName(getNamespaceIndex(), "InteropBaseEvent"));
+            eventNode.setDisplayName(LocalizedText.english("InteropBaseEvent"));
+            eventNode.setEventId(ByteString.of(new byte[]{1, 2, 3, 4}));
+            eventNode.setEventType(Identifiers.BaseEventType);
+            eventNode.setSourceNode(eventsSource.getNodeId());
+            eventNode.setSourceName("Events.Source");
+            eventNode.setTime(DateTime.now());
+            eventNode.setReceiveTime(DateTime.now());
+            eventNode.setMessage(LocalizedText.english("peer-event"));
+            eventNode.setSeverity(ushort(500));
+            getServer().getEventNotifier().fire(eventNode);
+            eventNode.delete();
+        } catch (Exception e) {
+            LOG.warn("BaseEvent emission failed: {}", e.getMessage());
+        }
+    }
+
+    private static List<DataValue> buildHistoryTemperatureSamples() {
+        Instant base = Instant.parse("2026-07-24T10:00:00Z");
+        List<DataValue> samples = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            Instant ts = base.plusSeconds(i * 5L);
+            DateTime dt = new DateTime(ts);
+            samples.add(new DataValue(
+                    new Variant(20.0 + i),
+                    StatusCode.GOOD,
+                    dt,
+                    dt));
+        }
+        return Collections.unmodifiableList(samples);
+    }
+
+    @Override
+    public List<HistoryReadResult> historyRead(
+            AddressSpace.HistoryReadContext context,
+            HistoryReadDetails details,
+            TimestampsToReturn timestamps,
+            List<HistoryReadValueId> readIds) {
+
+        List<HistoryReadResult> results = new ArrayList<>(readIds.size());
+        boolean isRaw = details instanceof ReadRawModifiedDetails
+                && !Boolean.TRUE.equals(((ReadRawModifiedDetails) details).getIsReadModified());
+
+        for (HistoryReadValueId readId : readIds) {
+            if (!isRaw || !isHistoryTemperature(readId.getNodeId())) {
+                results.add(new HistoryReadResult(
+                        new StatusCode(StatusCodes.Bad_HistoryOperationUnsupported),
+                        ByteString.NULL_VALUE,
+                        null));
+                continue;
+            }
+
+            ReadRawModifiedDetails raw = (ReadRawModifiedDetails) details;
+            List<DataValue> inRange = filterHistoryByTime(
+                    historyTemperatureSamples, raw.getStartTime(), raw.getEndTime());
+
+            int num = raw.getNumValuesPerNode() != null
+                    ? raw.getNumValuesPerNode().intValue() : 0;
+            if (num <= 0) num = inRange.size();
+
+            ByteString cpIn = readId.getContinuationPoint();
+            int offset = 0;
+            if (cpIn != null && cpIn.isNotNull() && cpIn.bytes() != null && cpIn.bytes().length >= 4) {
+                offset = ByteBuffer.wrap(cpIn.bytes()).getInt();
+                if (releasedContinuationOffsets.contains(offset)) {
+                    results.add(new HistoryReadResult(
+                            new StatusCode(StatusCodes.Bad_ContinuationPointInvalid),
+                            ByteString.NULL_VALUE,
+                            null));
+                    continue;
+                }
+            }
+
+            if (offset < 0 || offset > inRange.size()) {
+                results.add(new HistoryReadResult(
+                        new StatusCode(StatusCodes.Bad_ContinuationPointInvalid),
+                        ByteString.NULL_VALUE,
+                        null));
+                continue;
+            }
+
+            int end = Math.min(offset + num, inRange.size());
+            List<DataValue> page = inRange.subList(offset, end);
+            ByteString cpOut = ByteString.NULL_VALUE;
+            if (end < inRange.size()) {
+                cpOut = ByteString.of(ByteBuffer.allocate(4).putInt(end).array());
+            }
+            HistoryData histData = new HistoryData(page.toArray(new DataValue[0]));
+            ExtensionObject eo = ExtensionObject.encode(
+                    getServer().getStaticEncodingContext(), histData);
+            results.add(new HistoryReadResult(StatusCode.GOOD, cpOut, eo));
+        }
+        return results;
+    }
+
+    private static List<DataValue> filterHistoryByTime(
+            List<DataValue> samples, DateTime start, DateTime end) {
+        long startMs = (start != null) ? start.getJavaTime() : Long.MIN_VALUE;
+        long endMs = (end != null) ? end.getJavaTime() : Long.MAX_VALUE;
+        List<DataValue> out = new ArrayList<>();
+        for (DataValue dv : samples) {
+            long t = dv.getSourceTime() != null ? dv.getSourceTime().getJavaTime() : 0L;
+            if (t >= startMs && t <= endMs) out.add(dv);
+        }
+        return out;
+    }
+
+    private boolean isHistoryTemperature(NodeId nodeId) {
+        if (nodeId == null) return false;
+        UaNode expected = nodeByFixtureId.get(HISTORY_TEMP_ID);
+        return expected != null && expected.getNodeId().equals(nodeId);
     }
 }

@@ -79,9 +79,28 @@ count at Phase 9 close: 212 tests, 0 skips (consumer suite has grown since).
   `monitoring-mode`, `delete`)
 - Capabilities `adapter.version` = `0.4.0`; seven `clientOperations`
 
-### Later (planned) — peer closure + remaining type surface
+### v0.5.0 — WP1B baseline (go-opcua Phase 18)
 
-- Event subscribe, HistoryRead, Republish, Transfer CLI (go-opcua Phase 18)
+- New `event-subscribe` command: `EventFilter` with BaseEvent SelectClauses (EventId,
+  EventType, SourceName, Message, Severity, Time); collect *N* events or timeout (exit 7)
+- New `history-read` command: `ReadRawModifiedDetails` (`isReadModified=false`); flags
+  `--node`, `--start`, `--end`, `--num-values`, `--continuation-point`,
+  `--release-continuation-point`, `--return-bounds`, `--timestamps`,
+  `--scenario continue`
+- New `republish` command: `--subscription-id`, `--sequence-number`
+- New `transfer-subscriptions` command: repeatable `--subscription-id`,
+  `--send-initial-values`
+- Milo `ClientCommand.newRequestHeader` uses the active session `AuthenticationToken`
+  (raw `sendRequest` does not inject it)
+- `find-servers` (FindServers → ApplicationDescription JSON) and `translate`
+  (TranslateBrowsePathsToNodeIDs with `--starting-node`, `--path`, optional `--namespace`)
+- `event-subscribe --of-type` / `--min-severity`; `history-read --scenario continue`
+- Reference-server BaseEvent emission and gate-compliant `History.Temperature` raw samples
+- Capabilities `adapter.version` = `0.5.0`; thirteen `clientOperations`
+- Fix-forward by republishing the `v0.5.0` tag / GHCR images when requirements change (no `v0.5.1` / RC tags)
+
+### Later (planned) — remaining type surface
+
 - Remaining structured types / enumerations / edge-case fixture expansion as needed
 
 ## Fixture requirements
@@ -121,12 +140,18 @@ Each container image must:
 Each container image must expose client subcommands:
 
 - `endpoints` — discover endpoints
+- `find-servers` — FindServers → ApplicationDescription JSON
 - `read` — read one or more nodes, JSON to stdout
 - `write` — write a node value
 - `browse` — browse a node
+- `translate` — TranslateBrowsePathsToNodeIDs (`--starting-node`, `--path`, optional `--namespace`)
 - `call` — call a method
 - `subscribe` — collect a bounded number of notifications (includes revised subscription fields)
 - `subscription-lifecycle` — deterministic lifecycle scenarios (revise / publishing-mode / monitoring-mode / delete)
+- `event-subscribe` — EventFilter BaseEvent SelectClauses; optional `--of-type` / `--min-severity`; collect N events or timeout
+- `history-read` — HistoryRead with `ReadRawModifiedDetails` (raw); continuation points; optional `--scenario continue`
+- `republish` — RepublishRequest for a subscription sequence number
+- `transfer-subscriptions` — TransferSubscriptions for one or more subscription ids
 
 Client output rules:
 
@@ -199,7 +224,6 @@ Consumer repositories own:
 - UDP multicast
 - WebSockets transport
 - HTTPS transport
-- Historical access
 - Alarms and conditions
 - Complex companion specifications
 - Global Discovery Server

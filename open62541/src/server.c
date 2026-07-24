@@ -804,6 +804,200 @@ static UA_ByteString *load_trust_dir(const char *dir_path, size_t *count) {
 #endif /* UA_ENABLE_ENCRYPTION */
 
 /* -------------------------------------------------------------------------
+ * Gate-compliant raw historian (fixed samples) + BaseEvent emission
+ * ---------------------------------------------------------------------- */
+
+#ifdef UA_ENABLE_HISTORIZING
+
+typedef struct {
+    UA_NodeId histNodeId;
+    UA_DataValue samples[5];
+    size_t sampleCount;
+    /* Simple session-local CP table: token -> next offset. */
+    struct {
+        UA_Byte token[8];
+        size_t offset;
+        UA_Boolean inUse;
+        UA_Boolean released;
+    } cps[16];
+} InteropHistCtx;
+
+static void interop_hist_clear(UA_HistoryDatabase *hdb) {
+    InteropHistCtx *ctx = (InteropHistCtx *)hdb->context;
+    if (!ctx) return;
+    UA_NodeId_clear(&ctx->histNodeId);
+    for (size_t i = 0; i < ctx->sampleCount; i++)
+        UA_DataValue_clear(&ctx->samples[i]);
+    free(ctx);
+    hdb->context = NULL;
+}
+
+static void interop_hist_read_raw(
+    UA_Server *server, void *hdbContext,
+    const UA_NodeId *sessionId, void *sessionContext,
+    const UA_RequestHeader *requestHeader,
+    const UA_ReadRawModifiedDetails *details,
+    UA_TimestampsToReturn timestampsToReturn,
+    UA_Boolean releaseContinuationPoints,
+    size_t nodesToReadSize,
+    const UA_HistoryReadValueId *nodesToRead,
+    UA_HistoryReadResponse *response,
+    UA_HistoryData * const * const historyData)
+{
+    (void)server; (void)sessionId; (void)sessionContext;
+    (void)requestHeader; (void)timestampsToReturn;
+    InteropHistCtx *ctx = (InteropHistCtx *)hdbContext;
+    if (!ctx || !details || !nodesToRead || !response || !historyData) return;
+
+    for (size_t i = 0; i < nodesToReadSize; i++) {
+        UA_HistoryReadResult *res = &response->results[i];
+        if (!UA_NodeId_equal(&nodesToRead[i].nodeId, &ctx->histNodeId)) {
+            res->statusCode = UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
+            continue;
+        }
+
+        size_t offset = 0;
+        const UA_ByteString *cpIn = &nodesToRead[i].continuationPoint;
+        if (cpIn->length > 0 && cpIn->data) {
+            int found = -1;
+            for (size_t c = 0; c < 16; c++) {
+                if (ctx->cps[c].inUse &&
+                    ctx->cps[c].token[0] == cpIn->data[0] &&
+                    (cpIn->length < 2 || ctx->cps[c].token[1] == cpIn->data[1])) {
+                    found = (int)c;
+                    break;
+                }
+            }
+            if (found < 0 || ctx->cps[found].released) {
+                res->statusCode = UA_STATUSCODE_BADCONTINUATIONPOINTINVALID;
+                continue;
+            }
+            if (releaseContinuationPoints) {
+                ctx->cps[found].released = UA_TRUE;
+                res->statusCode = UA_STATUSCODE_GOOD;
+                continue;
+            }
+            offset = ctx->cps[found].offset;
+        } else if (releaseContinuationPoints) {
+            res->statusCode = UA_STATUSCODE_GOOD;
+            continue;
+        }
+
+        /* Filter by start/end (inclusive). */
+        UA_DataValue matched[5];
+        size_t matchedCount = 0;
+        for (size_t s = 0; s < ctx->sampleCount && matchedCount < 5; s++) {
+            UA_DateTime t = ctx->samples[s].sourceTimestamp;
+            if (details->startTime && t < details->startTime) continue;
+            if (details->endTime && t > details->endTime) continue;
+            matched[matchedCount++] = ctx->samples[s]; /* shallow; copied below */
+        }
+
+        UA_UInt32 num = details->numValuesPerNode;
+        if (num == 0 || num > matchedCount) num = (UA_UInt32)matchedCount;
+        if (offset > matchedCount) {
+            res->statusCode = UA_STATUSCODE_BADCONTINUATIONPOINTINVALID;
+            continue;
+        }
+        size_t end = offset + (size_t)num;
+        if (end > matchedCount) end = matchedCount;
+
+        UA_HistoryData *hd = historyData[i];
+        if (!hd) {
+            res->statusCode = UA_STATUSCODE_BADINTERNALERROR;
+            continue;
+        }
+        size_t n = end - offset;
+        hd->dataValues = (UA_DataValue *)UA_Array_new(n, &UA_TYPES[UA_TYPES_DATAVALUE]);
+        hd->dataValuesSize = n;
+        for (size_t k = 0; k < n; k++)
+            UA_DataValue_copy(&matched[offset + k], &hd->dataValues[k]);
+
+        if (end < matchedCount) {
+            /* Issue / refresh a CP token. */
+            int slot = -1;
+            for (size_t c = 0; c < 16; c++) {
+                if (!ctx->cps[c].inUse ||
+                    (cpIn->length > 0 && ctx->cps[c].token[0] == cpIn->data[0])) {
+                    slot = (int)c; break;
+                }
+            }
+            if (slot < 0) slot = 0;
+            ctx->cps[slot].inUse = UA_TRUE;
+            ctx->cps[slot].released = UA_FALSE;
+            ctx->cps[slot].offset = end;
+            ctx->cps[slot].token[0] = (UA_Byte)(1 + slot);
+            ctx->cps[slot].token[1] = 0xA5;
+            UA_ByteString_clear(&res->continuationPoint);
+            UA_ByteString_allocBuffer(&res->continuationPoint, 2);
+            res->continuationPoint.data[0] = ctx->cps[slot].token[0];
+            res->continuationPoint.data[1] = ctx->cps[slot].token[1];
+        }
+        res->statusCode = UA_STATUSCODE_GOOD;
+    }
+}
+
+static UA_HistoryDatabase interop_make_history_database(const UA_NodeId *histNodeId) {
+    InteropHistCtx *ctx = calloc(1, sizeof(InteropHistCtx));
+    UA_HistoryDatabase hdb;
+    memset(&hdb, 0, sizeof(hdb));
+    if (!ctx) return hdb;
+    UA_NodeId_copy(histNodeId, &ctx->histNodeId);
+    ctx->sampleCount = 5;
+    /* 2026-07-24T10:00:00Z .. +20s step 5s, values 20..24 */
+    /* 2026-07-24T10:00:00Z */
+    UA_DateTime base = UA_DateTime_fromUnixTime(1784887200);
+    for (size_t i = 0; i < 5; i++) {
+        UA_Double val = 20.0 + (double)i;
+        UA_DataValue_init(&ctx->samples[i]);
+        UA_Variant_setScalarCopy(&ctx->samples[i].value, &val, &UA_TYPES[UA_TYPES_DOUBLE]);
+        ctx->samples[i].hasValue = UA_TRUE;
+        ctx->samples[i].hasSourceTimestamp = UA_TRUE;
+        ctx->samples[i].hasServerTimestamp = UA_TRUE;
+        ctx->samples[i].sourceTimestamp = base + (UA_DateTime)(i * 5) * UA_DATETIME_SEC;
+        ctx->samples[i].serverTimestamp = ctx->samples[i].sourceTimestamp;
+        ctx->samples[i].hasStatus = UA_TRUE;
+        ctx->samples[i].status = UA_STATUSCODE_GOOD;
+    }
+    hdb.context = ctx;
+    hdb.clear = interop_hist_clear;
+    hdb.readRaw = interop_hist_read_raw;
+    return hdb;
+}
+
+#endif /* UA_ENABLE_HISTORIZING */
+
+typedef struct {
+    UA_Server *server;
+    UA_NodeId sourceId;
+    UA_NodeId eventTypeId;
+} InteropEventCtx;
+
+static void interop_emit_base_event(UA_Server *server, void *data) {
+    InteropEventCtx *ctx = (InteropEventCtx *)data;
+    if (!ctx || !server) return;
+
+    /* open62541 1.5 createEvent emits in one call (no separate triggerEvent). */
+    UA_LocalizedText msg = UA_LOCALIZEDTEXT("en", "peer-event");
+    UA_StatusCode sc = UA_Server_createEvent(
+        server, ctx->sourceId, ctx->eventTypeId, 500, msg, NULL, NULL, NULL);
+    if (sc != UA_STATUSCODE_GOOD)
+        fprintf(stderr, "[open62541] warn: createEvent: 0x%08" PRIx32 "\n", (uint32_t)sc);
+}
+
+static UA_StatusCode interop_add_event_type(UA_Server *server, UA_NodeId *outType) {
+    UA_ObjectTypeAttributes attr = UA_ObjectTypeAttributes_default;
+    attr.displayName = UA_LOCALIZEDTEXT("en", "InteropBaseEventType");
+    attr.description = UA_LOCALIZEDTEXT("en", "Concrete BaseEvent subtype for interop emission");
+    return UA_Server_addObjectTypeNode(
+        server, UA_NODEID_NULL,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE),
+        UA_QUALIFIEDNAME(1, "InteropBaseEventType"),
+        attr, NULL, outType);
+}
+
+/* -------------------------------------------------------------------------
  * server_run
  * ---------------------------------------------------------------------- */
 
@@ -1060,6 +1254,8 @@ int server_run(const ServerArgs *args) {
                 UA_ObjectAttributes attr = UA_ObjectAttributes_default;
                 attr.displayName = dn;
                 attr.description = desc;
+                if (nd->nodeId && strstr(nd->nodeId, "s=Events.Source"))
+                    attr.eventNotifier = (UA_Byte)1; /* SubscribeToEvents */
                 UA_NodeId typeDefId = nd->typeDefinition
                     ? RESOLVE(nd->typeDefinition)
                     : UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE);
@@ -1075,6 +1271,8 @@ int server_run(const ServerArgs *args) {
                 attr.valueRank    = nd->valueRank;
                 attr.accessLevel  = nd->accessLevel;
                 attr.userAccessLevel = nd->accessLevel;
+                if (nd->nodeId && strstr(nd->nodeId, "s=History.Temperature"))
+                    attr.historizing = UA_TRUE;
 
                 if (nd->arrayDimensions && nd->arrayDimensionsSize > 0) {
                     attr.arrayDimensions     = nd->arrayDimensions;
@@ -1150,6 +1348,41 @@ int server_run(const ServerArgs *args) {
         }
     }
 #undef RESOLVE
+
+    /* Install gate-compliant raw historian for History.Temperature */
+#ifdef UA_ENABLE_HISTORIZING
+    {
+        UA_NodeId histId = resolve_nodeid(server,
+            "nsu=urn:otfabric:opcua-interop:model;s=History.Temperature");
+        UA_ServerConfig *scfg = UA_Server_getConfig(server);
+        scfg->historyDatabase = interop_make_history_database(&histId);
+        UA_NodeId_clear(&histId);
+        fprintf(stderr, "[open62541] info: History.Temperature raw historian enabled\n");
+    }
+#endif
+
+    /* Concrete BaseEvent subtype + periodic emission from Events.Source */
+    InteropEventCtx *evtCtx = calloc(1, sizeof(InteropEventCtx));
+    if (evtCtx) {
+        evtCtx->server = server;
+        evtCtx->sourceId = resolve_nodeid(server,
+            "nsu=urn:otfabric:opcua-interop:model;s=Events.Source");
+        UA_StatusCode esc = interop_add_event_type(server, &evtCtx->eventTypeId);
+        if (esc == UA_STATUSCODE_GOOD &&
+            !UA_NodeId_isNull(&evtCtx->sourceId)) {
+            UA_UInt64 evtCbId = 0;
+            UA_Server_addRepeatedCallback(server, interop_emit_base_event, evtCtx,
+                                          2000, &evtCbId);
+            fprintf(stderr, "[open62541] info: BaseEvent emission scheduled on Events.Source\n");
+        } else {
+            fprintf(stderr, "[open62541] warn: event setup failed: 0x%08" PRIx32 "\n",
+                    (uint32_t)esc);
+            UA_NodeId_clear(&evtCtx->sourceId);
+            UA_NodeId_clear(&evtCtx->eventTypeId);
+            free(evtCtx);
+            evtCtx = NULL;
+        }
+    }
 
     /* Register behavior repeated callbacks */
     BehaviorCtx *behCtxs = calloc(fixture->behaviorCount, sizeof(BehaviorCtx));
@@ -1248,6 +1481,11 @@ int server_run(const ServerArgs *args) {
         for (size_t bi = 0; bi < fixture->behaviorCount; bi++)
             UA_NodeId_clear(&behCtxs[bi].nodeId);
         free(behCtxs);
+    }
+    if (evtCtx) {
+        UA_NodeId_clear(&evtCtx->sourceId);
+        UA_NodeId_clear(&evtCtx->eventTypeId);
+        free(evtCtx);
     }
 
     free(nsMap);

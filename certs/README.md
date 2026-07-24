@@ -10,12 +10,14 @@ This directory contains test certificates for OPC UA security testing. Run `gene
 certs/
 ├── generate.sh          # Generates the full test PKI
 └── test-pki/
-    ├── ca/              # Test CA certificate and key
+    ├── ca/               # Test CA certificate and key
     ├── open62541-server/ # open62541 server certificate and key
     ├── open62541-client/ # open62541 client certificate and key
-    ├── milo-server/     # Milo server certificate and key
-    ├── milo-client/     # Milo client certificate and key
-    └── consumer/        # Certificate for use by consumer repositories (e.g. go-opcua)
+    ├── milo-server/      # Milo server certificate and key
+    ├── milo-client/      # Milo client certificate and key
+    ├── go-server/        # Go OPC UA server certificate (consumer secure-server tests)
+    ├── consumer/         # Certificate for use by consumer repositories (e.g. go-opcua)
+    └── untrusted/        # Intentionally untrusted self-signed client certificate
 ```
 
 ## Generation
@@ -50,9 +52,11 @@ All certificates include:
 | Component | ApplicationUri |
 |---|---|
 | Server (both adapters) | `urn:otfabric:opcua-interop:server` |
+| Go OPC UA server | `urn:otfabric:opcua-interop:server:go-opcua` |
 | open62541 client | `urn:otfabric:opcua-interop:client:open62541` |
 | Milo client | `urn:otfabric:opcua-interop:client:milo` |
 | Consumer client | `urn:otfabric:opcua-interop:client:consumer` |
+| Untrusted client | `urn:otfabric:opcua-interop:client:untrusted` |
 
 ## Trust model
 

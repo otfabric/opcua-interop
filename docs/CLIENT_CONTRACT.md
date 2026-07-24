@@ -19,12 +19,18 @@ this contract. Changes that break it require a major schema version bump.
 | Subcmd | Description |
 |--------|-------------|
 | `endpoints` | Discover and list server endpoints |
+| `find-servers` | Call FindServers and list ApplicationDescriptions |
 | `read` | Read one or more node values |
 | `write` | Write a value to one node |
 | `browse` | Browse forward hierarchical references from a node |
+| `translate` | TranslateBrowsePathsToNodeIDs for a dot-separated browse path |
 | `call` | Call a method node and collect output arguments |
 | `subscribe` | Create a subscription and collect a bounded number of data-change notifications |
 | `subscription-lifecycle` | Test subscription lifecycle scenarios (revise, publishing-mode, monitoring-mode, delete) |
+| `event-subscribe` | Create an event monitored item with a BaseEvent SelectClauses filter; collect N events |
+| `history-read` | HistoryRead with ReadRawModifiedDetails (raw only); optional continuation point |
+| `republish` | RepublishRequest for a subscription sequence number |
+| `transfer-subscriptions` | TransferSubscriptions for one or more subscription ids |
 
 ### Global flags
 
@@ -54,6 +60,14 @@ the password is treated as an empty string.
 When `--security-policy` is not `None`, `--certificate` and `--private-key` are
 required.
 
+### `find-servers` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--endpoint <url>` | Discovery / server endpoint URL | required |
+
+No additional flags. Emits one result object per `ApplicationDescription`.
+
 ### `read` flags
 
 | Flag | Description |
@@ -76,6 +90,16 @@ required.
 |------|-------------|---------|
 | `--node <nodeId>` | Starting node | `i=85` (Objects folder) |
 | `--max-refs <n>` | Max references per Browse request | 0 (server default) |
+
+### `translate` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--starting-node <nodeId>` | Starting NodeId for the browse path | `i=85` (Objects folder) |
+| `--path <names>` | Dot-separated browse names (e.g. `Server` or `Server.ServerStatus`) | required |
+| `--namespace <n>` | Namespace index applied to every path segment | `0` |
+
+Each relative path element uses `HierarchicalReferences` with `IncludeSubtypes=true`.
 
 ### `call` flags
 
@@ -106,7 +130,71 @@ required.
 | `--scenario <name>` | Scenario to run: `revise`, `publishing-mode`, `monitoring-mode`, `delete` | required |
 | `--timeout-ms <n>` | Absolute command timeout in ms | 15000 |
 
+### `event-subscribe` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--node <nodeId>` | EventNotifier source node | required |
+| `--events <n>` | Stop after receiving this many events | 1 |
+| `--timeout-ms <n>` | Absolute command timeout in ms | 10000 |
+| `--publishing-interval-ms <n>` | Requested publishing interval in ms | 500 |
+| `--queue-size <n>` | Monitored item queue size | 10 |
+| `--of-type <nodeId>` | Optional OfType ContentFilterElement (e.g. `i=2041`) | — |
+| `--min-severity <n>` | Optional Severity ≥ threshold ContentFilterElement | — |
+
+The EventFilter SelectClauses always request BaseEventType fields:
+`EventId`, `EventType`, `SourceName`, `Message`, `Severity`, `Time`.
+
+When both `--of-type` and `--min-severity` are set, the WhereClause ANDs them.
+These flags prove narrow filter baselines only — not the general WhereClause
+expression surface.
+
+Adapter servers emit deterministic BaseEvents from `Events.Source`
+(Severity=500, Message=`peer-event`) about every 2 seconds. Against the Go
+server, peer tests may still call `EmitBaseEvent` for tighter timing.
+
+### `history-read` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--node <nodeId>` | Node to read historically | required |
+| `--start <rfc3339>` | Start time (inclusive), UTC RFC 3339 | required |
+| `--end <rfc3339>` | End time (inclusive), UTC RFC 3339 | required |
+| `--num-values <n>` | Max values per node (`NumValuesPerNode`) | 0 (server default / unlimited) |
+| `--continuation-point <b64>` | Continue a prior HistoryRead | — |
+| `--release-continuation-point <true\|false>` | Release the continuation point instead of reading | `false` |
+| `--return-bounds <true\|false>` | `ReadRawModifiedDetails.ReturnBounds` | `false` |
+| `--timestamps <Source\|Server\|Both\|Neither>` | `TimestampsToReturn` | `Both` |
+| `--scenario continue` | Single-session page → continue → release → reuse-after-release | — |
+
+Raw HistoryRead only (`IsReadModified = false`). Continuation points are
+Base64-encoded ByteStrings when present.
+
+With `--scenario continue`, one connected session pages with `--num-values`
+(default 2), follows continuation points, releases the last CP, then attempts
+reuse after release. The result item includes `scenario`, `pages`,
+`releaseStatusCode`, and `reuseAfterReleaseStatusCode`.
+
+Adapter servers expose gate-compliant fixed raw samples on
+`History.Temperature` (5 values from `2026-07-24T10:00:00Z` step 5s).
+
+### `republish` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--subscription-id <n>` | Subscription to republish from | required |
+| `--sequence-number <n>` | `RetransmitSequenceNumber` | required |
+
+### `transfer-subscriptions` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--subscription-id <n>` | Subscription id to transfer (repeatable) | required (≥1) |
+| `--send-initial-values <true\|false>` | `SendInitialValues` | `false` |
+
 ---
+
+## 2. Output streams
 
 **Stdout** — exactly one JSON object per invocation, terminated by `\n`, valid UTF-8.
 No other text is written to stdout.
@@ -194,6 +282,21 @@ Error categories:
 ]
 ```
 
+### `find-servers`
+
+```json
+"results": [
+  {
+    "applicationUri":  "urn:example:server",
+    "applicationName": { "locale": "en", "text": "Example Server" },
+    "productUri":      "urn:example:product",
+    "discoveryUrls":   ["opc.tcp://server:4840/opcua-interop"]
+  }
+]
+```
+
+`applicationName` is a LocalizedText object (§7). Empty locale/text are emitted as `""`.
+
 ### `read`
 
 ```json
@@ -243,6 +346,21 @@ Error categories:
 `nodeClass` is the symbolic name from OPC UA Part 3: `"Object"`, `"Variable"`,
 `"Method"`, `"ObjectType"`, `"VariableType"`, `"ReferenceType"`, `"DataType"`,
 `"View"`.
+
+### `translate`
+
+```json
+"results": [
+  {
+    "statusCode": { "name": "Good", "code": 0, "severity": "Good" },
+    "targets":    ["i=2253"]
+  }
+]
+```
+
+One result object for the single requested browse path. `targets` is an ordered
+array of canonical NodeId strings (§6) from `BrowsePathTarget.TargetId`.
+`success` is `true` when the service result and the path `statusCode` are both Good.
 
 ### `call`
 
@@ -375,6 +493,94 @@ Operation name in the JSON envelope: `"subscription-lifecycle"`.
 ```
 
 `success` when the `second` statuses are both `Bad` severity.
+
+### `event-subscribe`
+
+```json
+"results": [
+  {
+    "nodeId":                    "ns=1;s=Events.Source",
+    "subscriptionId":            1,
+    "revisedPublishingInterval": 500.0,
+    "monitoredItemStatusCode":   { "name": "Good", "code": 0, "severity": "Good" },
+    "selectClauses":             ["EventId", "EventType", "SourceName", "Message", "Severity", "Time"],
+    "events": [
+      {
+        "sequenceNumber": 1,
+        "fields": [
+          { "name": "EventId",    "dataType": "ByteString",    "builtInType": 15, "value": "dGVzdA==" },
+          { "name": "EventType",  "dataType": "NodeId",        "builtInType": 17, "value": "i=2041" },
+          { "name": "SourceName", "dataType": "String",        "builtInType": 12, "value": "Events.Source" },
+          { "name": "Message",    "dataType": "LocalizedText", "builtInType": 21, "value": { "locale": "en", "text": "peer-event" } },
+          { "name": "Severity",   "dataType": "UInt16",        "builtInType": 5,  "value": 500 },
+          { "name": "Time",       "dataType": "DateTime",      "builtInType": 13, "value": "2024-01-01T00:00:00Z" }
+        ]
+      }
+    ]
+  }
+]
+```
+
+If the timeout expires before `--events` arrive, emit whatever was collected,
+set `success: false`, and exit 7.
+
+### `history-read`
+
+```json
+"results": [
+  {
+    "nodeId":            "ns=1;s=History.Temperature",
+    "statusCode":        { "name": "Good", "code": 0, "severity": "Good" },
+    "continuationPoint": null,
+    "values": [
+      {
+        "value":           20.0,
+        "dataType":        "Double",
+        "builtInType":     11,
+        "statusCode":      { "name": "Good", "code": 0, "severity": "Good" },
+        "sourceTimestamp": "2026-07-24T10:00:00Z",
+        "serverTimestamp": "2026-07-24T10:00:00Z"
+      }
+    ]
+  }
+]
+```
+
+`continuationPoint` is a Base64 string when the server returns one, otherwise
+`null`. Timestamps omitted when absent. Fixture baseline returns five Doubles
+`20`…`24` at 5s steps from `2026-07-24T10:00:00Z`.
+
+### `republish`
+
+```json
+"results": [
+  {
+    "subscriptionId":           1,
+    "retransmitSequenceNumber": 3,
+    "sequenceNumber":           3,
+    "publishTime":              "2024-01-01T00:00:00.000Z",
+    "notificationDataCount":    1
+  }
+]
+```
+
+`sequenceNumber` / `publishTime` / `notificationDataCount` come from the
+returned `NotificationMessage` on success. On service failure they may be
+omitted or zeroed; `serviceResult` carries the fault.
+
+### `transfer-subscriptions`
+
+```json
+"results": [
+  {
+    "subscriptionId":           1,
+    "statusCode":               { "name": "Good", "code": 0, "severity": "Good" },
+    "availableSequenceNumbers": [2, 3]
+  }
+]
+```
+
+One result object per requested `--subscription-id`, in request order.
 
 ---
 

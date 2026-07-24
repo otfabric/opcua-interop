@@ -13,7 +13,9 @@ Objects (i=85)
     ├── Access        — read-write, read-only, write-only
     ├── Methods       — Add, Multiply, Echo, NoArguments, MultipleOutputs, Fail
     ├── DataValues    — variables with specific status codes and timestamp behavior
-    └── Diagnostics   — adapter name, stack version, fixture id
+    ├── Diagnostics   — adapter name, stack version, fixture id
+    ├── Events        — EventNotifier source emitting deterministic BaseEvents
+    └── History       — gate-compliant fixed raw HistoryRead samples
 ```
 
 ## Namespace
@@ -77,6 +79,20 @@ These values are chosen to reveal binary encoding errors:
 | `Access.ReadWrite` | CurrentRead + CurrentWrite |
 | `Access.ReadOnly` | CurrentRead only |
 | `Access.WriteOnly` | CurrentWrite only (reads return BadNotReadable) |
+
+## Events
+
+| Node | Behavior |
+|---|---|
+| `Events.Source` | EventNotifier; adapters emit a BaseEvent about every 2s with Severity=`500`, Message=`peer-event` (locale `en`), SourceName=`Events.Source` |
+
+## History
+
+Gate-compliant raw samples only (no DB, no update/delete, no aggregates/interpolation).
+
+| Node | Type | Samples |
+|---|---|---|
+| `History.Temperature` | Double | 5 values `20`…`24` at `2026-07-24T10:00:00Z` step 5s |
 
 ## Users
 
