@@ -142,14 +142,24 @@ The fixture's `users` array controls which username/password credentials are acc
 
 ### Client commands
 
+Seven client operations (see `print-capabilities` → `clientOperations` and
+[`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
+
 ```sh
 client endpoints --endpoint opc.tcp://host:4840/opcua-interop
-client read      --endpoint ... --node 'nsu=...;s=Scalar.Int32'
-client write     --endpoint ... --node '...' --type Int32 --value 100
+client read      --endpoint ... --node 'nsu=...;s=Scalar.Int32' [--index-range '1:3']
+client write     --endpoint ... --node '...' --type Int32 --value 100 [--index-range '0']
 client browse    --endpoint ... --node 'i=85'
 client call      --endpoint ... --object '...' --method '...' --input 'Int32:10' --input 'Int32:20'
-client subscribe --endpoint ... --node '...' --notifications 5 --timeout-ms 10000
+client subscribe --endpoint ... --node '...' --notifications 5 --timeout-ms 10000 \
+                 [--queue-size 3] [--discard-oldest true] [--timestamps Both]
+client subscription-lifecycle --endpoint ... --node '...' \
+                 --scenario revise|publishing-mode|monitoring-mode|delete
 ```
+
+`subscribe` JSON includes `subscriptionId` and revised CreateSubscription fields
+(`revisedPublishingInterval`, `revisedLifetimeCount`, `revisedMaxKeepAliveCount`)
+plus optional `sourceTimestamp` / `serverTimestamp` on notifications.
 
 All client operations write JSON to stdout and diagnostics to stderr.
 
@@ -226,16 +236,20 @@ make run-open62541       # Start open62541 server (foreground, port 4840)
 make run-milo            # Start Milo server (foreground, port 4841)
 make certs               # Generate test PKI (requires openssl >= 1.1)
 make clean               # Remove build artifacts and containers
-make release VERSION=v0.1.1  # Build and push multi-arch release images
+make release VERSION=v0.4.0  # Build and push multi-arch release images
 ```
 
 ## Versioning
 
 | Version type | Location |
 |---|---|
-| Repository release | Git tag and image tag, e.g. `v0.1.1` |
-| Upstream stack version | Image label and `print-capabilities` output |
+| Repository release | Git tag and image tag — latest **`v0.4.0`** |
+| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.4.0`** |
+| Upstream stack version | Image label and `print-capabilities` → `stack.version` |
 | Fixture schema version | `schemaVersion` field in every fixture |
+
+Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`.
+See `PLAN.md` release sequence and `RELEASE_NOTES_v0.3.0.md` / `RELEASE_NOTES_v0.4.0.md`.
 
 ## Reference stacks
 
@@ -246,7 +260,8 @@ make release VERSION=v0.1.1  # Build and push multi-arch release images
 
 ## Security
 
-The test PKI (`certs/test-pki/`) and security infrastructure are in place as of v0.1.1.
+The test PKI (`certs/test-pki/`) landed in v0.1.1; Basic256Sha256 / username verification
+completed in v0.2.0; Aes128 / Aes256 profiles are verified as of Phase 9 (v0.2.1 era).
 
 **What is implemented and verified:**
 - Full test PKI with CA, seven identities (including go-server), and OPC UA PKI directory layout

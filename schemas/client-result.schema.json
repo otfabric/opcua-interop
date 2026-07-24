@@ -17,7 +17,7 @@
     },
     "operation": {
       "type": "string",
-      "enum": ["endpoints", "read", "write", "browse", "call", "subscribe"]
+      "enum": ["endpoints", "read", "write", "browse", "call", "subscribe", "subscription-lifecycle"]
     },
     "success": {
       "type": "boolean"
@@ -32,7 +32,9 @@
           { "$ref": "#/$defs/endpointResult" },
           { "$ref": "#/$defs/readResult" },
           { "$ref": "#/$defs/writeResult" },
-          { "$ref": "#/$defs/browseResult" }
+          { "$ref": "#/$defs/browseResult" },
+          { "$ref": "#/$defs/subscribeResult" },
+          { "$ref": "#/$defs/subscriptionLifecycleResult" }
         ]
       }
     },
@@ -125,6 +127,77 @@
         "nodeClass": {
           "type": "string",
           "enum": ["Object","Variable","Method","ObjectType","VariableType","ReferenceType","DataType","View"]
+        }
+      }
+    },
+    "subscribeResult": {
+      "type": "object",
+      "required": ["nodeId", "subscriptionId", "revisedPublishingInterval", "revisedLifetimeCount", "revisedMaxKeepAliveCount", "monitoredItemStatusCode", "notifications"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId":                    { "type": "string" },
+        "subscriptionId":            { "type": "integer", "minimum": 0 },
+        "revisedPublishingInterval": { "type": "number" },
+        "revisedLifetimeCount":      { "type": "integer", "minimum": 0 },
+        "revisedMaxKeepAliveCount":  { "type": "integer", "minimum": 0 },
+        "monitoredItemStatusCode":   { "$ref": "#/$defs/statusCode" },
+        "notifications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["sequenceNumber", "value", "dataType", "builtInType", "statusCode"],
+            "properties": {
+              "sequenceNumber":  { "type": "integer" },
+              "value":           {},
+              "dataType":        { "type": "string" },
+              "builtInType":     { "type": "integer" },
+              "statusCode":      { "$ref": "#/$defs/statusCode" },
+              "sourceTimestamp": { "type": "string" },
+              "serverTimestamp": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "subscriptionLifecycleResult": {
+      "type": "object",
+      "required": ["subscriptionId"],
+      "properties": {
+        "subscriptionId":              { "type": "integer", "minimum": 0 },
+        "requestedPublishingInterval": { "type": "number" },
+        "requestedLifetimeCount":      { "type": "integer" },
+        "requestedMaxKeepAliveCount":  { "type": "integer" },
+        "revisedPublishingInterval":   { "type": "number" },
+        "revisedLifetimeCount":        { "type": "integer", "minimum": 0 },
+        "revisedMaxKeepAliveCount":    { "type": "integer", "minimum": 0 },
+        "overflow":                    { "type": "boolean" },
+        "values":                      { "type": "array", "items": { "type": "integer" } },
+        "modeSteps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["mode", "notificationCount"],
+            "properties": {
+              "mode":              { "type": "string" },
+              "notificationCount": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "deleteMonitoredItem": {
+          "type": "object",
+          "required": ["first", "second"],
+          "properties": {
+            "first":  { "$ref": "#/$defs/statusCode" },
+            "second": { "$ref": "#/$defs/statusCode" }
+          }
+        },
+        "deleteSubscription": {
+          "type": "object",
+          "required": ["first", "second"],
+          "properties": {
+            "first":  { "$ref": "#/$defs/statusCode" },
+            "second": { "$ref": "#/$defs/statusCode" }
+          }
         }
       }
     }

@@ -48,7 +48,7 @@
 static int cmd_print_capabilities(void) {
     printf("{\n");
     printf("  \"schemaVersion\": \"1.0\",\n");
-    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.1.1\"},\n");
+    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.4.0\"},\n");
     printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.5\"},\n");
     printf("  \"fixtureSchemaVersions\": [\"1.0\"],\n");
     printf("  \"roles\": [\"client\", \"server\"],\n");
@@ -60,7 +60,8 @@ static int cmd_print_capabilities(void) {
     printf("    \"write\",\n");
     printf("    \"browse\",\n");
     printf("    \"call\",\n");
-    printf("    \"subscribe\"\n");
+    printf("    \"subscribe\",\n");
+    printf("    \"subscription-lifecycle\"\n");
     printf("  ],\n");
     printf("  \"serverServices\": [\n");
     printf("    \"GetEndpoints\",\n");
@@ -71,7 +72,11 @@ static int cmd_print_capabilities(void) {
     printf("    \"Call\",\n");
     printf("    \"CreateSubscription\",\n");
     printf("    \"CreateMonitoredItems\",\n");
-    printf("    \"Publish\"\n");
+    printf("    \"Publish\",\n");
+    printf("    \"SetPublishingMode\",\n");
+    printf("    \"SetMonitoringMode\",\n");
+    printf("    \"DeleteMonitoredItems\",\n");
+    printf("    \"DeleteSubscriptions\"\n");
     printf("  ],\n");
     printf("  \"securityProfiles\": [\n");
     printf("    {\"policy\": \"None\",                  \"mode\": \"None\"},\n");

@@ -1602,6 +1602,10 @@ static int cmd_subscribe(int argc, char **argv) {
 
     printf(",\"results\":[{\"nodeId\":");
     output_nodeid(&nodeId);
+    printf(",\"subscriptionId\":%" PRIu32, (uint32_t)subResp.subscriptionId);
+    printf(",\"revisedPublishingInterval\":%.17g", subResp.revisedPublishingInterval);
+    printf(",\"revisedLifetimeCount\":%" PRIu32, (uint32_t)subResp.revisedLifetimeCount);
+    printf(",\"revisedMaxKeepAliveCount\":%" PRIu32, (uint32_t)subResp.revisedMaxKeepAliveCount);
     printf(",\"monitoredItemStatusCode\":{\"name\":\"%s\",\"code\":%" PRIu32
            ",\"severity\":\"%s\"}",
            output_status_code_name(mon_sc), (uint32_t)mon_sc,
@@ -1642,13 +1646,548 @@ static int cmd_subscribe(int argc, char **argv) {
 }
 
 /* -------------------------------------------------------------------------
+ * subscription-lifecycle subcommand helpers
+ * ---------------------------------------------------------------------- */
+
+static UA_StatusCode slc_set_publishing_mode(UA_Client *client, UA_UInt32 subId,
+                                              UA_Boolean enabled) {
+    UA_SetPublishingModeRequest req;
+    UA_SetPublishingModeRequest_init(&req);
+    req.publishingEnabled = enabled;
+    req.subscriptionIdsSize = 1;
+    req.subscriptionIds = &subId;
+    UA_SetPublishingModeResponse resp;
+    UA_SetPublishingModeResponse_init(&resp);
+    __UA_Client_Service(client, &req,
+        &UA_TYPES[UA_TYPES_SETPUBLISHINGMODEREQUEST],
+        &resp,
+        &UA_TYPES[UA_TYPES_SETPUBLISHINGMODERESPONSE]);
+    UA_StatusCode sc = resp.responseHeader.serviceResult;
+    if (UA_StatusCode_isGood(sc) && resp.resultsSize > 0)
+        sc = resp.results[0];
+    UA_SetPublishingModeResponse_clear(&resp);
+    return sc;
+}
+
+static UA_StatusCode slc_set_monitoring_mode(UA_Client *client, UA_UInt32 subId,
+                                              UA_UInt32 monId, UA_MonitoringMode mode) {
+    UA_SetMonitoringModeRequest req;
+    UA_SetMonitoringModeRequest_init(&req);
+    req.subscriptionId = subId;
+    req.monitoringMode = mode;
+    req.monitoredItemIdsSize = 1;
+    req.monitoredItemIds = &monId;
+    UA_SetMonitoringModeResponse resp;
+    UA_SetMonitoringModeResponse_init(&resp);
+    __UA_Client_Service(client, &req,
+        &UA_TYPES[UA_TYPES_SETMONITORINGMODEREQUEST],
+        &resp,
+        &UA_TYPES[UA_TYPES_SETMONITORINGMODERESPONSE]);
+    UA_StatusCode sc = resp.responseHeader.serviceResult;
+    if (UA_StatusCode_isGood(sc) && resp.resultsSize > 0)
+        sc = resp.results[0];
+    UA_SetMonitoringModeResponse_clear(&resp);
+    return sc;
+}
+
+static UA_StatusCode slc_write_int32(UA_Client *client, UA_NodeId nodeId, UA_Int32 val) {
+    UA_Variant var;
+    UA_Variant_init(&var);
+    UA_Variant_setScalar(&var, &val, &UA_TYPES[UA_TYPES_INT32]);
+    return UA_Client_writeValueAttribute(client, nodeId, &var);
+}
+
+/* -------------------------------------------------------------------------
+ * subscription-lifecycle scenarios
+ * ---------------------------------------------------------------------- */
+
+static int slc_revise(UA_Client *client, UA_NodeId nodeId, int toMs) {
+    (void)nodeId; (void)toMs;
+    UA_CreateSubscriptionRequest req;
+    UA_CreateSubscriptionRequest_init(&req);
+    req.requestedPublishingInterval = 1.0;
+    req.requestedLifetimeCount      = 5;
+    req.requestedMaxKeepAliveCount  = 10;
+    req.publishingEnabled           = UA_TRUE;
+
+    UA_CreateSubscriptionResponse resp =
+        UA_Client_Subscriptions_create(client, req, NULL, NULL, NULL);
+    UA_StatusCode sc  = resp.responseHeader.serviceResult;
+    UA_UInt32     sid = resp.subscriptionId;
+    double        rpi = resp.revisedPublishingInterval;
+    UA_UInt32     rlt = resp.revisedLifetimeCount;
+    UA_UInt32     rmk = resp.revisedMaxKeepAliveCount;
+    UA_CreateSubscriptionResponse_clear(&resp);
+
+    if (!UA_StatusCode_isGood(sc)) {
+        output_begin("open62541", "subscription-lifecycle");
+        output_success(0); output_service_result(sc);
+        output_error("service", "CreateSubscription failed");
+        output_end();
+        return 4;
+    }
+
+    UA_Client_Subscriptions_deleteSingle(client, sid);
+
+    int ok = (rlt >= 3u * rmk) && (rpi >= 10.0);
+    output_begin("open62541", "subscription-lifecycle");
+    output_success(ok);
+    output_service_result(sc);
+    printf(",\"results\":[{");
+    printf("\"subscriptionId\":%" PRIu32, sid);
+    printf(",\"requestedPublishingInterval\":1");
+    printf(",\"requestedLifetimeCount\":5");
+    printf(",\"requestedMaxKeepAliveCount\":10");
+    printf(",\"revisedPublishingInterval\":%.17g", rpi);
+    printf(",\"revisedLifetimeCount\":%" PRIu32, rlt);
+    printf(",\"revisedMaxKeepAliveCount\":%" PRIu32, rmk);
+    printf("}]");
+    output_null_error();
+    output_end();
+    return ok ? 0 : 4;
+}
+
+static int slc_publishing_mode(UA_Client *client, UA_NodeId nodeId, int toMs) {
+    UA_CreateSubscriptionRequest subReq = UA_CreateSubscriptionRequest_default();
+    subReq.requestedPublishingInterval = 500.0;
+    subReq.publishingEnabled = UA_TRUE;
+
+    UA_CreateSubscriptionResponse subResp =
+        UA_Client_Subscriptions_create(client, subReq, NULL, NULL, NULL);
+    UA_StatusCode sc  = subResp.responseHeader.serviceResult;
+    UA_UInt32 subId   = subResp.subscriptionId;
+    double    rpi     = subResp.revisedPublishingInterval;
+    UA_UInt32 rlt     = subResp.revisedLifetimeCount;
+    UA_UInt32 rmk     = subResp.revisedMaxKeepAliveCount;
+    UA_CreateSubscriptionResponse_clear(&subResp);
+
+    if (!UA_StatusCode_isGood(sc)) {
+        output_begin("open62541", "subscription-lifecycle");
+        output_success(0); output_service_result(sc);
+        output_error("service", "CreateSubscription failed");
+        output_end();
+        return 4;
+    }
+
+    NotifStore store;
+    memset(&store, 0, sizeof(store));
+    store.wanted = MAX_NOTIFICATIONS;
+
+    UA_MonitoredItemCreateRequest monReq =
+        UA_MonitoredItemCreateRequest_default(nodeId);
+    monReq.requestedParameters.samplingInterval = 100.0;
+    monReq.requestedParameters.queueSize        = 3;
+    monReq.requestedParameters.discardOldest    = UA_TRUE;
+    UA_MonitoredItemCreateResult monResp =
+        UA_Client_MonitoredItems_createDataChange(
+            client, subId, UA_TIMESTAMPSTORETURN_SOURCE,
+            monReq, &store, sub_data_change_cb, NULL);
+    UA_StatusCode monSc = monResp.statusCode;
+
+    if (!UA_StatusCode_isGood(monSc)) {
+        UA_Client_Subscriptions_deleteSingle(client, subId);
+        output_begin("open62541", "subscription-lifecycle");
+        output_success(0); output_service_result(monSc);
+        output_error("service", "CreateMonitoredItem failed");
+        output_end();
+        return 4;
+    }
+
+    /* Drain initial notification (up to 500ms) */
+    time_t t0 = time(NULL);
+    while (store.count < 1) {
+        if ((int)(difftime(time(NULL), t0) * 1000.0) >= 500) break;
+        UA_Client_run_iterate(client, 50);
+    }
+
+    /* SetPublishingMode false then reset counter */
+    slc_set_publishing_mode(client, subId, UA_FALSE);
+    store.count = 0;
+
+    /* Write 1,2,3,4,5 */
+    for (int v = 1; v <= 5; v++) {
+        slc_write_int32(client, nodeId, (UA_Int32)v);
+        UA_Client_run_iterate(client, 20);
+    }
+
+    /* Wait 200ms with publishing off */
+    t0 = time(NULL);
+    while ((int)(difftime(time(NULL), t0) * 1000.0) < 200)
+        UA_Client_run_iterate(client, 50);
+
+    /* SetPublishingMode true */
+    slc_set_publishing_mode(client, subId, UA_TRUE);
+
+    /* Collect queued notifications (expect up to queueSize=3) */
+    int collectMs = toMs - 2000;
+    if (collectMs < 2000) collectMs = 2000;
+    if (collectMs > 5000) collectMs = 5000;
+    t0 = time(NULL);
+    while (store.count < 3) {
+        if ((int)(difftime(time(NULL), t0) * 1000.0) >= collectMs) break;
+        UA_Client_run_iterate(client, 50);
+    }
+
+    UA_Client_Subscriptions_deleteSingle(client, subId);
+
+    int nv = store.count;
+    /* Overflow: wrote 5 values, queueSize=3 means 2 were discarded */
+    int overflow = (nv < 5);
+    for (int i = 0; i < nv; i++) {
+        /* Overflow info bit: bit 10 in status code SubCode */
+        if (store.entries[i].statusCode & 0x04800000u)
+            overflow = 1;
+    }
+
+    /* success: last values should be [3,4,5] */
+    int ok = 0;
+    if (nv >= 3) {
+        int a = atoi(store.entries[nv-3].valueJson);
+        int b = atoi(store.entries[nv-2].valueJson);
+        int c = atoi(store.entries[nv-1].valueJson);
+        ok = (a == 3 && b == 4 && c == 5);
+    } else if (nv >= 1) {
+        ok = (atoi(store.entries[nv-1].valueJson) == 5);
+    }
+
+    output_begin("open62541", "subscription-lifecycle");
+    output_success(ok);
+    output_service_result(sc);
+    printf(",\"results\":[{");
+    printf("\"subscriptionId\":%" PRIu32, subId);
+    printf(",\"revisedPublishingInterval\":%.17g", rpi);
+    printf(",\"revisedLifetimeCount\":%" PRIu32, rlt);
+    printf(",\"revisedMaxKeepAliveCount\":%" PRIu32, rmk);
+    printf(",\"overflow\":%s", overflow ? "true" : "false");
+    printf(",\"values\":[");
+    for (int i = 0; i < nv; i++) {
+        if (i > 0) printf(",");
+        printf("%s", store.entries[i].valueJson);
+    }
+    printf("]");
+    printf("}]");
+    output_null_error();
+    output_end();
+    return ok ? 0 : 4;
+}
+
+static int slc_monitoring_mode(UA_Client *client, UA_NodeId nodeId, int toMs) {
+    UA_CreateSubscriptionRequest subReq = UA_CreateSubscriptionRequest_default();
+    subReq.requestedPublishingInterval = 100.0;
+    subReq.publishingEnabled = UA_TRUE;
+
+    UA_CreateSubscriptionResponse subResp =
+        UA_Client_Subscriptions_create(client, subReq, NULL, NULL, NULL);
+    UA_StatusCode sc  = subResp.responseHeader.serviceResult;
+    UA_UInt32 subId   = subResp.subscriptionId;
+    UA_CreateSubscriptionResponse_clear(&subResp);
+
+    if (!UA_StatusCode_isGood(sc)) {
+        output_begin("open62541", "subscription-lifecycle");
+        output_success(0); output_service_result(sc);
+        output_error("service", "CreateSubscription failed");
+        output_end();
+        return 4;
+    }
+
+    NotifStore store;
+    memset(&store, 0, sizeof(store));
+    store.wanted = MAX_NOTIFICATIONS;
+
+    UA_MonitoredItemCreateRequest monReq =
+        UA_MonitoredItemCreateRequest_default(nodeId);
+    monReq.requestedParameters.samplingInterval = 100.0;
+    monReq.requestedParameters.queueSize        = 5;
+    monReq.requestedParameters.discardOldest    = UA_TRUE;
+    UA_MonitoredItemCreateResult monResp =
+        UA_Client_MonitoredItems_createDataChange(
+            client, subId, UA_TIMESTAMPSTORETURN_SOURCE,
+            monReq, &store, sub_data_change_cb, NULL);
+    UA_StatusCode monSc = monResp.statusCode;
+    UA_UInt32 monId     = monResp.monitoredItemId;
+
+    if (!UA_StatusCode_isGood(monSc)) {
+        UA_Client_Subscriptions_deleteSingle(client, subId);
+        output_begin("open62541", "subscription-lifecycle");
+        output_success(0); output_service_result(monSc);
+        output_error("service", "CreateMonitoredItem failed");
+        output_end();
+        return 4;
+    }
+
+    /* Drain initial notification */
+    time_t t0 = time(NULL);
+    while (store.count < 1) {
+        if ((int)(difftime(time(NULL), t0) * 1000.0) >= 500) break;
+        UA_Client_run_iterate(client, 50);
+    }
+    store.count = 0;
+
+    /* SetMonitoringMode DISABLED; write 100; wait 300ms; expect 0 notifications */
+    slc_set_monitoring_mode(client, subId, monId, UA_MONITORINGMODE_DISABLED);
+    slc_write_int32(client, nodeId, 100);
+    t0 = time(NULL);
+    while ((int)(difftime(time(NULL), t0) * 1000.0) < 300)
+        UA_Client_run_iterate(client, 50);
+    int disabledCount = store.count;
+
+    /* SetMonitoringMode SAMPLING; write 101,102; wait 300ms */
+    slc_set_monitoring_mode(client, subId, monId, UA_MONITORINGMODE_SAMPLING);
+    slc_write_int32(client, nodeId, 101);
+    UA_Client_run_iterate(client, 20);
+    slc_write_int32(client, nodeId, 102);
+    t0 = time(NULL);
+    while ((int)(difftime(time(NULL), t0) * 1000.0) < 300)
+        UA_Client_run_iterate(client, 50);
+    int samplingCount = store.count - disabledCount;
+
+    /* SetMonitoringMode REPORTING; write 103; collect >= 1 notification */
+    slc_set_monitoring_mode(client, subId, monId, UA_MONITORINGMODE_REPORTING);
+    slc_write_int32(client, nodeId, 103);
+    int beforeReporting = store.count;
+    int collectMs = toMs - 2000;
+    if (collectMs < 2000) collectMs = 2000;
+    if (collectMs > 5000) collectMs = 5000;
+    t0 = time(NULL);
+    while (store.count <= beforeReporting) {
+        if ((int)(difftime(time(NULL), t0) * 1000.0) >= collectMs) break;
+        UA_Client_run_iterate(client, 50);
+    }
+    int reportingCount = store.count - beforeReporting;
+
+    UA_Client_Subscriptions_deleteSingle(client, subId);
+
+    int ok = (disabledCount == 0) && (reportingCount >= 1);
+    output_begin("open62541", "subscription-lifecycle");
+    output_success(ok);
+    output_service_result(sc);
+    printf(",\"results\":[{");
+    printf("\"subscriptionId\":%" PRIu32, subId);
+    printf(",\"modeSteps\":[");
+    printf("{\"mode\":\"Disabled\",\"notificationCount\":%d}", disabledCount);
+    printf(",{\"mode\":\"Sampling\",\"notificationCount\":%d}", samplingCount);
+    printf(",{\"mode\":\"Reporting\",\"notificationCount\":%d}", reportingCount);
+    printf("]");
+    printf("}]");
+    output_null_error();
+    output_end();
+    return ok ? 0 : 4;
+}
+
+static int slc_delete(UA_Client *client, UA_NodeId nodeId, int toMs) {
+    (void)toMs;
+    UA_CreateSubscriptionRequest subReq = UA_CreateSubscriptionRequest_default();
+    subReq.requestedPublishingInterval = 500.0;
+    subReq.publishingEnabled = UA_TRUE;
+
+    UA_CreateSubscriptionResponse subResp =
+        UA_Client_Subscriptions_create(client, subReq, NULL, NULL, NULL);
+    UA_StatusCode sc  = subResp.responseHeader.serviceResult;
+    UA_UInt32 subId   = subResp.subscriptionId;
+    UA_CreateSubscriptionResponse_clear(&subResp);
+
+    if (!UA_StatusCode_isGood(sc)) {
+        output_begin("open62541", "subscription-lifecycle");
+        output_success(0); output_service_result(sc);
+        output_error("service", "CreateSubscription failed");
+        output_end();
+        return 4;
+    }
+
+    NotifStore store;
+    memset(&store, 0, sizeof(store));
+    store.wanted = 0;
+
+    UA_MonitoredItemCreateRequest monReq =
+        UA_MonitoredItemCreateRequest_default(nodeId);
+    UA_MonitoredItemCreateResult monResp =
+        UA_Client_MonitoredItems_createDataChange(
+            client, subId, UA_TIMESTAMPSTORETURN_SOURCE,
+            monReq, &store, sub_data_change_cb, NULL);
+    UA_StatusCode monSc = monResp.statusCode;
+    UA_UInt32 monId     = monResp.monitoredItemId;
+
+    if (!UA_StatusCode_isGood(monSc)) {
+        UA_Client_Subscriptions_deleteSingle(client, subId);
+        output_begin("open62541", "subscription-lifecycle");
+        output_success(0); output_service_result(monSc);
+        output_error("service", "CreateMonitoredItem failed");
+        output_end();
+        return 4;
+    }
+
+    /* DeleteMonitoredItems: first (expect Good), second (expect Bad) */
+    UA_DeleteMonitoredItemsRequest dmReq;
+    UA_DeleteMonitoredItemsRequest_init(&dmReq);
+    dmReq.subscriptionId       = subId;
+    dmReq.monitoredItemIds     = &monId;
+    dmReq.monitoredItemIdsSize = 1;
+
+    UA_DeleteMonitoredItemsResponse dmResp1;
+    UA_DeleteMonitoredItemsResponse_init(&dmResp1);
+    __UA_Client_Service(client, &dmReq,
+        &UA_TYPES[UA_TYPES_DELETEMONITOREDITEMSREQUEST],
+        &dmResp1,
+        &UA_TYPES[UA_TYPES_DELETEMONITOREDITEMSRESPONSE]);
+    UA_StatusCode delMon1 = (dmResp1.resultsSize > 0)
+        ? dmResp1.results[0] : dmResp1.responseHeader.serviceResult;
+    UA_DeleteMonitoredItemsResponse_clear(&dmResp1);
+
+    UA_DeleteMonitoredItemsResponse dmResp2;
+    UA_DeleteMonitoredItemsResponse_init(&dmResp2);
+    __UA_Client_Service(client, &dmReq,
+        &UA_TYPES[UA_TYPES_DELETEMONITOREDITEMSREQUEST],
+        &dmResp2,
+        &UA_TYPES[UA_TYPES_DELETEMONITOREDITEMSRESPONSE]);
+    UA_StatusCode delMon2 = (dmResp2.resultsSize > 0)
+        ? dmResp2.results[0] : dmResp2.responseHeader.serviceResult;
+    UA_DeleteMonitoredItemsResponse_clear(&dmResp2);
+
+    /* DeleteSubscriptions: first (expect Good), second (expect Bad) */
+    UA_DeleteSubscriptionsRequest dsReq;
+    UA_DeleteSubscriptionsRequest_init(&dsReq);
+    dsReq.subscriptionIds     = &subId;
+    dsReq.subscriptionIdsSize = 1;
+
+    UA_DeleteSubscriptionsResponse dsResp1;
+    UA_DeleteSubscriptionsResponse_init(&dsResp1);
+    __UA_Client_Service(client, &dsReq,
+        &UA_TYPES[UA_TYPES_DELETESUBSCRIPTIONSREQUEST],
+        &dsResp1,
+        &UA_TYPES[UA_TYPES_DELETESUBSCRIPTIONSRESPONSE]);
+    UA_StatusCode delSub1 = (dsResp1.resultsSize > 0)
+        ? dsResp1.results[0] : dsResp1.responseHeader.serviceResult;
+    UA_DeleteSubscriptionsResponse_clear(&dsResp1);
+
+    UA_DeleteSubscriptionsResponse dsResp2;
+    UA_DeleteSubscriptionsResponse_init(&dsResp2);
+    __UA_Client_Service(client, &dsReq,
+        &UA_TYPES[UA_TYPES_DELETESUBSCRIPTIONSREQUEST],
+        &dsResp2,
+        &UA_TYPES[UA_TYPES_DELETESUBSCRIPTIONSRESPONSE]);
+    UA_StatusCode delSub2 = (dsResp2.resultsSize > 0)
+        ? dsResp2.results[0] : dsResp2.responseHeader.serviceResult;
+    UA_DeleteSubscriptionsResponse_clear(&dsResp2);
+
+    int ok = UA_StatusCode_isBad(delMon2) && UA_StatusCode_isBad(delSub2);
+    output_begin("open62541", "subscription-lifecycle");
+    output_success(ok);
+    output_service_result(sc);
+    printf(",\"results\":[{");
+    printf("\"subscriptionId\":%" PRIu32, subId);
+    printf(",\"deleteMonitoredItem\":{");
+    printf("\"first\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
+           output_status_code_name(delMon1), (uint32_t)delMon1,
+           output_severity(delMon1));
+    printf(",\"second\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
+           output_status_code_name(delMon2), (uint32_t)delMon2,
+           output_severity(delMon2));
+    printf("}");
+    printf(",\"deleteSubscription\":{");
+    printf("\"first\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
+           output_status_code_name(delSub1), (uint32_t)delSub1,
+           output_severity(delSub1));
+    printf(",\"second\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
+           output_status_code_name(delSub2), (uint32_t)delSub2,
+           output_severity(delSub2));
+    printf("}");
+    printf("}]");
+    output_null_error();
+    output_end();
+    return ok ? 0 : 4;
+}
+
+/* -------------------------------------------------------------------------
+ * subscription-lifecycle subcommand
+ * ---------------------------------------------------------------------- */
+
+static int cmd_subscription_lifecycle(int argc, char **argv) {
+    const char *endpoint = find_arg(argc, argv, "--endpoint");
+    const char *nodeStr  = find_arg(argc, argv, "--node");
+    const char *scenario = find_arg(argc, argv, "--scenario");
+    const char *toStr    = find_arg(argc, argv, "--timeout-ms");
+
+    if (!endpoint || !nodeStr || !scenario) {
+        output_begin("open62541", "subscription-lifecycle");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input",
+            "usage: subscription-lifecycle --endpoint <url> --node <nodeId>"
+            " --scenario <revise|publishing-mode|monitoring-mode|delete>");
+        output_end();
+        return 2;
+    }
+
+    int toMs = toStr ? atoi(toStr) : 15000;
+
+    if (validate_nodeid_structure(nodeStr) != 0) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "malformed NodeId: '%s'", nodeStr);
+        output_begin("open62541", "subscription-lifecycle");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", msg);
+        output_end();
+        return 2;
+    }
+
+    int exit_code = 3;
+    UA_Client *client =
+        make_client(endpoint, 5000, "subscription-lifecycle", &exit_code);
+    if (!client) return exit_code;
+
+    UA_NodeId nodeId; UA_NodeId_init(&nodeId);
+    if (strncmp(nodeStr, "nsu=", 4) == 0) {
+        if (resolve_nsu_nodeid(client, nodeStr, &nodeId) != 0) {
+            UA_Client_disconnect(client);
+            UA_Client_delete(client);
+            char msg[512];
+            snprintf(msg, sizeof(msg), "unknown namespace URI in '%s'", nodeStr);
+            output_begin("open62541", "subscription-lifecycle");
+            output_success(0);
+            output_service_result(UA_STATUSCODE_BADNAMESPACEURIINVALID);
+            output_error("input", msg);
+            output_end();
+            return 2;
+        }
+    } else {
+        nodeId = parse_nodeid_local(nodeStr);
+    }
+
+    int result;
+    if      (strcmp(scenario, "revise")           == 0)
+        result = slc_revise(client, nodeId, toMs);
+    else if (strcmp(scenario, "publishing-mode")  == 0)
+        result = slc_publishing_mode(client, nodeId, toMs);
+    else if (strcmp(scenario, "monitoring-mode")  == 0)
+        result = slc_monitoring_mode(client, nodeId, toMs);
+    else if (strcmp(scenario, "delete")           == 0)
+        result = slc_delete(client, nodeId, toMs);
+    else {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "unknown scenario: '%s'", scenario);
+        output_begin("open62541", "subscription-lifecycle");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", msg);
+        output_end();
+        result = 2;
+    }
+
+    UA_NodeId_clear(&nodeId);
+    UA_Client_disconnect(client);
+    UA_Client_delete(client);
+    return result;
+}
+
+/* -------------------------------------------------------------------------
  * Dispatch
  * ---------------------------------------------------------------------- */
 
 int client_run(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr,
-            "usage: client <endpoints|read|write|browse|call|subscribe> ...\n");
+            "usage: client <endpoints|read|write|browse|call|subscribe|subscription-lifecycle> ...\n");
         return 2;
     }
 
@@ -1690,12 +2229,13 @@ int client_run(int argc, char **argv) {
     }
 
     const char *sub = argv[1];
-    if (strcmp(sub, "endpoints")  == 0) return cmd_endpoints(argc - 1, argv + 1);
-    if (strcmp(sub, "read")       == 0) return cmd_read(argc - 1, argv + 1);
-    if (strcmp(sub, "write")      == 0) return cmd_write(argc - 1, argv + 1);
-    if (strcmp(sub, "browse")     == 0) return cmd_browse(argc - 1, argv + 1);
-    if (strcmp(sub, "call")       == 0) return cmd_call(argc - 1, argv + 1);
-    if (strcmp(sub, "subscribe")  == 0) return cmd_subscribe(argc - 1, argv + 1);
+    if (strcmp(sub, "endpoints")             == 0) return cmd_endpoints(argc - 1, argv + 1);
+    if (strcmp(sub, "read")                  == 0) return cmd_read(argc - 1, argv + 1);
+    if (strcmp(sub, "write")                 == 0) return cmd_write(argc - 1, argv + 1);
+    if (strcmp(sub, "browse")                == 0) return cmd_browse(argc - 1, argv + 1);
+    if (strcmp(sub, "call")                  == 0) return cmd_call(argc - 1, argv + 1);
+    if (strcmp(sub, "subscribe")             == 0) return cmd_subscribe(argc - 1, argv + 1);
+    if (strcmp(sub, "subscription-lifecycle") == 0) return cmd_subscription_lifecycle(argc - 1, argv + 1);
     fprintf(stderr, "unknown client subcommand: %s\n", sub);
     return 2;
 }

@@ -24,6 +24,7 @@ this contract. Changes that break it require a major schema version bump.
 | `browse` | Browse forward hierarchical references from a node |
 | `call` | Call a method node and collect output arguments |
 | `subscribe` | Create a subscription and collect a bounded number of data-change notifications |
+| `subscription-lifecycle` | Test subscription lifecycle scenarios (revise, publishing-mode, monitoring-mode, delete) |
 
 ### Global flags
 
@@ -58,14 +59,16 @@ required.
 | Flag | Description |
 |------|-------------|
 | `--node <nodeId>` | NodeId to read (repeatable for batch) |
+| `--index-range <range>` | Optional NumericRange applied to every ReadValueId (e.g. `1:3`, `0,1`) |
 
 ### `write` flags
 
 | Flag | Description |
 |------|-------------|
 | `--node <nodeId>` | NodeId to write |
-| `--type <dataType>` | OPC UA type name (e.g. `Int32`, `Boolean`, `String`) |
+| `--type <dataType>` | OPC UA type name (e.g. `Int32`, `Boolean`, `String`, `Int32[]`) |
 | `--value <literal>` | Value string |
+| `--index-range <range>` | Optional NumericRange applied to the WriteValue |
 
 ### `browse` flags
 
@@ -95,9 +98,15 @@ required.
 | `--discard-oldest <true\|false>` | Queue overflow policy | `true` |
 | `--timestamps <Source\|Server\|Both\|Neither>` | `TimestampsToReturn` for CreateMonitoredItems | `Both` |
 
----
+### `subscription-lifecycle` flags
 
-## 2. I/O contract
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--node <nodeId>` | Writable Int32 node for scenarios that write values | required |
+| `--scenario <name>` | Scenario to run: `revise`, `publishing-mode`, `monitoring-mode`, `delete` | required |
+| `--timeout-ms <n>` | Absolute command timeout in ms | 15000 |
+
+---
 
 **Stdout** — exactly one JSON object per invocation, terminated by `\n`, valid UTF-8.
 No other text is written to stdout.
@@ -256,8 +265,12 @@ means the method returned no output arguments.
 ```json
 "results": [
   {
-    "nodeId":                  "ns=1;s=Dynamic.Counter",
-    "monitoredItemStatusCode": { "name": "Good", "code": 0, "severity": "Good" },
+    "nodeId":                    "ns=1;s=Dynamic.Counter",
+    "subscriptionId":            1,
+    "revisedPublishingInterval": 500.0,
+    "revisedLifetimeCount":      150,
+    "revisedMaxKeepAliveCount":  50,
+    "monitoredItemStatusCode":   { "name": "Good", "code": 0, "severity": "Good" },
     "notifications": [
       {
         "sequenceNumber":  1,
@@ -273,12 +286,95 @@ means the method returned no output arguments.
 ]
 ```
 
+`subscriptionId` is the server-assigned subscription identifier (uint32, always present).  
+`revisedPublishingInterval` is the server-revised publishing interval in milliseconds.  
+`revisedLifetimeCount` and `revisedMaxKeepAliveCount` are the server-revised subscription counts.
+
 `sourceTimestamp` / `serverTimestamp` are omitted when the corresponding timestamp is
 absent from the DataValue (for example under `--timestamps Neither`).
 
 The command collects exactly `--notifications` data-change events then disconnects.
 If the timeout expires before enough notifications arrive, the command emits whatever
 was collected, sets `success: false`, and exits 7.
+
+### `subscription-lifecycle`
+
+Operation name in the JSON envelope: `"subscription-lifecycle"`.
+
+#### scenario `revise`
+
+```json
+"results": [
+  {
+    "subscriptionId":              1,
+    "requestedPublishingInterval": 1,
+    "requestedLifetimeCount":      5,
+    "requestedMaxKeepAliveCount":  10,
+    "revisedPublishingInterval":   100.0,
+    "revisedLifetimeCount":        30,
+    "revisedMaxKeepAliveCount":    10
+  }
+]
+```
+
+`success` is `true` when `revisedLifetimeCount >= 3 * revisedMaxKeepAliveCount` AND
+`revisedPublishingInterval >= 10`.
+
+#### scenario `publishing-mode`
+
+```json
+"results": [
+  {
+    "subscriptionId":            1,
+    "revisedPublishingInterval": 500.0,
+    "revisedLifetimeCount":      150,
+    "revisedMaxKeepAliveCount":  50,
+    "overflow":                  true,
+    "values":                    [3, 4, 5]
+  }
+]
+```
+
+`values` holds the Int32 values received after re-enabling publishing.
+`overflow` is `true` when the server discarded items from the queue.
+`success` when the final window of received values equals `[3,4,5]` (newest 3 of 5 writes).
+
+#### scenario `monitoring-mode`
+
+```json
+"results": [
+  {
+    "subscriptionId": 1,
+    "modeSteps": [
+      { "mode": "Disabled",  "notificationCount": 0 },
+      { "mode": "Sampling",  "notificationCount": 0 },
+      { "mode": "Reporting", "notificationCount": 1 }
+    ]
+  }
+]
+```
+
+`success` when `Disabled.notificationCount == 0` AND `Reporting.notificationCount >= 1`.
+
+#### scenario `delete`
+
+```json
+"results": [
+  {
+    "subscriptionId": 1,
+    "deleteMonitoredItem": {
+      "first":  { "name": "Good", "code": 0, "severity": "Good" },
+      "second": { "name": "BadMonitoredItemIdInvalid", "code": 2153644032, "severity": "Bad" }
+    },
+    "deleteSubscription": {
+      "first":  { "name": "Good", "code": 0, "severity": "Good" },
+      "second": { "name": "BadSubscriptionIdInvalid", "code": 2149580800, "severity": "Bad" }
+    }
+  }
+]
+```
+
+`success` when the `second` statuses are both `Bad` severity.
 
 ---
 

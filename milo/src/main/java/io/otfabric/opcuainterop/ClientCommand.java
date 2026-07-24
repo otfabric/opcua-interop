@@ -60,7 +60,7 @@ public class ClientCommand {
 
     public static int run(String[] args) {
         if (args.length < 1) {
-            System.err.println("usage: client <endpoints|read|write|browse|call|subscribe> ...");
+            System.err.println("usage: client <endpoints|read|write|browse|call|subscribe|subscription-lifecycle> ...");
             return 1;
         }
         String op = args[0];
@@ -74,6 +74,7 @@ public class ClientCommand {
                 case "browse":    return cmdBrowse(rest);
                 case "call":      return cmdCall(rest);
                 case "subscribe": return cmdSubscribe(rest);
+                case "subscription-lifecycle": return cmdSubscriptionLifecycle(rest);
                 default:
                     System.err.println("unknown client subcommand: " + op);
                     return 1;
@@ -450,6 +451,11 @@ public class ClientCommand {
             OpcUaSubscription subscription = new OpcUaSubscription(client, piMs);
             subscription.create();
 
+            UInteger subId  = subscription.getSubscriptionId().orElse(uint(0));
+            double   rpi    = subscription.getRevisedPublishingInterval().orElse(0.0);
+            UInteger rlt    = subscription.getRevisedLifetimeCount().orElse(uint(0));
+            UInteger rmk    = subscription.getRevisedMaxKeepAliveCount().orElse(uint(0));
+
             ReadValueId readValueId = new ReadValueId(
                 nodeId,
                 AttributeId.Value.uid(),
@@ -501,6 +507,10 @@ public class ClientCommand {
 
             Map<String, Object> resultItem = new LinkedHashMap<>();
             resultItem.put("nodeId", ResultBuilder.nodeIdToString(nodeId));
+            resultItem.put("subscriptionId", subId.longValue());
+            resultItem.put("revisedPublishingInterval", rpi);
+            resultItem.put("revisedLifetimeCount", rlt.longValue());
+            resultItem.put("revisedMaxKeepAliveCount", rmk.longValue());
             resultItem.put("monitoredItemStatusCode", ResultBuilder.statusCodeJson(monSc));
             resultItem.put("notifications", new ArrayList<>(notifications));
 
@@ -521,6 +531,321 @@ public class ClientCommand {
         } finally {
             safeDisconnect(client, dto);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // subscription-lifecycle
+    // -------------------------------------------------------------------------
+
+    private static int cmdSubscriptionLifecycle(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        String nodeStr     = findArg(args, "--node");
+        String scenario    = findArg(args, "--scenario");
+        if (endpointUrl == null || nodeStr == null || scenario == null) {
+            System.out.println(new ResultBuilder("subscription-lifecycle")
+                .error("input", "missing --endpoint, --node, or --scenario").toJson());
+            return 2;
+        }
+        long cto  = connectTimeoutMs(args);
+        long rto  = requestTimeoutMs(args);
+        long dto  = disconnectTimeoutMs(args);
+        long toMs = parseLongArg(args, "--timeout-ms", 15000L);
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
+        try {
+            NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
+            switch (scenario) {
+                case "revise":           return slcRevise(client, nodeId, rto, toMs);
+                case "publishing-mode":  return slcPublishingMode(client, nodeId, rto, toMs);
+                case "monitoring-mode":  return slcMonitoringMode(client, nodeId, rto, toMs);
+                case "delete":           return slcDelete(client, nodeId, rto, toMs);
+                default:
+                    System.out.println(new ResultBuilder("subscription-lifecycle")
+                        .error("input", "unknown scenario: " + scenario).toJson());
+                    return 2;
+            }
+        } finally {
+            safeDisconnect(client, dto);
+        }
+    }
+
+    private static int slcRevise(OpcUaClient client, NodeId nodeId, long rto, long toMs)
+            throws Exception {
+        OpcUaSubscription sub = new OpcUaSubscription(client, 1.0);
+        sub.setLifetimeCount(uint(5));
+        sub.setMaxKeepAliveCount(uint(10));
+        sub.create();
+
+        UInteger subId = sub.getSubscriptionId().orElse(uint(0));
+        double   rpi   = sub.getRevisedPublishingInterval().orElse(0.0);
+        UInteger rlt   = sub.getRevisedLifetimeCount().orElse(uint(0));
+        UInteger rmk   = sub.getRevisedMaxKeepAliveCount().orElse(uint(0));
+
+        try { sub.delete(); } catch (Exception ignored) {}
+
+        boolean ok = rlt.longValue() >= 3L * rmk.longValue() && rpi >= 10.0;
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("subscriptionId",              subId.longValue());
+        result.put("requestedPublishingInterval", 1);
+        result.put("requestedLifetimeCount",      5);
+        result.put("requestedMaxKeepAliveCount",  10);
+        result.put("revisedPublishingInterval",   rpi);
+        result.put("revisedLifetimeCount",        rlt.longValue());
+        result.put("revisedMaxKeepAliveCount",    rmk.longValue());
+
+        System.out.println(new ResultBuilder("subscription-lifecycle")
+            .success(ok).addResult(result).toJson());
+        return ok ? 0 : 4;
+    }
+
+    private static int slcPublishingMode(OpcUaClient client, NodeId nodeId, long rto, long toMs)
+            throws Exception {
+        OpcUaSubscription sub = new OpcUaSubscription(client, 500.0);
+        sub.create();
+
+        UInteger subId = sub.getSubscriptionId().orElse(uint(0));
+        double   rpi   = sub.getRevisedPublishingInterval().orElse(0.0);
+        UInteger rlt   = sub.getRevisedLifetimeCount().orElse(uint(0));
+        UInteger rmk   = sub.getRevisedMaxKeepAliveCount().orElse(uint(0));
+
+        ReadValueId rvId = new ReadValueId(nodeId, AttributeId.Value.uid(), null,
+            QualifiedName.NULL_VALUE);
+        OpcUaMonitoredItem monItem = new OpcUaMonitoredItem(rvId);
+        monItem.setSamplingInterval(100.0);
+        monItem.setQueueSize(uint(3));
+        monItem.setDiscardOldest(true);
+        sub.addMonitoredItem(monItem);
+        StatusCode monSc = CreateMonitoredItemsWithTimestamps.create(
+            client, sub, monItem, TimestampsToReturn.Source);
+
+        if (!monSc.isGood()) {
+            try { sub.delete(); } catch (Exception ignored) {}
+            System.out.println(new ResultBuilder("subscription-lifecycle")
+                .success(false).serviceResult(monSc)
+                .error("service", "CreateMonitoredItem failed").toJson());
+            return 4;
+        }
+
+        List<Integer> notifValues = Collections.synchronizedList(new ArrayList<>());
+        AtomicBoolean overflow    = new AtomicBoolean(false);
+        CountDownLatch initLatch  = new CountDownLatch(1);
+
+        monItem.setDataValueListener((item, dv) -> {
+            if (initLatch.getCount() > 0) { initLatch.countDown(); return; }
+            Variant v = dv.getValue();
+            if (v != null && v.getValue() instanceof Integer) {
+                notifValues.add((Integer) v.getValue());
+            }
+            if (dv.getStatusCode() != null &&
+                (dv.getStatusCode().getValue() & 0x480L) != 0) {
+                overflow.set(true);
+            }
+        });
+
+        initLatch.await(500, MILLISECONDS);
+
+        /* SetPublishingMode false, clear list */
+        sub.setPublishingMode(false);
+        notifValues.clear();
+
+        /* Write 1..5 */
+        for (int v = 1; v <= 5; v++) {
+            WriteValue wv = new WriteValue(nodeId, AttributeId.Value.uid(), null,
+                DataValue.valueOnly(new Variant(Integer.valueOf(v))));
+            client.write(List.of(wv));
+        }
+        Thread.sleep(200);
+
+        /* SetPublishingMode true; collect queued notifications */
+        sub.setPublishingMode(true);
+        long collectMs = Math.max(2000L, Math.min(toMs - 2000L, 5000L));
+        Thread.sleep(collectMs);
+
+        try { sub.delete(); } catch (Exception ignored) {}
+
+        List<Integer> values = new ArrayList<>(notifValues);
+        int nv = values.size();
+        if (nv < 5) overflow.set(true);
+
+        boolean ok = false;
+        if (nv >= 3) {
+            ok = values.get(nv-3) == 3 && values.get(nv-2) == 4 && values.get(nv-1) == 5;
+        } else if (nv >= 1) {
+            ok = values.get(nv-1) == 5;
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("subscriptionId",            subId.longValue());
+        result.put("revisedPublishingInterval", rpi);
+        result.put("revisedLifetimeCount",      rlt.longValue());
+        result.put("revisedMaxKeepAliveCount",  rmk.longValue());
+        result.put("overflow",                  overflow.get());
+        result.put("values",                    values);
+
+        System.out.println(new ResultBuilder("subscription-lifecycle")
+            .success(ok).addResult(result).toJson());
+        return ok ? 0 : 4;
+    }
+
+    private static int slcMonitoringMode(OpcUaClient client, NodeId nodeId, long rto, long toMs)
+            throws Exception {
+        OpcUaSubscription sub = new OpcUaSubscription(client, 100.0);
+        sub.create();
+        UInteger subId = sub.getSubscriptionId().orElse(uint(0));
+
+        ReadValueId rvId = new ReadValueId(nodeId, AttributeId.Value.uid(), null,
+            QualifiedName.NULL_VALUE);
+        OpcUaMonitoredItem monItem = new OpcUaMonitoredItem(rvId);
+        monItem.setSamplingInterval(100.0);
+        monItem.setQueueSize(uint(5));
+        monItem.setDiscardOldest(true);
+        sub.addMonitoredItem(monItem);
+        StatusCode monSc = CreateMonitoredItemsWithTimestamps.create(
+            client, sub, monItem, TimestampsToReturn.Source);
+
+        if (!monSc.isGood()) {
+            try { sub.delete(); } catch (Exception ignored) {}
+            System.out.println(new ResultBuilder("subscription-lifecycle")
+                .success(false).serviceResult(monSc)
+                .error("service", "CreateMonitoredItem failed").toJson());
+            return 4;
+        }
+
+        AtomicInteger notifCount = new AtomicInteger(0);
+        CountDownLatch initLatch = new CountDownLatch(1);
+
+        monItem.setDataValueListener((item, dv) -> {
+            if (initLatch.getCount() > 0) { initLatch.countDown(); return; }
+            notifCount.incrementAndGet();
+        });
+
+        initLatch.await(500, MILLISECONDS);
+
+        /* DISABLED: write 100; wait 300ms; expect 0 notifications */
+        int baseCount = notifCount.get();
+        sub.setMonitoringMode(MonitoringMode.Disabled, List.of(monItem));
+        WriteValue wvDisabled = new WriteValue(nodeId, AttributeId.Value.uid(), null,
+            DataValue.valueOnly(new Variant(Integer.valueOf(100))));
+        client.write(List.of(wvDisabled));
+        Thread.sleep(300);
+        int disabledCount = notifCount.get() - baseCount;
+
+        /* SAMPLING: write 101, 102; wait 300ms; expect 0 publish notifications */
+        int beforeSampling = notifCount.get();
+        sub.setMonitoringMode(MonitoringMode.Sampling, List.of(monItem));
+        client.write(List.of(new WriteValue(nodeId, AttributeId.Value.uid(), null,
+            DataValue.valueOnly(new Variant(Integer.valueOf(101))))));
+        client.write(List.of(new WriteValue(nodeId, AttributeId.Value.uid(), null,
+            DataValue.valueOnly(new Variant(Integer.valueOf(102))))));
+        Thread.sleep(300);
+        int samplingCount = notifCount.get() - beforeSampling;
+
+        /* REPORTING: write 103; collect >= 1 notification */
+        int beforeReporting = notifCount.get();
+        sub.setMonitoringMode(MonitoringMode.Reporting, List.of(monItem));
+        client.write(List.of(new WriteValue(nodeId, AttributeId.Value.uid(), null,
+            DataValue.valueOnly(new Variant(Integer.valueOf(103))))));
+        long collectMs = Math.max(2000L, Math.min(toMs - 2000L, 5000L));
+        Thread.sleep(collectMs);
+        int reportingCount = notifCount.get() - beforeReporting;
+
+        try { sub.delete(); } catch (Exception ignored) {}
+
+        boolean ok = (disabledCount == 0) && (reportingCount >= 1);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("subscriptionId", subId.longValue());
+
+        List<Map<String, Object>> steps = new ArrayList<>();
+        Map<String, Object> stepD = new LinkedHashMap<>();
+        stepD.put("mode", "Disabled");  stepD.put("notificationCount", disabledCount);
+        steps.add(stepD);
+        Map<String, Object> stepS = new LinkedHashMap<>();
+        stepS.put("mode", "Sampling");  stepS.put("notificationCount", samplingCount);
+        steps.add(stepS);
+        Map<String, Object> stepR = new LinkedHashMap<>();
+        stepR.put("mode", "Reporting"); stepR.put("notificationCount", reportingCount);
+        steps.add(stepR);
+        result.put("modeSteps", steps);
+
+        System.out.println(new ResultBuilder("subscription-lifecycle")
+            .success(ok).addResult(result).toJson());
+        return ok ? 0 : 4;
+    }
+
+    private static int slcDelete(OpcUaClient client, NodeId nodeId, long rto, long toMs)
+            throws Exception {
+        OpcUaSubscription sub = new OpcUaSubscription(client, 500.0);
+        sub.create();
+
+        UInteger subId = sub.getSubscriptionId().orElse(uint(0));
+
+        ReadValueId rvId = new ReadValueId(nodeId, AttributeId.Value.uid(), null,
+            QualifiedName.NULL_VALUE);
+        OpcUaMonitoredItem monItem = new OpcUaMonitoredItem(rvId);
+        sub.addMonitoredItem(monItem);
+        StatusCode monSc = CreateMonitoredItemsWithTimestamps.create(
+            client, sub, monItem, TimestampsToReturn.Source);
+
+        if (!monSc.isGood()) {
+            try { sub.delete(); } catch (Exception ignored) {}
+            System.out.println(new ResultBuilder("subscription-lifecycle")
+                .success(false).serviceResult(monSc)
+                .error("service", "CreateMonitoredItem failed").toJson());
+            return 4;
+        }
+
+        UInteger monId = monItem.getMonitoredItemId().orElse(uint(0));
+
+        /* DeleteMonitoredItems: first then second */
+        DeleteMonitoredItemsResponse dmResp1 =
+            client.deleteMonitoredItems(subId, List.of(monId));
+        StatusCode delMon1 = (dmResp1.getResults() != null && dmResp1.getResults().length > 0)
+            ? dmResp1.getResults()[0] : StatusCode.GOOD;
+
+        StatusCode delMon2;
+        try {
+            DeleteMonitoredItemsResponse dmResp2 =
+                client.deleteMonitoredItems(subId, List.of(monId));
+            delMon2 = (dmResp2.getResults() != null && dmResp2.getResults().length > 0)
+                ? dmResp2.getResults()[0] : StatusCode.GOOD;
+        } catch (UaException e) {
+            delMon2 = e.getStatusCode();
+        }
+
+        /* DeleteSubscriptions: first then second */
+        DeleteSubscriptionsResponse dsResp1 = client.deleteSubscriptions(List.of(subId));
+        StatusCode delSub1 = (dsResp1.getResults() != null && dsResp1.getResults().length > 0)
+            ? dsResp1.getResults()[0] : StatusCode.GOOD;
+
+        StatusCode delSub2;
+        try {
+            DeleteSubscriptionsResponse dsResp2 = client.deleteSubscriptions(List.of(subId));
+            delSub2 = (dsResp2.getResults() != null && dsResp2.getResults().length > 0)
+                ? dsResp2.getResults()[0] : StatusCode.GOOD;
+        } catch (UaException e) {
+            delSub2 = e.getStatusCode();
+        }
+
+        boolean ok = delMon2.isBad() && delSub2.isBad();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("subscriptionId", subId.longValue());
+
+        Map<String, Object> delMon = new LinkedHashMap<>();
+        delMon.put("first",  ResultBuilder.statusCodeJson(delMon1));
+        delMon.put("second", ResultBuilder.statusCodeJson(delMon2));
+        result.put("deleteMonitoredItem", delMon);
+
+        Map<String, Object> delSub = new LinkedHashMap<>();
+        delSub.put("first",  ResultBuilder.statusCodeJson(delSub1));
+        delSub.put("second", ResultBuilder.statusCodeJson(delSub2));
+        result.put("deleteSubscription", delSub);
+
+        System.out.println(new ResultBuilder("subscription-lifecycle")
+            .success(ok).addResult(result).toJson());
+        return ok ? 0 : 4;
     }
 
     // -------------------------------------------------------------------------

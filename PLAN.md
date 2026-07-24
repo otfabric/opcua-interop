@@ -33,7 +33,8 @@ Deliverables:
 - `open62541/src/` — fixture parser, server, client, readiness, signal handling, output
 - `open62541/tests/` — fixture parser unit tests
 
-All six client commands (endpoints, read, write, browse, call, subscribe) implemented.
+Client commands at foundation: endpoints, read, write, browse, call, subscribe
+(later extended — see Phase 14 / v0.4.0).
 
 ---
 
@@ -45,7 +46,8 @@ Deliverables:
 - `milo/src/main/java/` — fixture loader, namespace, server, client, shutdown, readiness
 - `milo/src/test/java/` — fixture loading unit tests (8 tests, all pass)
 
-All six client commands (endpoints, read, write, browse, call, subscribe) implemented.
+Client commands at foundation: endpoints, read, write, browse, call, subscribe
+(later extended — see Phase 14 / v0.4.0).
 
 ---
 
@@ -116,7 +118,7 @@ Released v0.1.0. Consumer tests in `go-opcua/interop/` cover all four directions
 
 ---
 
-## Phase 8 — Security ← current
+## Phase 8 — Security ✓
 
 ### Infrastructure (done, shipped in v0.1.1)
 
@@ -155,25 +157,16 @@ Released v0.1.0. Consumer tests in `go-opcua/interop/` cover all four directions
 | Aes128_Sha256_RsaOaep / SignAndEncrypt | **verified** | **verified** | **verified** | **verified** |
 | Aes256_Sha256_RsaPss / SignAndEncrypt | **verified** | **verified** | **verified** | **verified** |
 
-"verified" = confirmed green run with exact `:dev` adapter images on the test machine.
-
 ### Phase 8 acceptance boundary
 
-**Phase 8 is complete.**
-
-- Basic256Sha256/Sign — all four directions pass ✓
-- Basic256Sha256/SignAndEncrypt — all four directions pass ✓
-- Username (valid + invalid) — all three server stacks ✓ (open62541 ✓, Milo ✓, go-server ✓)
-- Trust rejection — open62541 ✓, Milo ✓
-- All 125 tests pass, 0 skips ✓
-
-Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss were deferred to Phase 9 and are now verified there.
+**Phase 8 is complete** (shipped as v0.2.0; Aes128/Aes256 closed in Phase 9).
 
 ---
 
-## Phase 9 — Method completeness, DataValue metadata, service semantics ← current
+## Phase 9 — Method completeness, DataValue metadata, service semantics ✓
 
-### Verified in Phase 9 (212 tests, 0 skips)
+Shipped across v0.2.1 → go-opcua consumer Phase 9 work. Verified in go-opcua interop
+(historical count at Phase 9 close: 212 tests, 0 skips — consumer suite has grown since).
 
 | Scenario | go-opcua client → open62541 | go-opcua client → Milo | open62541 client → go server | Milo client → go server |
 |----------|:---:|:---:|:---:|:---:|
@@ -207,15 +200,60 @@ Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss were deferred to Phase 9 and are 
 
 ---
 
+## Phase 13 consumer support — subscribe timestamps ✓
+
+Adapter release **v0.3.0** (supports go-opcua Phase 13):
+
+- `subscribe --timestamps` (`Source` \| `Server` \| `Both` \| `Neither`, default `Both`)
+- `subscribe` JSON emits `serverTimestamp` when present (alongside `sourceTimestamp`)
+- Existing `--queue-size` / `--discard-oldest` retained
+- Read/write support `--index-range` in code (for NumericRange / matrix consumer tests)
+
+---
+
+## Phase 14 consumer support — subscription lifecycle ✓
+
+Adapter release **v0.4.0** (supports go-opcua Phase 14):
+
+- `subscribe` result fields: `subscriptionId`, `revisedPublishingInterval`,
+  `revisedLifetimeCount`, `revisedMaxKeepAliveCount`
+- New client command `subscription-lifecycle` with scenarios:
+  `revise`, `publishing-mode`, `monitoring-mode`, `delete`
+- `print-capabilities` `adapter.version` = `0.4.0`
+- `clientOperations` includes `subscription-lifecycle`
+- `serverServices` extended with `SetPublishingMode`, `SetMonitoringMode`,
+  `DeleteMonitoredItems`, `DeleteSubscriptions`
+
+**Current adapter client surface (7 operations):**
+`endpoints`, `read`, `write`, `browse`, `call`, `subscribe`, `subscription-lifecycle`
+
+---
+
+## Current status ← here
+
+| Item | Status |
+|------|--------|
+| Latest released image tag | **v0.4.0** |
+| Capabilities `adapter.version` | **0.4.0** (both adapters) |
+| Client operations | 7 (see above) |
+| Peer Event / HistoryRead / Republish / Transfer CLI | **not implemented** (deferred) |
+
+Next consumer-driven work (go-opcua Phase 18 peer closure) would add adapter commands for
+events, Republish, TransferSubscriptions, and raw HistoryRead — not yet scheduled here.
+
+---
+
 ## Release sequence
 
 | Release | Content | Status |
 |---------|---------|--------|
-| v0.1.0 | Phases 0–7: open62541 + Milo, anonymous, baseline scalars, methods, subscriptions, cross-stack smoke, first go-opcua integration | released |
-| v0.1.1 | Phase 8 infrastructure: test PKI, security endpoint scaffolding, Milo security APIs, username token policy, go-opcua PKCS#8 fix | released |
-| v0.2.0 | Phase 8 complete: Basic256Sha256 Sign/SignAndEncrypt and username auth verified in all four directions; trust rejection verified; 125 tests, 0 skips | released |
-| v0.3.0 | Phase 9: method completeness, DataValue metadata (Uncertain status), service semantics, array reads, browse correctness, subscription queue semantics, adapter-client browse coverage, Aes128/Aes256 all four directions; 212 tests, 0 skips | pending |
-| Later | Alarms, history, events, reverse connect, NodeSet2 import, PubSub | — |
+| v0.1.0 | Phases 0–7: open62541 + Milo, anonymous, baseline scalars, methods, subscriptions, cross-stack smoke, first go-opcua integration | **released** |
+| v0.1.1 | Phase 8 infrastructure: test PKI, security endpoint scaffolding, Milo security APIs, username token policy, go-opcua PKCS#8 fix | **released** |
+| v0.2.0 | Phase 8 complete: Basic256Sha256 Sign/SignAndEncrypt and username auth verified in all four directions; trust rejection verified | **released** |
+| v0.2.1 | Phase 9 fixture/docs/adapter hardening (arrays, browse, subscription queue flags, Aes profiles in fixture/docs) | **released** |
+| v0.3.0 | go-opcua Phase 13: `subscribe --timestamps`, `serverTimestamp` in subscribe JSON | **released** |
+| v0.4.0 | go-opcua Phase 14: subscribe revised fields + `subscription-lifecycle` command; capabilities 0.4.0 | **released** |
+| Later | Event subscribe, HistoryRead, Republish, Transfer CLI; alarms; reverse connect; NodeSet2 import; PubSub | — |
 
 ---
 

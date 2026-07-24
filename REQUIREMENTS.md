@@ -47,7 +47,7 @@ These two stacks provide the strongest initial implementation diversity. A third
 - Fixture schema: `securityProfiles` and `users` fields
 - go-opcua harness: secure client dial, username client dial, trust-rejection assertions
 
-### v0.2.0 (target) — Security verification complete
+### v0.2.0 (released) — Security verification complete
 
 Confirmed with green test runs in go-opcua (125 tests, 0 skips, 0 failures):
 
@@ -59,33 +59,30 @@ Confirmed with green test runs in go-opcua (125 tests, 0 skips, 0 failures):
 - go-opcua server with OPC UA SecureChannel (adapter clients → Go server, both Sign and SignAndEncrypt) ✓
 - open62541 client `UA_ExtensionObject_setValueCopy` argument-order bug fix ✓
 
-### v0.3.0 (target) — Phase 9: method completeness, DataValue metadata, service semantics, advanced security
+### v0.2.1 (released) — Phase 9 fixture / adapter hardening
 
-Confirmed with green test runs in go-opcua (212 tests, 0 skips, 0 failures):
+Phase 9 consumer scenarios (methods, DataValue metadata, access levels, arrays,
+browse, subscription queue flags, Aes128/Aes256) verified in go-opcua. Historical
+count at Phase 9 close: 212 tests, 0 skips (consumer suite has grown since).
 
-- Method calls (Multiply, Echo, NoArguments, MultipleOutputs, Fail) — all four directions ✓
-- DataValue source + server timestamps — all four directions ✓
-- DataValue Uncertain status code — all four directions ✓
-- Access level enforcement (ReadOnly write rejection, WriteOnly read rejection) — all four directions ✓
-- Batch Read (4 scalars in one request) — all four directions ✓
-- Write/read-back — Boolean, Float, String — all four directions ✓
-- Subscription — Dynamic.Toggle (bool alternation) — all four directions ✓
-- Subscription — Dynamic.Ramp (float64 sawtooth) — all four directions ✓
-- Subscription queue size > 1 (batch delivery) — go-opcua client → open62541 + Milo ✓
-- Subscription discard-oldest=false (keep-oldest) — go-opcua client → open62541 + Milo ✓
-- Array read — Boolean, Double — all four directions ✓
-- Browse interop namespace (top-level folder hierarchy) — go-opcua client ↔ open62541 + Milo ✓
-- Browse Scalars folder (variable node enumeration) — go-opcua client ↔ open62541 + Milo ✓
-- Browse interop Objects folder (node name verification) — adapter clients → go-opcua server ✓
-- Browse with BrowseNext pagination — adapter clients → go-opcua server ✓
-- Aes128_Sha256_RsaOaep/SignAndEncrypt — all four directions ✓
-- Aes256_Sha256_RsaPss/SignAndEncrypt — all four directions ✓
+### v0.3.0 (released) — go-opcua Phase 13 subscribe timestamps
 
-### v0.4.0 (planned) — Arrays, structured types, complex types
+- `subscribe --timestamps` (`Source` \| `Server` \| `Both` \| `Neither`)
+- `subscribe` JSON `serverTimestamp` when present
+- Read/write `--index-range` for NumericRange consumer tests
 
-- Array and matrix variables (remaining built-in scalar types)
-- Structured types, enumerations
-- Edge-case fixture (`fixtures/edge-cases/`)
+### v0.4.0 (released) — go-opcua Phase 14 subscription lifecycle
+
+- `subscribe` revised CreateSubscription fields (`subscriptionId`,
+  `revisedPublishingInterval`, `revisedLifetimeCount`, `revisedMaxKeepAliveCount`)
+- New `subscription-lifecycle` command (`revise`, `publishing-mode`,
+  `monitoring-mode`, `delete`)
+- Capabilities `adapter.version` = `0.4.0`; seven `clientOperations`
+
+### Later (planned) — peer closure + remaining type surface
+
+- Event subscribe, HistoryRead, Republish, Transfer CLI (go-opcua Phase 18)
+- Remaining structured types / enumerations / edge-case fixture expansion as needed
 
 ## Fixture requirements
 
@@ -128,7 +125,8 @@ Each container image must expose client subcommands:
 - `write` — write a node value
 - `browse` — browse a node
 - `call` — call a method
-- `subscribe` — collect a bounded number of notifications
+- `subscribe` — collect a bounded number of notifications (includes revised subscription fields)
+- `subscription-lifecycle` — deterministic lifecycle scenarios (revise / publishing-mode / monitoring-mode / delete)
 
 Client output rules:
 

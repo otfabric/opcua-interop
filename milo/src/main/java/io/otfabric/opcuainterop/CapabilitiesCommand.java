@@ -10,7 +10,7 @@ public class CapabilitiesCommand {
     public static void run() throws Exception {
         Map<String, Object> adapter = new LinkedHashMap<>();
         adapter.put("name",    "milo");
-        adapter.put("version", "0.1.1");
+        adapter.put("version", "0.4.0");
 
         Map<String, Object> stack = new LinkedHashMap<>();
         stack.put("name",    "eclipse-milo");
@@ -38,10 +38,12 @@ public class CapabilitiesCommand {
         out.put("roles",                 Arrays.asList("client", "server"));
         out.put("transports",            Collections.singletonList("opc.tcp"));
         out.put("encodings",             Collections.singletonList("binary"));
-        out.put("clientOperations",      Arrays.asList("endpoints", "read", "write", "browse", "call", "subscribe"));
+        out.put("clientOperations",      Arrays.asList("endpoints", "read", "write", "browse", "call", "subscribe", "subscription-lifecycle"));
         out.put("serverServices",        Arrays.asList(
                 "GetEndpoints", "Browse", "Read", "Write", "Call",
-                "CreateSubscription", "CreateMonitoredItems", "Publish"));
+                "CreateSubscription", "CreateMonitoredItems", "Publish",
+                "SetPublishingMode", "SetMonitoringMode",
+                "DeleteMonitoredItems", "DeleteSubscriptions"));
         out.put("securityProfiles",      secProfiles);
         out.put("userTokenTypes",        Arrays.asList("Anonymous", "UserName"));
 
