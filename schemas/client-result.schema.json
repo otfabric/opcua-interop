@@ -17,7 +17,11 @@
     },
     "operation": {
       "type": "string",
-      "enum": ["endpoints", "read", "write", "browse", "call", "subscribe", "subscription-lifecycle"]
+      "enum": [
+        "endpoints", "read", "write", "browse", "call", "subscribe",
+        "subscription-lifecycle", "event-subscribe", "history-read",
+        "republish", "transfer-subscriptions"
+      ]
     },
     "success": {
       "type": "boolean"
@@ -34,7 +38,11 @@
           { "$ref": "#/$defs/writeResult" },
           { "$ref": "#/$defs/browseResult" },
           { "$ref": "#/$defs/subscribeResult" },
-          { "$ref": "#/$defs/subscriptionLifecycleResult" }
+          { "$ref": "#/$defs/subscriptionLifecycleResult" },
+          { "$ref": "#/$defs/eventSubscribeResult" },
+          { "$ref": "#/$defs/historyReadResult" },
+          { "$ref": "#/$defs/republishResult" },
+          { "$ref": "#/$defs/transferSubscriptionsResult" }
         ]
       }
     },
@@ -198,6 +206,99 @@
             "first":  { "$ref": "#/$defs/statusCode" },
             "second": { "$ref": "#/$defs/statusCode" }
           }
+        }
+      }
+    },
+    "eventSubscribeResult": {
+      "type": "object",
+      "required": ["nodeId", "subscriptionId", "revisedPublishingInterval", "monitoredItemStatusCode", "selectClauses", "events"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId":                    { "type": "string" },
+        "subscriptionId":            { "type": "integer", "minimum": 0 },
+        "revisedPublishingInterval": { "type": "number" },
+        "monitoredItemStatusCode":   { "$ref": "#/$defs/statusCode" },
+        "selectClauses": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["sequenceNumber", "fields"],
+            "properties": {
+              "sequenceNumber": { "type": "integer" },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "dataType", "builtInType", "value"],
+                  "properties": {
+                    "name":         { "type": "string" },
+                    "dataType":     { "type": "string" },
+                    "builtInType":  { "type": "integer" },
+                    "value":        {}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "historyReadResult": {
+      "type": "object",
+      "required": ["nodeId", "statusCode", "continuationPoint", "values"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId":            { "type": "string" },
+        "statusCode":        { "$ref": "#/$defs/statusCode" },
+        "continuationPoint": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string" }
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "dataType", "builtInType", "statusCode"],
+            "properties": {
+              "value":           {},
+              "dataType":        { "type": "string" },
+              "builtInType":     { "type": "integer" },
+              "statusCode":      { "$ref": "#/$defs/statusCode" },
+              "sourceTimestamp": { "type": "string" },
+              "serverTimestamp": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "republishResult": {
+      "type": "object",
+      "required": ["subscriptionId", "retransmitSequenceNumber"],
+      "additionalProperties": false,
+      "properties": {
+        "subscriptionId":           { "type": "integer", "minimum": 0 },
+        "retransmitSequenceNumber": { "type": "integer", "minimum": 0 },
+        "sequenceNumber":           { "type": "integer", "minimum": 0 },
+        "publishTime":              { "type": "string" },
+        "notificationDataCount":    { "type": "integer", "minimum": 0 }
+      }
+    },
+    "transferSubscriptionsResult": {
+      "type": "object",
+      "required": ["subscriptionId", "statusCode", "availableSequenceNumbers"],
+      "additionalProperties": false,
+      "properties": {
+        "subscriptionId": { "type": "integer", "minimum": 0 },
+        "statusCode":     { "$ref": "#/$defs/statusCode" },
+        "availableSequenceNumbers": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
         }
       }
     }

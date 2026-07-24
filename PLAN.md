@@ -224,8 +224,27 @@ Adapter release **v0.4.0** (supports go-opcua Phase 14):
 - `serverServices` extended with `SetPublishingMode`, `SetMonitoringMode`,
   `DeleteMonitoredItems`, `DeleteSubscriptions`
 
-**Current adapter client surface (7 operations):**
+**As of v0.4.0 adapter client surface (7 operations):**
 `endpoints`, `read`, `write`, `browse`, `call`, `subscribe`, `subscription-lifecycle`
+
+---
+
+## Phase 18 — WP1B baseline event / history / republish / transfer (0.5.0)
+
+Adds four new client commands to both adapters; `adapter.version` = `0.5.0`:
+
+1. **`event-subscribe`** — `EventFilter` with six BaseEvent SelectClauses (EventId, EventType,
+   SourceName, Message, Severity, Time); manual Publish loop; collect *N* events or timeout
+   (exit 7).
+2. **`history-read`** — `ReadRawModifiedDetails` (`isReadModified=false`); flags `--node`,
+   `--start`, `--end`, `--num-values`, `--continuation-point`,
+   `--release-continuation-point`, `--return-bounds`, `--timestamps`.
+3. **`republish`** — flags `--subscription-id`, `--sequence-number`.
+4. **`transfer-subscriptions`** — repeatable `--subscription-id`, `--send-initial-values`.
+
+**Current adapter client surface (11 operations):**
+`endpoints`, `read`, `write`, `browse`, `call`, `subscribe`, `subscription-lifecycle`,
+`event-subscribe`, `history-read`, `republish`, `transfer-subscriptions`
 
 ---
 
@@ -233,13 +252,11 @@ Adapter release **v0.4.0** (supports go-opcua Phase 14):
 
 | Item | Status |
 |------|--------|
-| Latest released image tag | **v0.4.0** |
-| Capabilities `adapter.version` | **0.4.0** (both adapters) |
-| Client operations | 7 (see above) |
-| Peer Event / HistoryRead / Republish / Transfer CLI | **not implemented** (deferred) |
-
-Next consumer-driven work (go-opcua Phase 18 peer closure) would add adapter commands for
-events, Republish, TransferSubscriptions, and raw HistoryRead — not yet scheduled here.
+| Latest released image tag | **v0.5.0** |
+| Publication model | Fix-forward: republish **`v0.5.0`** when requirements change (no RC / `v0.5.1` tags) |
+| Capabilities `adapter.version` | **0.5.0** |
+| Client operations | 11 (see above) |
+| Peer Event / HistoryRead / Republish / Transfer CLI | WP1B peer suite green against published `v0.5.0` digests |
 
 ---
 
@@ -253,7 +270,9 @@ events, Republish, TransferSubscriptions, and raw HistoryRead — not yet schedu
 | v0.2.1 | Phase 9 fixture/docs/adapter hardening (arrays, browse, subscription queue flags, Aes profiles in fixture/docs) | **released** |
 | v0.3.0 | go-opcua Phase 13: `subscribe --timestamps`, `serverTimestamp` in subscribe JSON | **released** |
 | v0.4.0 | go-opcua Phase 14: subscribe revised fields + `subscription-lifecycle` command; capabilities 0.4.0 | **released** |
-| Later | Event subscribe, HistoryRead, Republish, Transfer CLI; alarms; reverse connect; NodeSet2 import; PubSub | — |
+| v0.5.0-dev | Phase 18 (WP1B) development capabilities label | **superseded** |
+| v0.5.0 | Phase 18 WP1B commands + Milo session AuthenticationToken fix | **released / fix-forward** |
+| Later | Alarms; reverse connect; NodeSet2 import; PubSub | — |
 
 ---
 
