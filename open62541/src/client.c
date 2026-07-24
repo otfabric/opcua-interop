@@ -809,10 +809,22 @@ static int cmd_read(int argc, char **argv) {
     UA_Client *client = resolve_node_ids(nodes, n, ids, "read", endpoint, req_ms, &exit_code);
     if (!client) return exit_code;
 
+    /* Optional IndexRange applied to every ReadValueId. */
+    const char *indexRange = find_arg(argc, argv, "--index-range");
+    /* TimestampsToReturn: Source|Server|Both|Neither (default Source). */
+    const char *tsStr = find_arg(argc, argv, "--timestamps");
+    UA_TimestampsToReturn ts = UA_TIMESTAMPSTORETURN_SOURCE;
+    if (tsStr) {
+        if (strcmp(tsStr, "Source") == 0)       ts = UA_TIMESTAMPSTORETURN_SOURCE;
+        else if (strcmp(tsStr, "Server") == 0)  ts = UA_TIMESTAMPSTORETURN_SERVER;
+        else if (strcmp(tsStr, "Both") == 0)    ts = UA_TIMESTAMPSTORETURN_BOTH;
+        else if (strcmp(tsStr, "Neither") == 0) ts = UA_TIMESTAMPSTORETURN_NEITHER;
+    }
+
     /* Batch read via ReadService */
     UA_ReadRequest req;
     UA_ReadRequest_init(&req);
-    req.timestampsToReturn = UA_TIMESTAMPSTORETURN_SOURCE;
+    req.timestampsToReturn = ts;
     req.nodesToRead = (UA_ReadValueId *)UA_Array_new((size_t)n,
                           &UA_TYPES[UA_TYPES_READVALUEID]);
     req.nodesToReadSize = (size_t)n;
@@ -821,6 +833,8 @@ static int cmd_read(int argc, char **argv) {
         UA_ReadValueId_init(&req.nodesToRead[i]);
         UA_NodeId_copy(&ids[i], &req.nodesToRead[i].nodeId);
         req.nodesToRead[i].attributeId = UA_ATTRIBUTEID_VALUE;
+        if (indexRange && indexRange[0])
+            req.nodesToRead[i].indexRange = UA_STRING_ALLOC(indexRange);
     }
 
     UA_ReadResponse resp = UA_Client_Service_read(client, req);
@@ -994,6 +1008,9 @@ static int cmd_write(int argc, char **argv) {
                                          endpoint, req_ms, &exit_code);
     if (!client) return exit_code;
 
+    /* Optional IndexRange applied to every WriteValue. */
+    const char *indexRange = find_arg(argc, argv, "--index-range");
+
     UA_WriteRequest req;
     UA_WriteRequest_init(&req);
     req.nodesToWrite = (UA_WriteValue *)UA_Array_new((size_t)node_count,
@@ -1005,6 +1022,8 @@ static int cmd_write(int argc, char **argv) {
         UA_WriteValue_init(&req.nodesToWrite[i]);
         UA_NodeId_copy(&ids[i], &req.nodesToWrite[i].nodeId);
         req.nodesToWrite[i].attributeId = UA_ATTRIBUTEID_VALUE;
+        if (indexRange && indexRange[0])
+            req.nodesToWrite[i].indexRange = UA_STRING_ALLOC(indexRange);
         vars[i] = build_write_variant(types[i], vals[i]);
         UA_Variant_copy(&vars[i], &req.nodesToWrite[i].value.value);
         req.nodesToWrite[i].value.hasValue = true;
@@ -1103,6 +1122,10 @@ static int cmd_browse(int argc, char **argv) {
     UA_Boolean includeSubtypes = UA_TRUE;
     if (incStr && (strcmp(incStr, "false") == 0 || strcmp(incStr, "0") == 0))
         includeSubtypes = UA_FALSE;
+    /* ResultMask: default ALL; e.g. --result-mask 8 for BrowseName only. */
+    const char *rmStr = find_arg(argc, argv, "--result-mask");
+    UA_UInt32 resultMask = rmStr ? (UA_UInt32)strtoul(rmStr, NULL, 0)
+                                 : UA_BROWSERESULTMASK_ALL;
 
     int exit_code = 3;
     UA_Client *client = make_client(endpoint, req_ms, "browse", &exit_code);
@@ -1149,7 +1172,7 @@ static int cmd_browse(int argc, char **argv) {
     req.nodesToBrowse[0].referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
     req.nodesToBrowse[0].includeSubtypes  = includeSubtypes;
     req.nodesToBrowse[0].nodeClassMask    = nodeClassMask;
-    req.nodesToBrowse[0].resultMask       = UA_BROWSERESULTMASK_ALL;
+    req.nodesToBrowse[0].resultMask       = resultMask;
 
     UA_BrowseResponse resp = UA_Client_Service_browse(client, req);
     UA_BrowseRequest_clear(&req);
@@ -1407,6 +1430,7 @@ typedef struct {
     int      builtInType;
     char     valueJson[512];
     char     sourceTimestamp[64];
+    char     serverTimestamp[64];
 } NotifEntry;
 
 typedef struct {
@@ -1425,9 +1449,13 @@ static void sub_data_change_cb(UA_Client *client, UA_UInt32 subId,
     e->index      = store->count;
     e->statusCode = (uint32_t)(val->hasStatus ? val->status : UA_STATUSCODE_GOOD);
     e->sourceTimestamp[0] = '\0';
+    e->serverTimestamp[0] = '\0';
     if (val->hasSourceTimestamp)
         output_timestamp(val->sourceTimestamp, e->sourceTimestamp,
                          sizeof(e->sourceTimestamp));
+    if (val->hasServerTimestamp)
+        output_timestamp(val->serverTimestamp, e->serverTimestamp,
+                         sizeof(e->serverTimestamp));
 
     if (val->hasValue && val->value.type) {
         strncpy(e->dataType, type_name(val->value.type), sizeof(e->dataType) - 1);
@@ -1489,6 +1517,16 @@ static int cmd_subscribe(int argc, char **argv) {
     }
     if (queueSize < 1) queueSize = 1;
 
+    /* TimestampsToReturn: Source|Server|Both|Neither (default Both). */
+    const char *tsStr = find_arg(argc, argv, "--timestamps");
+    UA_TimestampsToReturn ts = UA_TIMESTAMPSTORETURN_BOTH;
+    if (tsStr) {
+        if (strcmp(tsStr, "Source") == 0)       ts = UA_TIMESTAMPSTORETURN_SOURCE;
+        else if (strcmp(tsStr, "Server") == 0)  ts = UA_TIMESTAMPSTORETURN_SERVER;
+        else if (strcmp(tsStr, "Neither") == 0) ts = UA_TIMESTAMPSTORETURN_NEITHER;
+        else if (strcmp(tsStr, "Both") == 0)    ts = UA_TIMESTAMPSTORETURN_BOTH;
+    }
+
     int exit_code = 3;
     UA_Client *client = make_client(endpoint, 5000, "subscribe", &exit_code);
     if (!client) return exit_code;
@@ -1539,7 +1577,7 @@ static int cmd_subscribe(int argc, char **argv) {
     monReq.requestedParameters.discardOldest    = discardOldest;
     UA_MonitoredItemCreateResult monResp =
         UA_Client_MonitoredItems_createDataChange(
-            client, subResp.subscriptionId, UA_TIMESTAMPSTORETURN_BOTH,
+            client, subResp.subscriptionId, ts,
             monReq, &store, sub_data_change_cb, NULL);
     UA_StatusCode mon_sc = monResp.statusCode;
 
@@ -1583,6 +1621,8 @@ static int cmd_subscribe(int argc, char **argv) {
         printf(",\"value\":%s", e->valueJson);
         if (e->sourceTimestamp[0])
             printf(",\"sourceTimestamp\":\"%s\"", e->sourceTimestamp);
+        if (e->serverTimestamp[0])
+            printf(",\"serverTimestamp\":\"%s\"", e->serverTimestamp);
         printf("}");
     }
     printf("]}]");
