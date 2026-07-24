@@ -79,9 +79,29 @@ count at Phase 9 close: 212 tests, 0 skips (consumer suite has grown since).
   `monitoring-mode`, `delete`)
 - Capabilities `adapter.version` = `0.4.0`; seven `clientOperations`
 
+### v0.5.0 released — WP1B baseline (go-opcua Phase 18)
+
+- New `event-subscribe` command: `EventFilter` with BaseEvent SelectClauses (EventId,
+  EventType, SourceName, Message, Severity, Time); collect *N* events or timeout (exit 7)
+- New `history-read` command: `ReadRawModifiedDetails` (`isReadModified=false`); flags
+  `--node`, `--start`, `--end`, `--num-values`, `--continuation-point`,
+  `--release-continuation-point`, `--return-bounds`, `--timestamps`
+- New `republish` command: `--subscription-id`, `--sequence-number`
+- New `transfer-subscriptions` command: repeatable `--subscription-id`,
+  `--send-initial-values`
+- Capabilities `adapter.version` = `0.5.0` (published images still report `0.5.0-rc.1` label); eleven `clientOperations`
+
+### v0.5.1-rc.1 ready for publication — Milo session auth fix
+
+Working-tree capabilities version is `0.5.1-rc.1`.
+
+- Milo `ClientCommand.newRequestHeader` now uses the active session
+  `AuthenticationToken` (raw `sendRequest` does not inject it). Fixes
+  `event-subscribe` → CreateMonitoredItems against go-opcua
+  (`BadSubscriptionIDInvalid` / unexpected error under NULL token).
+
 ### Later (planned) — peer closure + remaining type surface
 
-- Event subscribe, HistoryRead, Republish, Transfer CLI (go-opcua Phase 18)
 - Remaining structured types / enumerations / edge-case fixture expansion as needed
 
 ## Fixture requirements
