@@ -79,9 +79,7 @@ count at Phase 9 close: 212 tests, 0 skips (consumer suite has grown since).
   `monitoring-mode`, `delete`)
 - Capabilities `adapter.version` = `0.4.0`; seven `clientOperations`
 
-### v0.5.0 planned / v0.5.0-rc.1 ready for publication — WP1B baseline (go-opcua Phase 18)
-
-Working-tree capabilities version is bumped to `0.5.0-rc.1` for local RC publication prep (not published until Bart tags/pushes).
+### v0.5.0 released — WP1B baseline (go-opcua Phase 18)
 
 - New `event-subscribe` command: `EventFilter` with BaseEvent SelectClauses (EventId,
   EventType, SourceName, Message, Severity, Time); collect *N* events or timeout (exit 7)
@@ -91,7 +89,16 @@ Working-tree capabilities version is bumped to `0.5.0-rc.1` for local RC publica
 - New `republish` command: `--subscription-id`, `--sequence-number`
 - New `transfer-subscriptions` command: repeatable `--subscription-id`,
   `--send-initial-values`
-- Capabilities `adapter.version` = `0.5.0-rc.1`; eleven `clientOperations`
+- Capabilities `adapter.version` = `0.5.0` (published images still report `0.5.0-rc.1` label); eleven `clientOperations`
+
+### v0.5.1-rc.1 ready for publication — Milo session auth fix
+
+Working-tree capabilities version is `0.5.1-rc.1`.
+
+- Milo `ClientCommand.newRequestHeader` now uses the active session
+  `AuthenticationToken` (raw `sendRequest` does not inject it). Fixes
+  `event-subscribe` → CreateMonitoredItems against go-opcua
+  (`BadSubscriptionIDInvalid` / unexpected error under NULL token).
 
 ### Later (planned) — peer closure + remaining type surface
 

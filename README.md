@@ -243,14 +243,14 @@ make release VERSION=v0.4.0  # Build and push multi-arch release images
 
 | Version type | Location |
 |---|---|
-| Repository release | Git tag and image tag — latest released **`v0.4.0`**; **`v0.5.0` planned** (`v0.5.0-rc.1` ready for publication) |
-| Adapter capabilities version | `print-capabilities` → `adapter.version` — working tree **`0.5.0-rc.1`** (not yet published) |
+| Repository release | Git tag and image tag — latest released **`v0.5.0`**; next **`v0.5.1-rc.1`** (Milo session auth fix) |
+| Adapter capabilities version | `print-capabilities` → `adapter.version` — working tree **`0.5.1-rc.1`** |
 | Upstream stack version | Image label and `print-capabilities` → `stack.version` |
 | Fixture schema version | `schemaVersion` field in every fixture |
 
-Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`
-([latest release](https://github.com/otfabric/opcua-interop/releases/tag/v0.4.0)).
-Working tree Phase 18 adds WP1B client commands; publication is RC-first — see `PLAN.md`.
+Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`, `v0.5.0`
+([latest release](https://github.com/otfabric/opcua-interop/releases/tag/v0.5.0)).
+Working tree has the Milo `AuthenticationToken` fix for WP1B event-subscribe — see `PLAN.md`.
 
 ## Reference stacks
 

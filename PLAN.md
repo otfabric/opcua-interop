@@ -252,11 +252,11 @@ Adds four new client commands to both adapters; `adapter.version` bumped to `0.5
 
 | Item | Status |
 |------|--------|
-| Latest released image tag | **v0.4.0** |
-| Planned next release | **v0.5.0** (RC-first: `v0.5.0-rc.1` ready for publication) |
-| Capabilities `adapter.version` | **0.5.0-rc.1** in working tree (not published; awaiting Bart GHCR publish) |
+| Latest released image tag | **v0.5.0** |
+| Planned next release | **v0.5.1** (RC-first: `v0.5.1-rc.1` ready for publication) |
+| Capabilities `adapter.version` | **0.5.1-rc.1** in working tree |
 | Client operations | 11 (see above) |
-| Peer Event / HistoryRead / Republish / Transfer CLI | **implemented** locally (Phase 18); peer green awaits published RC images |
+| Peer Event / HistoryRead / Republish / Transfer CLI | WP1B mostly green on v0.5.0; Milo `event-subscribe` needs v0.5.1 auth-token fix |
 
 ---
 
@@ -270,9 +270,10 @@ Adds four new client commands to both adapters; `adapter.version` bumped to `0.5
 | v0.2.1 | Phase 9 fixture/docs/adapter hardening (arrays, browse, subscription queue flags, Aes profiles in fixture/docs) | **released** |
 | v0.3.0 | go-opcua Phase 13: `subscribe --timestamps`, `serverTimestamp` in subscribe JSON | **released** |
 | v0.4.0 | go-opcua Phase 14: subscribe revised fields + `subscription-lifecycle` command; capabilities 0.4.0 | **released** |
-| v0.5.0-dev | Phase 18 (WP1B) development capabilities label | **superseded locally by rc.1 prep** |
-| v0.5.0-rc.1 | Phase 18 WP1B commands for cross-repo peer verification; capabilities `0.5.0-rc.1` | **ready for publication** |
-| v0.5.0 | Final after RC peer verification | **planned** |
+| v0.5.0-dev | Phase 18 (WP1B) development capabilities label | **superseded** |
+| v0.5.0-rc.1 / v0.5.0 | Phase 18 WP1B commands; published as **v0.5.0** | **released** |
+| v0.5.1-rc.1 | Milo raw `sendRequest` AuthenticationToken fix for event-subscribe | **ready for publication** |
+| v0.5.1 | Final after RC peer verification of Milo event-subscribe | **planned** |
 | Later | Alarms; reverse connect; NodeSet2 import; PubSub | — |
 
 ---

@@ -4,6 +4,7 @@ import org.eclipse.milo.opcua.sdk.client.DiscoveryClient;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClientConfig;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClientConfigBuilder;
+import org.eclipse.milo.opcua.sdk.client.OpcUaSession;
 import org.eclipse.milo.opcua.sdk.client.subscriptions.CreateMonitoredItemsWithTimestamps;
 import org.eclipse.milo.opcua.sdk.client.subscriptions.OpcUaMonitoredItem;
 import org.eclipse.milo.opcua.sdk.client.subscriptions.OpcUaSubscription;
@@ -911,8 +912,8 @@ public class ClientCommand {
             // CreateSubscription via raw service (no Milo publish loop)
             CreateSubscriptionResponse csResp =
                 (CreateSubscriptionResponse) client.sendRequest(
-                    new CreateSubscriptionRequest(newRequestHeader(rto), piMs,
-                        uint(0), uint(0), uint(Integer.MAX_VALUE), true,
+                    new CreateSubscriptionRequest(newRequestHeader(client, rto), piMs,
+                        uint(10000), uint(10), uint(0), true,
                         ubyte(0)));
             StatusCode csStatus = csResp.getResponseHeader().getServiceResult();
             if (!csStatus.isGood()) {
@@ -933,7 +934,7 @@ public class ClientCommand {
 
             CreateMonitoredItemsResponse cmResp =
                 (CreateMonitoredItemsResponse) client.sendRequest(
-                    new CreateMonitoredItemsRequest(newRequestHeader(rto),
+                    new CreateMonitoredItemsRequest(newRequestHeader(client, rto),
                         subId, TimestampsToReturn.Both,
                         new MonitoredItemCreateRequest[]{ monReq }));
             StatusCode monSc = StatusCode.GOOD;
@@ -959,7 +960,7 @@ public class ClientCommand {
                     try {
                         pubResp = (PublishResponse) client.sendRequest(
                             new PublishRequest(
-                                newRequestHeader(Math.min(remaining + 2000, rto + 2000)),
+                                newRequestHeader(client, Math.min(remaining + 2000, rto + 2000)),
                                 acks.toArray(new SubscriptionAcknowledgement[0])));
                     } catch (Exception e) {
                         if (System.currentTimeMillis() >= deadline) timedOut = true;
@@ -1004,7 +1005,7 @@ public class ClientCommand {
             // Delete subscription
             try {
                 client.sendRequest(new DeleteSubscriptionsRequest(
-                    newRequestHeader(dto), new UInteger[]{ subId }));
+                    newRequestHeader(client, dto), new UInteger[]{ subId }));
             } catch (Exception ignored) {}
 
             // Build result
@@ -1098,7 +1099,7 @@ public class ClientCommand {
 
             HistoryReadResponse resp = (HistoryReadResponse) client.sendRequest(
                 new HistoryReadRequest(
-                    newRequestHeader(rto),
+                    newRequestHeader(client, rto),
                     histDetails,
                     ts,
                     releaseCp,
@@ -1189,7 +1190,7 @@ public class ClientCommand {
         OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
             RepublishResponse resp = (RepublishResponse) client.sendRequest(
-                new RepublishRequest(newRequestHeader(rto), subId, seqNum));
+                new RepublishRequest(newRequestHeader(client, rto), subId, seqNum));
 
             StatusCode sc = resp.getResponseHeader().getServiceResult();
             boolean ok = sc.isGood();
@@ -1247,7 +1248,7 @@ public class ClientCommand {
             TransferSubscriptionsResponse resp =
                 (TransferSubscriptionsResponse) client.sendRequest(
                     new TransferSubscriptionsRequest(
-                        newRequestHeader(rto), subIds, sendInitial));
+                        newRequestHeader(client, rto), subIds, sendInitial));
 
             StatusCode sc = resp.getResponseHeader().getServiceResult();
             boolean ok = sc.isGood();
@@ -1489,9 +1490,22 @@ public class ClientCommand {
     private static long requestTimeoutMs(String[] args)    { return parseLongArg(args, "--request-timeout",    5) * 1000; }
     private static long disconnectTimeoutMs(String[] args) { return parseLongArg(args, "--disconnect-timeout", 2) * 1000; }
 
-    private static RequestHeader newRequestHeader(long timeoutMs) {
+    /**
+     * Build a RequestHeader with the active session AuthenticationToken.
+     * Raw {@code client.sendRequest(...)} calls do not inject the token; a NULL
+     * token makes CreateMonitoredItems fail ownership checks on go-opcua.
+     */
+    private static RequestHeader newRequestHeader(OpcUaClient client, long timeoutMs)
+            throws UaException {
+        NodeId auth = NodeId.NULL_VALUE;
+        if (client != null) {
+            OpcUaSession session = client.getSession();
+            if (session != null && session.getAuthenticationToken() != null) {
+                auth = session.getAuthenticationToken();
+            }
+        }
         return new RequestHeader(
-            NodeId.NULL_VALUE,
+            auth,
             DateTime.now(),
             UInteger.valueOf(0),
             UInteger.valueOf(0),
