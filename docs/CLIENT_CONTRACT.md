@@ -91,6 +91,9 @@ required.
 | `--sampling-interval-ms <n>` | Requested sampling interval in ms | 100 |
 | `--notifications <n>` | Stop after receiving this many data-change notifications | 5 |
 | `--timeout-ms <n>` | Absolute command timeout in ms | 10000 |
+| `--queue-size <n>` | Monitored item queue size | 1 |
+| `--discard-oldest <true\|false>` | Queue overflow policy | `true` |
+| `--timestamps <Source\|Server\|Both\|Neither>` | `TimestampsToReturn` for CreateMonitoredItems | `Both` |
 
 ---
 
@@ -262,12 +265,16 @@ means the method returned no output arguments.
         "dataType":        "UInt32",
         "builtInType":     7,
         "statusCode":      { "name": "Good", "code": 0, "severity": "Good" },
-        "sourceTimestamp": "2024-01-01T00:00:00.000Z"
+        "sourceTimestamp": "2024-01-01T00:00:00.000Z",
+        "serverTimestamp": "2024-01-01T00:00:00.100Z"
       }
     ]
   }
 ]
 ```
+
+`sourceTimestamp` / `serverTimestamp` are omitted when the corresponding timestamp is
+absent from the DataValue (for example under `--timestamps Neither`).
 
 The command collects exactly `--notifications` data-change events then disconnects.
 If the timeout expires before enough notifications arrive, the command emits whatever

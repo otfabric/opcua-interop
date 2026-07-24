@@ -4,6 +4,7 @@ import org.eclipse.milo.opcua.sdk.client.DiscoveryClient;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClientConfig;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClientConfigBuilder;
+import org.eclipse.milo.opcua.sdk.client.subscriptions.CreateMonitoredItemsWithTimestamps;
 import org.eclipse.milo.opcua.sdk.client.subscriptions.OpcUaMonitoredItem;
 import org.eclipse.milo.opcua.sdk.client.subscriptions.OpcUaSubscription;
 import org.eclipse.milo.opcua.stack.core.AttributeId;
@@ -145,20 +146,31 @@ public class ClientCommand {
         long rto = requestTimeoutMs(args);
         long dto = disconnectTimeoutMs(args);
 
+        String indexRange = findArg(args, "--index-range");
+        TimestampsToReturn timestamps = parseTimestamps(args);
+
         OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
             List<NodeId> nodeIds = new ArrayList<>();
+            List<ReadValueId> readIds = new ArrayList<>();
             for (String ns : nodeStrs) {
-                nodeIds.add(NodeIdParser.resolveWithClient(ns, client, rto));
+                NodeId nodeId = NodeIdParser.resolveWithClient(ns, client, rto);
+                nodeIds.add(nodeId);
+                readIds.add(new ReadValueId(
+                        nodeId,
+                        AttributeId.Value.uid(),
+                        indexRange,
+                        null));
             }
 
-            List<DataValue> dvs = client.readValues(0.0, TimestampsToReturn.Both, nodeIds);
+            ReadResponse readResp = client.read(0.0, timestamps, readIds);
+            DataValue[] dvs = readResp.getResults();
 
             ResultBuilder rb = new ResultBuilder("read");
             boolean anyBad = false;
 
             for (int i = 0; i < nodeIds.size(); i++) {
-                DataValue dv = dvs.get(i);
+                DataValue dv = dvs[i];
                 String typeName = ResultBuilder.builtInTypeName(dv.getValue());
                 Map<String, Object> result = new LinkedHashMap<>();
                 result.put("nodeId",      ResultBuilder.nodeIdToString(nodeIds.get(i)));
@@ -175,7 +187,7 @@ public class ClientCommand {
             }
 
             if (nodeIds.size() == 1) {
-                rb.serviceResult(dvs.get(0).getStatusCode());
+                rb.serviceResult(dvs[0].getStatusCode());
             }
             if (anyBad) rb.success(false);
 
@@ -205,25 +217,33 @@ public class ClientCommand {
         long rto = requestTimeoutMs(args);
         long dto = disconnectTimeoutMs(args);
 
+        String indexRange = findArg(args, "--index-range");
+
         OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
+            List<WriteValue> writeValues = new ArrayList<>();
             List<NodeId> nodeIds = new ArrayList<>();
-            List<DataValue> values = new ArrayList<>();
             for (int i = 0; i < nodeStrs.size(); i++) {
-                nodeIds.add(NodeIdParser.resolveWithClient(nodeStrs.get(i), client, rto));
+                NodeId nodeId = NodeIdParser.resolveWithClient(nodeStrs.get(i), client, rto);
+                nodeIds.add(nodeId);
                 Variant var = buildWriteVariant(typeStrs.get(i), valStrs.get(i));
-                // Explicit StatusCode.GOOD + null timestamps: open62541 rejects writes that
-                // include timestamp/status fields with BadWriteNotSupported.
-                values.add(new DataValue(var, StatusCode.GOOD, null, null));
+                // Value-only DataValue (no StatusCode / timestamps EncodingMask bits).
+                DataValue dv = DataValue.valueOnly(var);
+                writeValues.add(new WriteValue(
+                        nodeId,
+                        AttributeId.Value.uid(),
+                        indexRange,
+                        dv));
             }
 
-            List<StatusCode> scList = client.writeValues(nodeIds, values);
+            WriteResponse writeResp = client.write(writeValues);
+            StatusCode[] scList = writeResp.getResults();
 
             ResultBuilder rb = new ResultBuilder("write");
             boolean anyBad = false;
             StatusCode firstBad = StatusCode.GOOD;
             for (int i = 0; i < nodeIds.size(); i++) {
-                StatusCode sc = scList.get(i);
+                StatusCode sc = scList[i];
                 Map<String, Object> writeResult = new LinkedHashMap<>();
                 writeResult.put("nodeId", ResultBuilder.nodeIdToString(nodeIds.get(i)));
                 writeResult.put("statusCode", ResultBuilder.statusCodeJson(sc));
@@ -234,7 +254,7 @@ public class ClientCommand {
                 }
             }
             if (nodeIds.size() == 1) {
-                rb.serviceResult(scList.get(0));
+                rb.serviceResult(scList[0]);
             } else if (anyBad) {
                 rb.serviceResult(firstBad);
             }
@@ -264,6 +284,7 @@ public class ClientCommand {
         // IncludeSubtypes defaults to true; pass --include-subtypes false for exact match.
         boolean includeSubtypes = !hasFlagValue(args, "--include-subtypes", "false")
                 && !hasFlagValue(args, "--include-subtypes", "0");
+        long resultMask = parseLongArg(args, "--result-mask", BrowseResultMask.All.getValue());
         long cto = connectTimeoutMs(args);
         long rto = requestTimeoutMs(args);
         long dto = disconnectTimeoutMs(args);
@@ -278,7 +299,7 @@ public class ClientCommand {
                     Identifiers.HierarchicalReferences,
                     includeSubtypes,
                     UInteger.valueOf(nodeClassMask),
-                    UInteger.valueOf(BrowseResultMask.All.getValue()));
+                    UInteger.valueOf(resultMask));
 
             BrowseResult firstResult = client.browse(bd);
             List<ReferenceDescription> allRefs = new ArrayList<>(
@@ -420,6 +441,7 @@ public class ClientCommand {
         long   toMs   = parseLongArg(args,   "--timeout-ms",   10000L);
         int    queueSize    = parseIntArg(args, "--queue-size",    1);
         boolean discardOld = !hasFlagValue(args, "--discard-oldest", "false");
+        TimestampsToReturn timestamps = parseTimestamps(args);
 
         OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
@@ -439,9 +461,9 @@ public class ClientCommand {
             monItem.setDiscardOldest(discardOld);
 
             subscription.addMonitoredItem(monItem);
-            subscription.createMonitoredItems();
-
-            StatusCode monSc = monItem.getCreateResult().orElse(StatusCode.GOOD);
+            // OpcUaSubscription.createMonitoredItems() hardcodes Both; pass --timestamps.
+            StatusCode monSc = CreateMonitoredItemsWithTimestamps.create(
+                client, subscription, monItem, timestamps);
 
             List<Map<String, Object>> notifications =
                 Collections.synchronizedList(new ArrayList<>());
@@ -465,6 +487,10 @@ public class ClientCommand {
                     if (dv.getSourceTime() != null && dv.getSourceTime().getJavaTime() != 0) {
                         n.put("sourceTimestamp",
                             dv.getSourceTime().getJavaInstant().toString());
+                    }
+                    if (dv.getServerTime() != null && dv.getServerTime().getJavaTime() != 0) {
+                        n.put("serverTimestamp",
+                            dv.getServerTime().getJavaInstant().toString());
                     }
                     notifications.add(n);
                     latch.countDown();
@@ -642,6 +668,18 @@ public class ClientCommand {
                 return new Variant(arr);
             }
             default:         return new Variant(val);
+        }
+    }
+
+    private static TimestampsToReturn parseTimestamps(String[] args) {
+        String ts = findArg(args, "--timestamps");
+        if (ts == null) return TimestampsToReturn.Both;
+        switch (ts) {
+            case "Source":  return TimestampsToReturn.Source;
+            case "Server":  return TimestampsToReturn.Server;
+            case "Neither": return TimestampsToReturn.Neither;
+            case "Both":
+            default:        return TimestampsToReturn.Both;
         }
     }
 
