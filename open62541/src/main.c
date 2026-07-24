@@ -48,7 +48,7 @@
 static int cmd_print_capabilities(void) {
     printf("{\n");
     printf("  \"schemaVersion\": \"1.0\",\n");
-    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.4.0\"},\n");
+    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.5.0-rc.1\"},\n");
     printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.5\"},\n");
     printf("  \"fixtureSchemaVersions\": [\"1.0\"],\n");
     printf("  \"roles\": [\"client\", \"server\"],\n");
@@ -61,7 +61,11 @@ static int cmd_print_capabilities(void) {
     printf("    \"browse\",\n");
     printf("    \"call\",\n");
     printf("    \"subscribe\",\n");
-    printf("    \"subscription-lifecycle\"\n");
+    printf("    \"subscription-lifecycle\",\n");
+    printf("    \"event-subscribe\",\n");
+    printf("    \"history-read\",\n");
+    printf("    \"republish\",\n");
+    printf("    \"transfer-subscriptions\"\n");
     printf("  ],\n");
     printf("  \"serverServices\": [\n");
     printf("    \"GetEndpoints\",\n");
@@ -76,7 +80,10 @@ static int cmd_print_capabilities(void) {
     printf("    \"SetPublishingMode\",\n");
     printf("    \"SetMonitoringMode\",\n");
     printf("    \"DeleteMonitoredItems\",\n");
-    printf("    \"DeleteSubscriptions\"\n");
+    printf("    \"DeleteSubscriptions\",\n");
+    printf("    \"HistoryRead\",\n");
+    printf("    \"Republish\",\n");
+    printf("    \"TransferSubscriptions\"\n");
     printf("  ],\n");
     printf("  \"securityProfiles\": [\n");
     printf("    {\"policy\": \"None\",                  \"mode\": \"None\"},\n");

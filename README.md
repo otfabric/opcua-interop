@@ -243,13 +243,14 @@ make release VERSION=v0.4.0  # Build and push multi-arch release images
 
 | Version type | Location |
 |---|---|
-| Repository release | Git tag and image tag — latest **`v0.4.0`** |
-| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.4.0`** |
+| Repository release | Git tag and image tag — latest released **`v0.4.0`**; **`v0.5.0` planned** (`v0.5.0-rc.1` ready for publication) |
+| Adapter capabilities version | `print-capabilities` → `adapter.version` — working tree **`0.5.0-rc.1`** (not yet published) |
 | Upstream stack version | Image label and `print-capabilities` → `stack.version` |
 | Fixture schema version | `schemaVersion` field in every fixture |
 
-Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`.
-See `PLAN.md` release sequence and `RELEASE_NOTES_v0.3.0.md` / `RELEASE_NOTES_v0.4.0.md`.
+Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`
+([latest release](https://github.com/otfabric/opcua-interop/releases/tag/v0.4.0)).
+Working tree Phase 18 adds WP1B client commands; publication is RC-first — see `PLAN.md`.
 
 ## Reference stacks
 
