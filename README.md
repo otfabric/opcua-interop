@@ -142,14 +142,16 @@ The fixture's `users` array controls which username/password credentials are acc
 
 ### Client commands
 
-Eleven client operations (see `print-capabilities` → `clientOperations` and
+Thirteen client operations (see `print-capabilities` → `clientOperations` and
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
 
 ```sh
 client endpoints --endpoint opc.tcp://host:4840/opcua-interop
+client find-servers --endpoint ...
 client read      --endpoint ... --node 'nsu=...;s=Scalar.Int32' [--index-range '1:3']
 client write     --endpoint ... --node '...' --type Int32 --value 100 [--index-range '0']
 client browse    --endpoint ... --node 'i=85'
+client translate --endpoint ... --starting-node 'i=85' --path 'Server' [--namespace 0]
 client call      --endpoint ... --object '...' --method '...' --input 'Int32:10' --input 'Int32:20'
 client subscribe --endpoint ... --node '...' --notifications 5 --timeout-ms 10000 \
                  [--queue-size 3] [--discard-oldest true] [--timestamps Both]

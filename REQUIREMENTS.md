@@ -91,8 +91,12 @@ count at Phase 9 close: 212 tests, 0 skips (consumer suite has grown since).
   `--send-initial-values`
 - Milo `ClientCommand.newRequestHeader` uses the active session `AuthenticationToken`
   (raw `sendRequest` does not inject it)
-- Capabilities `adapter.version` = `0.5.0`; eleven `clientOperations`
-- Fix-forward by republishing the `v0.5.0` tag / GHCR images when requirements change (no `v0.5.1` / RC tags)
+- `find-servers` (FindServers → ApplicationDescription JSON) and `translate`
+  (TranslateBrowsePathsToNodeIDs with `--starting-node`, `--path`, optional `--namespace`)
+- `event-subscribe --of-type` / `--min-severity`; `history-read --scenario continue`
+- Reference-server BaseEvent emission and gate-compliant `History.Temperature` raw samples
+- Capabilities `adapter.version` = `0.5.1`; thirteen `clientOperations`
+- Publish as semver tag `v0.5.1` (Release workflow → multi-arch GHCR)
 
 ### Later (planned) — remaining type surface
 

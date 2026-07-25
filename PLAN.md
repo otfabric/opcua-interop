@@ -242,9 +242,13 @@ Adds four new client commands to both adapters; `adapter.version` = `0.5.0`:
 3. **`republish`** — flags `--subscription-id`, `--sequence-number`.
 4. **`transfer-subscriptions`** — repeatable `--subscription-id`, `--send-initial-values`.
 
-**Current adapter client surface (11 operations):**
-`endpoints`, `read`, `write`, `browse`, `call`, `subscribe`, `subscription-lifecycle`,
-`event-subscribe`, `history-read`, `republish`, `transfer-subscriptions`
+**Current adapter client surface (13 operations):**
+`endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`,
+`subscribe`, `subscription-lifecycle`, `event-subscribe`, `history-read`,
+`republish`, `transfer-subscriptions`
+
+`v0.5.1` adds BaseEvent emission, gate-compliant raw historian, and narrow
+`event-subscribe` / `history-read --scenario continue` controls (see `PUBLISH.md`).
 
 ---
 
@@ -252,11 +256,11 @@ Adds four new client commands to both adapters; `adapter.version` = `0.5.0`:
 
 | Item | Status |
 |------|--------|
-| Latest released image tag | **v0.5.0** |
-| Publication model | Fix-forward: republish **`v0.5.0`** when requirements change (no RC / `v0.5.1` tags) |
-| Capabilities `adapter.version` | **0.5.0** |
-| Client operations | 11 (see above) |
-| Peer Event / HistoryRead / Republish / Transfer CLI | WP1B peer suite green against published `v0.5.0` digests |
+| Latest released image tag | **v0.5.0** (next: **v0.5.1**) |
+| Publication model | Semver tags; Release workflow builds multi-arch GHCR images |
+| Capabilities `adapter.version` | **0.5.1** (working tree) |
+| Client operations | 13 (see above) |
+| Peer Event / HistoryRead / Republish / Transfer CLI | Promote in go-opcua after `v0.5.1` digests pinned |
 
 ---
 
@@ -271,7 +275,8 @@ Adds four new client commands to both adapters; `adapter.version` = `0.5.0`:
 | v0.3.0 | go-opcua Phase 13: `subscribe --timestamps`, `serverTimestamp` in subscribe JSON | **released** |
 | v0.4.0 | go-opcua Phase 14: subscribe revised fields + `subscription-lifecycle` command; capabilities 0.4.0 | **released** |
 | v0.5.0-dev | Phase 18 (WP1B) development capabilities label | **superseded** |
-| v0.5.0 | Phase 18 WP1B commands + Milo session AuthenticationToken fix | **released / fix-forward** |
+| v0.5.0 | Phase 18 WP1B commands + Milo session AuthenticationToken fix | **released** |
+| v0.5.1 | BaseEvent emission, raw historian, find-servers/translate, continue scenario | **pending publish** |
 | Later | Alarms; reverse connect; NodeSet2 import; PubSub | — |
 
 ---

@@ -19,9 +19,11 @@ this contract. Changes that break it require a major schema version bump.
 | Subcmd | Description |
 |--------|-------------|
 | `endpoints` | Discover and list server endpoints |
+| `find-servers` | Call FindServers and list ApplicationDescriptions |
 | `read` | Read one or more node values |
 | `write` | Write a value to one node |
 | `browse` | Browse forward hierarchical references from a node |
+| `translate` | TranslateBrowsePathsToNodeIDs for a dot-separated browse path |
 | `call` | Call a method node and collect output arguments |
 | `subscribe` | Create a subscription and collect a bounded number of data-change notifications |
 | `subscription-lifecycle` | Test subscription lifecycle scenarios (revise, publishing-mode, monitoring-mode, delete) |
@@ -58,6 +60,14 @@ the password is treated as an empty string.
 When `--security-policy` is not `None`, `--certificate` and `--private-key` are
 required.
 
+### `find-servers` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--endpoint <url>` | Discovery / server endpoint URL | required |
+
+No additional flags. Emits one result object per `ApplicationDescription`.
+
 ### `read` flags
 
 | Flag | Description |
@@ -80,6 +90,16 @@ required.
 |------|-------------|---------|
 | `--node <nodeId>` | Starting node | `i=85` (Objects folder) |
 | `--max-refs <n>` | Max references per Browse request | 0 (server default) |
+
+### `translate` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--starting-node <nodeId>` | Starting NodeId for the browse path | `i=85` (Objects folder) |
+| `--path <names>` | Dot-separated browse names (e.g. `Server` or `Server.ServerStatus`) | required |
+| `--namespace <n>` | Namespace index applied to every path segment | `0` |
+
+Each relative path element uses `HierarchicalReferences` with `IncludeSubtypes=true`.
 
 ### `call` flags
 
@@ -119,13 +139,19 @@ required.
 | `--timeout-ms <n>` | Absolute command timeout in ms | 10000 |
 | `--publishing-interval-ms <n>` | Requested publishing interval in ms | 500 |
 | `--queue-size <n>` | Monitored item queue size | 10 |
+| `--of-type <nodeId>` | Optional OfType ContentFilterElement (e.g. `i=2041`) | — |
+| `--min-severity <n>` | Optional Severity ≥ threshold ContentFilterElement | — |
 
 The EventFilter SelectClauses always request BaseEventType fields:
 `EventId`, `EventType`, `SourceName`, `Message`, `Severity`, `Time`.
 
-**Limitation:** Adapters are client-only for event delivery. Against the Go
-server, peer tests should call `EmitBaseEvent` after the monitored item is
-created. Adapter servers do not currently emit fixture events automatically.
+When both `--of-type` and `--min-severity` are set, the WhereClause ANDs them.
+These flags prove narrow filter baselines only — not the general WhereClause
+expression surface.
+
+Adapter servers emit deterministic BaseEvents from `Events.Source`
+(Severity=500, Message=`peer-event`) about every 2 seconds. Against the Go
+server, peer tests may still call `EmitBaseEvent` for tighter timing.
 
 ### `history-read` flags
 
@@ -139,9 +165,18 @@ created. Adapter servers do not currently emit fixture events automatically.
 | `--release-continuation-point <true\|false>` | Release the continuation point instead of reading | `false` |
 | `--return-bounds <true\|false>` | `ReadRawModifiedDetails.ReturnBounds` | `false` |
 | `--timestamps <Source\|Server\|Both\|Neither>` | `TimestampsToReturn` | `Both` |
+| `--scenario continue` | Single-session page → continue → release → reuse-after-release | — |
 
 Raw HistoryRead only (`IsReadModified = false`). Continuation points are
 Base64-encoded ByteStrings when present.
+
+With `--scenario continue`, one connected session pages with `--num-values`
+(default 2), follows continuation points, releases the last CP, then attempts
+reuse after release. The result item includes `scenario`, `pages`,
+`releaseStatusCode`, and `reuseAfterReleaseStatusCode`.
+
+Adapter servers expose gate-compliant fixed raw samples on
+`History.Temperature` (5 values from `2026-07-24T10:00:00Z` step 5s).
 
 ### `republish` flags
 
@@ -245,6 +280,21 @@ Error categories:
 ]
 ```
 
+### `find-servers`
+
+```json
+"results": [
+  {
+    "applicationUri":  "urn:example:server",
+    "applicationName": { "locale": "en", "text": "Example Server" },
+    "productUri":      "urn:example:product",
+    "discoveryUrls":   ["opc.tcp://server:4840/opcua-interop"]
+  }
+]
+```
+
+`applicationName` is a LocalizedText object (§7). Empty locale/text are emitted as `""`.
+
 ### `read`
 
 ```json
@@ -294,6 +344,21 @@ Error categories:
 `nodeClass` is the symbolic name from OPC UA Part 3: `"Object"`, `"Variable"`,
 `"Method"`, `"ObjectType"`, `"VariableType"`, `"ReferenceType"`, `"DataType"`,
 `"View"`.
+
+### `translate`
+
+```json
+"results": [
+  {
+    "statusCode": { "name": "Good", "code": 0, "severity": "Good" },
+    "targets":    ["i=2253"]
+  }
+]
+```
+
+One result object for the single requested browse path. `targets` is an ordered
+array of canonical NodeId strings (§6) from `BrowsePathTarget.TargetId`.
+`success` is `true` when the service result and the path `statusCode` are both Good.
 
 ### `call`
 

@@ -769,6 +769,277 @@ static int cmd_endpoints(int argc, char **argv) {
 }
 
 /* -------------------------------------------------------------------------
+ * find-servers subcommand
+ * ---------------------------------------------------------------------- */
+
+static void copy_ua_string(char *buf, size_t bufsz, const UA_String *s) {
+    if (!buf || bufsz == 0) return;
+    buf[0] = '\0';
+    if (!s || !s->data || s->length == 0 || s->length >= bufsz) return;
+    memcpy(buf, s->data, s->length);
+    buf[s->length] = '\0';
+}
+
+static int cmd_find_servers(int argc, char **argv) {
+    const char *endpoint = find_arg(argc, argv, "--endpoint");
+    if (!endpoint) {
+        output_begin("open62541", "find-servers");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", "missing --endpoint");
+        output_end();
+        return 2;
+    }
+
+    UA_Client *client = UA_Client_new();
+    if (!client) {
+        output_begin("open62541", "find-servers");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADOUTOFMEMORY);
+        output_error("internal", "UA_Client_new failed");
+        output_end();
+        return 6;
+    }
+    UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+    client_silence_logger(UA_Client_getConfig(client));
+
+    UA_ApplicationDescription *apps = NULL;
+    size_t appCount = 0;
+    UA_StatusCode sc = UA_Client_findServers(client, endpoint,
+                                             0, NULL, 0, NULL,
+                                             &appCount, &apps);
+
+    /* Milo/Netty warm-up retry (same as GetEndpoints). */
+    if (sc == UA_STATUSCODE_BADSECURECHANNELCLOSED ||
+        sc == UA_STATUSCODE_BADSECURECHANNELIDINVALID) {
+        UA_Client_delete(client);
+        client = UA_Client_new();
+        if (!client) {
+            output_begin("open62541", "find-servers");
+            output_success(0);
+            output_service_result(UA_STATUSCODE_BADOUTOFMEMORY);
+            output_error("internal", "UA_Client_new failed on retry");
+            output_end();
+            return 6;
+        }
+        UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+        client_silence_logger(UA_Client_getConfig(client));
+        sc = UA_Client_findServers(client, endpoint,
+                                   0, NULL, 0, NULL,
+                                   &appCount, &apps);
+    }
+
+    UA_Client_delete(client);
+
+    int ok = (sc == UA_STATUSCODE_GOOD);
+    output_begin("open62541", "find-servers");
+    output_success(ok);
+    output_service_result(sc);
+
+    if (ok) {
+        output_open_results();
+        for (size_t i = 0; i < appCount; i++) {
+            UA_ApplicationDescription *app = &apps[i];
+            if (i > 0) printf(",");
+
+            char uri_buf[512] = "";
+            char prod_buf[512] = "";
+            char name_locale[64] = "";
+            char name_text[512] = "";
+            copy_ua_string(uri_buf, sizeof(uri_buf), &app->applicationUri);
+            copy_ua_string(prod_buf, sizeof(prod_buf), &app->productUri);
+            copy_ua_string(name_locale, sizeof(name_locale), &app->applicationName.locale);
+            copy_ua_string(name_text, sizeof(name_text), &app->applicationName.text);
+
+            printf("{\"applicationUri\":\"%s\",\"applicationName\":{\"locale\":\"%s\",\"text\":\"%s\"},"
+                   "\"productUri\":\"%s\",\"discoveryUrls\":[",
+                   uri_buf, name_locale, name_text, prod_buf);
+            for (size_t j = 0; j < app->discoveryUrlsSize; j++) {
+                char url_buf[512] = "";
+                copy_ua_string(url_buf, sizeof(url_buf), &app->discoveryUrls[j]);
+                if (j > 0) printf(",");
+                printf("\"%s\"", url_buf);
+            }
+            printf("]}");
+        }
+        output_close_results();
+        output_null_error();
+    } else {
+        output_error("transport", "FindServers failed");
+    }
+
+    output_end();
+    if (apps) UA_Array_delete(apps, appCount, &UA_TYPES[UA_TYPES_APPLICATIONDESCRIPTION]);
+    return ok ? 0 : 3;
+}
+
+/* -------------------------------------------------------------------------
+ * translate subcommand
+ * ---------------------------------------------------------------------- */
+
+static int cmd_translate(int argc, char **argv) {
+    const char *endpoint = find_arg(argc, argv, "--endpoint");
+    if (!endpoint) {
+        output_begin("open62541", "translate");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", "missing --endpoint");
+        output_end();
+        return 2;
+    }
+
+    const char *startStr = find_arg(argc, argv, "--starting-node");
+    if (!startStr) startStr = "i=85";
+
+    const char *pathStr = find_arg(argc, argv, "--path");
+    if (!pathStr || !*pathStr) {
+        output_begin("open62541", "translate");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", "missing --path");
+        output_end();
+        return 2;
+    }
+
+    if (validate_nodeid_structure(startStr) != 0) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "malformed NodeId: '%s'", startStr);
+        output_begin("open62541", "translate");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", msg);
+        output_end();
+        return 2;
+    }
+
+    UA_UInt16 ns = 0;
+    const char *nsStr = find_arg(argc, argv, "--namespace");
+    if (nsStr) ns = (UA_UInt16)atoi(nsStr);
+
+    /* Split --path on '.' into browse-name segments. */
+    char *path_copy = strdup(pathStr);
+    if (!path_copy) {
+        output_begin("open62541", "translate");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADOUTOFMEMORY);
+        output_error("internal", "strdup failed");
+        output_end();
+        return 6;
+    }
+    char *segments[64];
+    int segCount = 0;
+    char *tok = strtok(path_copy, ".");
+    while (tok && segCount < 64) {
+        if (*tok) segments[segCount++] = tok;
+        tok = strtok(NULL, ".");
+    }
+    if (segCount == 0) {
+        free(path_copy);
+        output_begin("open62541", "translate");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", "empty --path");
+        output_end();
+        return 2;
+    }
+
+    int req_ms = parse_int_flag(argc, argv, "--request-timeout", 5) * 1000;
+    int exit_code = 3;
+    UA_Client *client = make_client(endpoint, req_ms, "translate", &exit_code);
+    if (!client) {
+        free(path_copy);
+        return exit_code;
+    }
+
+    UA_NodeId startingNode;
+    UA_NodeId_init(&startingNode);
+    if (strncmp(startStr, "nsu=", 4) == 0) {
+        int r = resolve_nsu_nodeid(client, startStr, &startingNode);
+        if (r != 0) {
+            UA_Client_disconnect(client);
+            UA_Client_delete(client);
+            free(path_copy);
+            char msg[512];
+            snprintf(msg, sizeof(msg), "failed to resolve NodeId: '%s'", startStr);
+            output_begin("open62541", "translate");
+            output_success(0);
+            output_service_result(UA_STATUSCODE_BADNAMESPACEURIINVALID);
+            output_error("input", msg);
+            output_end();
+            return 2;
+        }
+    } else {
+        startingNode = parse_nodeid_local(startStr);
+    }
+
+    UA_BrowsePath browsePath;
+    UA_BrowsePath_init(&browsePath);
+    UA_NodeId_copy(&startingNode, &browsePath.startingNode);
+    browsePath.relativePath.elements = (UA_RelativePathElement *)
+        UA_Array_new((size_t)segCount, &UA_TYPES[UA_TYPES_RELATIVEPATHELEMENT]);
+    browsePath.relativePath.elementsSize = (size_t)segCount;
+    for (int i = 0; i < segCount; i++) {
+        UA_RelativePathElement *elem = &browsePath.relativePath.elements[i];
+        elem->referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
+        elem->isInverse = UA_FALSE;
+        elem->includeSubtypes = UA_TRUE;
+        elem->targetName = UA_QUALIFIEDNAME_ALLOC(ns, segments[i]);
+    }
+
+    UA_TranslateBrowsePathsToNodeIdsRequest req;
+    UA_TranslateBrowsePathsToNodeIdsRequest_init(&req);
+    req.browsePaths = &browsePath;
+    req.browsePathsSize = 1;
+
+    UA_TranslateBrowsePathsToNodeIdsResponse resp =
+        UA_Client_Service_translateBrowsePathsToNodeIds(client, req);
+
+    /* Clear browse path (owned elements) without freeing the stack request. */
+    UA_BrowsePath_clear(&browsePath);
+    free(path_copy);
+    UA_NodeId_clear(&startingNode);
+
+    UA_StatusCode sc = resp.responseHeader.serviceResult;
+    if (UA_StatusCode_isGood(sc) && resp.resultsSize > 0 &&
+        !UA_StatusCode_isGood(resp.results[0].statusCode)) {
+        sc = resp.results[0].statusCode;
+    }
+
+    int ok = UA_StatusCode_isGood(sc);
+    output_begin("open62541", "translate");
+    output_success(ok);
+    output_service_result(resp.responseHeader.serviceResult);
+
+    if (UA_StatusCode_isGood(resp.responseHeader.serviceResult) && resp.resultsSize > 0) {
+        output_open_results();
+        UA_BrowsePathResult *bpr = &resp.results[0];
+        printf("{\"statusCode\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"},\"targets\":[",
+               output_status_code_name(bpr->statusCode),
+               (uint32_t)bpr->statusCode,
+               output_severity(bpr->statusCode));
+        for (size_t i = 0; i < bpr->targetsSize; i++) {
+            if (i > 0) printf(",");
+            output_nodeid(&bpr->targets[i].targetId.nodeId);
+        }
+        printf("]}");
+        output_close_results();
+        output_null_error();
+    } else if (ok) {
+        output_no_results();
+    } else {
+        output_error("service", "TranslateBrowsePathsToNodeIds failed");
+    }
+
+    output_end();
+    UA_TranslateBrowsePathsToNodeIdsResponse_clear(&resp);
+    UA_Client_disconnect(client);
+    UA_Client_delete(client);
+
+    if (sc == UA_STATUSCODE_BADTIMEOUT) return 7;
+    return ok ? 0 : 4;
+}
+
+/* -------------------------------------------------------------------------
  * read subcommand
  * ---------------------------------------------------------------------- */
 
@@ -2340,6 +2611,8 @@ static int cmd_event_subscribe(int argc, char **argv) {
     const char *toStr    = find_arg(argc, argv, "--timeout-ms");
     const char *piStr    = find_arg(argc, argv, "--publishing-interval-ms");
     const char *qsStr    = find_arg(argc, argv, "--queue-size");
+    const char *ofTypeStr = find_arg(argc, argv, "--of-type");
+    const char *minSevStr = find_arg(argc, argv, "--min-severity");
 
     if (!endpoint || !nodeStr) {
         output_begin("open62541", "event-subscribe");
@@ -2348,7 +2621,8 @@ static int cmd_event_subscribe(int argc, char **argv) {
         output_error("input",
             "usage: event-subscribe --endpoint <url> --node <nodeId>"
             " [--events <n>] [--timeout-ms <ms>]"
-            " [--publishing-interval-ms <ms>] [--queue-size <n>]");
+            " [--publishing-interval-ms <ms>] [--queue-size <n>]"
+            " [--of-type <nodeId>] [--min-severity <n>]");
         output_end();
         return 2;
     }
@@ -2435,7 +2709,79 @@ static int cmd_event_subscribe(int argc, char **argv) {
             UA_Array_new(1, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]);
         op->browsePath[0] = UA_QUALIFIEDNAME_ALLOC(0, kFieldNames[i]);
     }
-    /* whereClause left empty (no filter — accept all events) */
+
+    /* Optional WhereClause: --of-type and/or --min-severity (AND if both). */
+    {
+        UA_ContentFilterElement elems[3];
+        size_t nElem = 0;
+        memset(elems, 0, sizeof(elems));
+
+        if (ofTypeStr && *ofTypeStr) {
+            UA_NodeId typeId = parse_nodeid_local(ofTypeStr);
+            if (strncmp(ofTypeStr, "nsu=", 4) == 0)
+                resolve_nsu_nodeid(client, ofTypeStr, &typeId);
+            UA_LiteralOperand lit;
+            UA_LiteralOperand_init(&lit);
+            UA_Variant_setScalarCopy(&lit.value, &typeId, &UA_TYPES[UA_TYPES_NODEID]);
+            elems[nElem].filterOperator = UA_FILTEROPERATOR_OFTYPE;
+            elems[nElem].filterOperandsSize = 1;
+            elems[nElem].filterOperands = (UA_ExtensionObject *)
+                UA_Array_new(1, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+            UA_ExtensionObject_setValueCopy(&elems[nElem].filterOperands[0],
+                &lit, &UA_TYPES[UA_TYPES_LITERALOPERAND]);
+            UA_LiteralOperand_clear(&lit);
+            UA_NodeId_clear(&typeId);
+            nElem++;
+        }
+        if (minSevStr && *minSevStr) {
+            UA_UInt16 minSev = (UA_UInt16)atoi(minSevStr);
+            UA_SimpleAttributeOperand sao;
+            UA_SimpleAttributeOperand_init(&sao);
+            sao.typeDefinitionId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE);
+            sao.attributeId = UA_ATTRIBUTEID_VALUE;
+            sao.browsePathSize = 1;
+            sao.browsePath = (UA_QualifiedName *)
+                UA_Array_new(1, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]);
+            sao.browsePath[0] = UA_QUALIFIEDNAME_ALLOC(0, "Severity");
+            UA_LiteralOperand lit;
+            UA_LiteralOperand_init(&lit);
+            UA_Variant_setScalarCopy(&lit.value, &minSev, &UA_TYPES[UA_TYPES_UINT16]);
+            elems[nElem].filterOperator = UA_FILTEROPERATOR_GREATERTHANOREQUAL;
+            elems[nElem].filterOperandsSize = 2;
+            elems[nElem].filterOperands = (UA_ExtensionObject *)
+                UA_Array_new(2, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+            UA_ExtensionObject_setValueCopy(&elems[nElem].filterOperands[0],
+                &sao, &UA_TYPES[UA_TYPES_SIMPLEATTRIBUTEOPERAND]);
+            UA_ExtensionObject_setValueCopy(&elems[nElem].filterOperands[1],
+                &lit, &UA_TYPES[UA_TYPES_LITERALOPERAND]);
+            UA_SimpleAttributeOperand_clear(&sao);
+            UA_LiteralOperand_clear(&lit);
+            nElem++;
+        }
+        if (nElem == 2) {
+            UA_ElementOperand a, b;
+            UA_ElementOperand_init(&a); a.index = 0;
+            UA_ElementOperand_init(&b); b.index = 1;
+            elems[nElem].filterOperator = UA_FILTEROPERATOR_AND;
+            elems[nElem].filterOperandsSize = 2;
+            elems[nElem].filterOperands = (UA_ExtensionObject *)
+                UA_Array_new(2, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+            UA_ExtensionObject_setValueCopy(&elems[nElem].filterOperands[0],
+                &a, &UA_TYPES[UA_TYPES_ELEMENTOPERAND]);
+            UA_ExtensionObject_setValueCopy(&elems[nElem].filterOperands[1],
+                &b, &UA_TYPES[UA_TYPES_ELEMENTOPERAND]);
+            nElem++;
+        }
+        if (nElem > 0) {
+            filter.whereClause.elements = (UA_ContentFilterElement *)
+                UA_Array_new(nElem, &UA_TYPES[UA_TYPES_CONTENTFILTERELEMENT]);
+            filter.whereClause.elementsSize = nElem;
+            for (size_t ei = 0; ei < nElem; ei++)
+                UA_ContentFilterElement_copy(&elems[ei], &filter.whereClause.elements[ei]);
+            for (size_t ei = 0; ei < nElem; ei++)
+                UA_ContentFilterElement_clear(&elems[ei]);
+        }
+    }
 
     /* Build MonitoredItemCreateRequest targeting EventNotifier attribute */
     UA_MonitoredItemCreateRequest monReq;
@@ -2535,6 +2881,112 @@ static int cmd_event_subscribe(int argc, char **argv) {
  * history-read subcommand
  * ---------------------------------------------------------------------- */
 
+/* Emit one history-read page JSON object (no surrounding array). */
+static void emit_history_page_json(const UA_NodeId *nodeId, UA_StatusCode item_sc,
+                                   const UA_ByteString *cp, const UA_HistoryData *hdata) {
+    printf("{\"nodeId\":");
+    output_nodeid(nodeId);
+    printf(",\"statusCode\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
+           output_status_code_name(item_sc), (uint32_t)item_sc, output_severity(item_sc));
+    if (cp && cp->length > 0 && cp->data) {
+        char *cpB64 = b64_encode(cp->data, cp->length);
+        if (cpB64) { printf(",\"continuationPoint\":\"%s\"", cpB64); free(cpB64); }
+        else printf(",\"continuationPoint\":null");
+    } else {
+        printf(",\"continuationPoint\":null");
+    }
+    printf(",\"values\":[");
+    if (hdata) {
+        for (size_t i = 0; i < hdata->dataValuesSize; i++) {
+            UA_DataValue *dv = &hdata->dataValues[i];
+            if (i > 0) printf(",");
+            UA_StatusCode dvSc = dv->hasStatus ? dv->status : UA_STATUSCODE_GOOD;
+            const char *dtName = (dv->hasValue && dv->value.type)
+                                 ? type_name(dv->value.type) : "Unknown";
+            int bi = (dv->hasValue && dv->value.type)
+                     ? ua_type_to_builtin_id(dv->value.type) : 0;
+            printf("{");
+            if (dv->hasValue) { printf("\"value\":"); output_ua_variant_value(&dv->value); }
+            else printf("\"value\":null");
+            printf(",\"dataType\":\"%s\",\"builtInType\":%d", dtName, bi);
+            printf(",\"statusCode\":{\"name\":\"%s\",\"code\":%" PRIu32
+                   ",\"severity\":\"%s\"}",
+                   output_status_code_name(dvSc), (uint32_t)dvSc, output_severity(dvSc));
+            if (dv->hasSourceTimestamp) {
+                char tsbuf[64];
+                output_timestamp(dv->sourceTimestamp, tsbuf, sizeof(tsbuf));
+                if (tsbuf[0]) printf(",\"sourceTimestamp\":\"%s\"", tsbuf);
+            }
+            if (dv->hasServerTimestamp) {
+                char tsbuf[64];
+                output_timestamp(dv->serverTimestamp, tsbuf, sizeof(tsbuf));
+                if (tsbuf[0]) printf(",\"serverTimestamp\":\"%s\"", tsbuf);
+            }
+            printf("}");
+        }
+    }
+    printf("]}");
+}
+
+static int history_read_once(UA_Client *client, const UA_NodeId *nodeId,
+                             UA_DateTime startTime, UA_DateTime endTime,
+                             UA_UInt32 numValues, UA_Boolean returnBounds,
+                             UA_TimestampsToReturn ts,
+                             const char *cpStr, UA_Boolean releaseCp,
+                             UA_StatusCode *outSvc, UA_StatusCode *outItem,
+                             UA_ByteString *outCp, UA_HistoryData **outData,
+                             UA_HistoryReadResponse *outResp) {
+    UA_ReadRawModifiedDetails rawDetails;
+    UA_ReadRawModifiedDetails_init(&rawDetails);
+    rawDetails.isReadModified   = UA_FALSE;
+    rawDetails.startTime        = startTime;
+    rawDetails.endTime          = endTime;
+    rawDetails.numValuesPerNode = numValues;
+    rawDetails.returnBounds     = returnBounds;
+
+    UA_HistoryReadRequest hrReq;
+    UA_HistoryReadRequest_init(&hrReq);
+    UA_ExtensionObject_setValueCopy(&hrReq.historyReadDetails, &rawDetails,
+                                    &UA_TYPES[UA_TYPES_READRAWMODIFIEDDETAILS]);
+    hrReq.timestampsToReturn = ts;
+    hrReq.releaseContinuationPoints = releaseCp;
+    hrReq.nodesToRead = (UA_HistoryReadValueId *)
+        UA_Array_new(1, &UA_TYPES[UA_TYPES_HISTORYREADVALUEID]);
+    hrReq.nodesToReadSize = 1;
+    UA_HistoryReadValueId_init(&hrReq.nodesToRead[0]);
+    UA_NodeId_copy(nodeId, &hrReq.nodesToRead[0].nodeId);
+    if (cpStr && *cpStr) {
+        size_t cpLen = 0;
+        unsigned char *cpData = b64_decode(cpStr, &cpLen);
+        if (cpData && cpLen > 0) {
+            hrReq.nodesToRead[0].continuationPoint.data = cpData;
+            hrReq.nodesToRead[0].continuationPoint.length = cpLen;
+        } else {
+            free(cpData);
+        }
+    }
+
+    *outResp = UA_Client_Service_historyRead(client, hrReq);
+    UA_HistoryReadRequest_clear(&hrReq);
+
+    *outSvc = outResp->responseHeader.serviceResult;
+    *outItem = UA_STATUSCODE_GOOD;
+    UA_ByteString_init(outCp);
+    *outData = NULL;
+    if (UA_StatusCode_isGood(*outSvc) && outResp->resultsSize > 0) {
+        UA_HistoryReadResult *hr = &outResp->results[0];
+        *outItem = hr->statusCode;
+        if (hr->continuationPoint.length > 0)
+            UA_ByteString_copy(&hr->continuationPoint, outCp);
+        UA_ExtensionObject *eo = &hr->historyData;
+        if (eo->encoding == UA_EXTENSIONOBJECT_DECODED &&
+            eo->content.decoded.type == &UA_TYPES[UA_TYPES_HISTORYDATA]) {
+            *outData = (UA_HistoryData *)eo->content.decoded.data;
+        }
+    }
+    return 0;
+}
+
 static int cmd_history_read(int argc, char **argv) {
     const char *endpoint   = find_arg(argc, argv, "--endpoint");
     const char *nodeStr    = find_arg(argc, argv, "--node");
@@ -2545,6 +2997,7 @@ static int cmd_history_read(int argc, char **argv) {
     const char *relCpStr   = find_arg(argc, argv, "--release-continuation-point");
     const char *rbStr      = find_arg(argc, argv, "--return-bounds");
     const char *tsStr      = find_arg(argc, argv, "--timestamps");
+    const char *scenario   = find_arg(argc, argv, "--scenario");
 
     if (!endpoint || !nodeStr || !startStr || !endStr) {
         output_begin("open62541", "history-read");
@@ -2556,7 +3009,8 @@ static int cmd_history_read(int argc, char **argv) {
             " [--num-values <n>] [--continuation-point <b64>]"
             " [--release-continuation-point true|false]"
             " [--return-bounds true|false]"
-            " [--timestamps Source|Server|Both|Neither]");
+            " [--timestamps Source|Server|Both|Neither]"
+            " [--scenario continue]");
         output_end();
         return 2;
     }
@@ -2617,63 +3071,121 @@ static int cmd_history_read(int argc, char **argv) {
         nodeId = parse_nodeid_local(nodeStr);
     }
 
-    /* Build ReadRawModifiedDetails (IsReadModified = false) */
-    UA_ReadRawModifiedDetails rawDetails;
-    UA_ReadRawModifiedDetails_init(&rawDetails);
-    rawDetails.isReadModified    = UA_FALSE;
-    rawDetails.startTime         = startTime;
-    rawDetails.endTime           = endTime;
-    rawDetails.numValuesPerNode  = numValues;
-    rawDetails.returnBounds      = returnBounds;
+    /* Single-session continue/release/reuse scenario (Wave 3B). */
+    if (scenario && strcmp(scenario, "continue") == 0) {
+        if (numValues == 0) numValues = 2;
+        char lastCpB64[512];
+        lastCpB64[0] = '\0';
+        char reuseCpB64[512];
+        reuseCpB64[0] = '\0';
+        UA_StatusCode lastSvc = UA_STATUSCODE_GOOD, lastItem = UA_STATUSCODE_GOOD;
+        UA_StatusCode releaseSc = UA_STATUSCODE_GOOD, reuseSc = UA_STATUSCODE_GOOD;
+        int pageCount = 0;
 
-    /* Build HistoryReadRequest */
-    UA_HistoryReadRequest hrReq;
-    UA_HistoryReadRequest_init(&hrReq);
-    UA_ExtensionObject_setValueCopy(&hrReq.historyReadDetails,
-                                    &rawDetails,
-                                    &UA_TYPES[UA_TYPES_READRAWMODIFIEDDETAILS]);
-    hrReq.timestampsToReturn        = ts;
-    hrReq.releaseContinuationPoints = releaseCp;
-    hrReq.nodesToRead = (UA_HistoryReadValueId *)
-        UA_Array_new(1, &UA_TYPES[UA_TYPES_HISTORYREADVALUEID]);
-    hrReq.nodesToReadSize = 1;
+        /* Collect pages first, then emit a well-formed envelope. */
+        typedef struct {
+            UA_StatusCode item;
+            char cpB64[512];
+            UA_HistoryReadResponse resp; /* owns HistoryData */
+            UA_HistoryData *hdata;
+            UA_ByteString cp;
+        } ContPage;
+        ContPage pages[8];
+        memset(pages, 0, sizeof(pages));
 
-    UA_HistoryReadValueId_init(&hrReq.nodesToRead[0]);
-    UA_NodeId_copy(&nodeId, &hrReq.nodesToRead[0].nodeId);
-
-    /* Optional continuation point (Base64-encoded ByteString) */
-    if (cpStr && *cpStr) {
-        size_t cpLen = 0;
-        unsigned char *cpData = b64_decode(cpStr, &cpLen);
-        if (cpData && cpLen > 0) {
-            hrReq.nodesToRead[0].continuationPoint.data   = cpData;
-            hrReq.nodesToRead[0].continuationPoint.length = cpLen;
-        } else {
-            free(cpData);
+        const char *curCp = NULL;
+        for (int i = 0; i < 8; i++) {
+            UA_StatusCode svc_sc = UA_STATUSCODE_GOOD, item_sc = UA_STATUSCODE_GOOD;
+            UA_ByteString cpOut; UA_ByteString_init(&cpOut);
+            UA_HistoryData *hdata = NULL;
+            UA_HistoryReadResponse hrResp;
+            history_read_once(client, &nodeId, startTime, endTime, numValues,
+                              returnBounds, ts, curCp, UA_FALSE,
+                              &svc_sc, &item_sc, &cpOut, &hdata, &hrResp);
+            lastSvc = svc_sc; lastItem = item_sc;
+            pages[pageCount].item = item_sc;
+            pages[pageCount].resp = hrResp;
+            pages[pageCount].hdata = hdata;
+            pages[pageCount].cp = cpOut;
+            pages[pageCount].cpB64[0] = '\0';
+            if (cpOut.length > 0 && cpOut.data) {
+                char *b64 = b64_encode(cpOut.data, cpOut.length);
+                if (b64) {
+                    snprintf(pages[pageCount].cpB64, sizeof(pages[pageCount].cpB64), "%s", b64);
+                    snprintf(lastCpB64, sizeof(lastCpB64), "%s", b64);
+                    snprintf(reuseCpB64, sizeof(reuseCpB64), "%s", b64);
+                    free(b64);
+                }
+                curCp = lastCpB64;
+            } else {
+                curCp = NULL;
+            }
+            pageCount++;
+            if (!UA_StatusCode_isGood(svc_sc) || !UA_StatusCode_isGood(item_sc) || !curCp)
+                break;
         }
+
+        if (reuseCpB64[0]) {
+            UA_StatusCode svc_sc, item_sc;
+            UA_ByteString cpOut; UA_ByteString_init(&cpOut);
+            UA_HistoryData *hdata = NULL;
+            UA_HistoryReadResponse hrResp;
+            history_read_once(client, &nodeId, startTime, endTime, numValues,
+                              returnBounds, ts, reuseCpB64, UA_TRUE,
+                              &svc_sc, &item_sc, &cpOut, &hdata, &hrResp);
+            releaseSc = UA_StatusCode_isGood(svc_sc) ? item_sc : svc_sc;
+            UA_ByteString_clear(&cpOut);
+            UA_HistoryReadResponse_clear(&hrResp);
+
+            history_read_once(client, &nodeId, startTime, endTime, numValues,
+                              returnBounds, ts, reuseCpB64, UA_FALSE,
+                              &svc_sc, &item_sc, &cpOut, &hdata, &hrResp);
+            reuseSc = UA_StatusCode_isGood(svc_sc) ? item_sc : svc_sc;
+            UA_ByteString_clear(&cpOut);
+            UA_HistoryReadResponse_clear(&hrResp);
+        }
+
+        int ok = UA_StatusCode_isGood(lastSvc) && UA_StatusCode_isGood(lastItem) && pageCount > 0;
+        UA_StatusCode emit_sc = UA_StatusCode_isGood(lastSvc) ? lastItem : lastSvc;
+        output_begin("open62541", "history-read");
+        output_success(ok);
+        output_service_result(emit_sc);
+        output_open_results();
+        printf("{\"scenario\":\"continue\",\"nodeId\":");
+        output_nodeid(&nodeId);
+        printf(",\"pages\":[");
+        for (int i = 0; i < pageCount; i++) {
+            if (i > 0) printf(",");
+            emit_history_page_json(&nodeId, pages[i].item, &pages[i].cp, pages[i].hdata);
+        }
+        printf("],\"releaseStatusCode\":{\"name\":\"%s\",\"code\":%" PRIu32
+               ",\"severity\":\"%s\"}",
+               output_status_code_name(releaseSc), (uint32_t)releaseSc,
+               output_severity(releaseSc));
+        printf(",\"reuseAfterReleaseStatusCode\":{\"name\":\"%s\",\"code\":%" PRIu32
+               ",\"severity\":\"%s\"}}",
+               output_status_code_name(reuseSc), (uint32_t)reuseSc,
+               output_severity(reuseSc));
+        output_close_results();
+        output_null_error();
+        output_end();
+
+        for (int i = 0; i < pageCount; i++) {
+            UA_ByteString_clear(&pages[i].cp);
+            UA_HistoryReadResponse_clear(&pages[i].resp);
+        }
+        UA_NodeId_clear(&nodeId);
+        UA_Client_disconnect(client);
+        UA_Client_delete(client);
+        return ok ? 0 : 4;
     }
 
-    UA_HistoryReadResponse hrResp = UA_Client_Service_historyRead(client, hrReq);
-    UA_HistoryReadRequest_clear(&hrReq);
-
-    UA_StatusCode svc_sc = hrResp.responseHeader.serviceResult;
-
-    UA_StatusCode item_sc = UA_STATUSCODE_GOOD;
-    UA_ByteString *cp     = NULL;
+    UA_StatusCode svc_sc = UA_STATUSCODE_GOOD, item_sc = UA_STATUSCODE_GOOD;
+    UA_ByteString cpOut; UA_ByteString_init(&cpOut);
     UA_HistoryData *hdata = NULL;
-
-    if (UA_StatusCode_isGood(svc_sc) && hrResp.resultsSize > 0) {
-        UA_HistoryReadResult *hr = &hrResp.results[0];
-        item_sc = hr->statusCode;
-        cp = &hr->continuationPoint;
-
-        /* Decode HistoryData from ExtensionObject */
-        UA_ExtensionObject *eo = &hr->historyData;
-        if (eo->encoding == UA_EXTENSIONOBJECT_DECODED &&
-            eo->content.decoded.type == &UA_TYPES[UA_TYPES_HISTORYDATA]) {
-            hdata = (UA_HistoryData *)eo->content.decoded.data;
-        }
-    }
+    UA_HistoryReadResponse hrResp;
+    history_read_once(client, &nodeId, startTime, endTime, numValues, returnBounds, ts,
+                      cpStr, releaseCp, &svc_sc, &item_sc, &cpOut, &hdata, &hrResp);
 
     UA_StatusCode emit_sc = UA_StatusCode_isGood(svc_sc) ? item_sc : svc_sc;
     int ok = UA_StatusCode_isGood(svc_sc) && UA_StatusCode_isGood(item_sc);
@@ -2682,67 +3194,12 @@ static int cmd_history_read(int argc, char **argv) {
     output_success(ok);
     output_service_result(emit_sc);
     output_open_results();
-
-    printf("{\"nodeId\":");
-    output_nodeid(&nodeId);
-    printf(",\"statusCode\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
-           output_status_code_name(item_sc), (uint32_t)item_sc, output_severity(item_sc));
-
-    /* Continuation point as Base64 string or null */
-    if (cp && cp->length > 0 && cp->data) {
-        char *cpB64 = b64_encode(cp->data, cp->length);
-        if (cpB64) {
-            printf(",\"continuationPoint\":\"%s\"", cpB64);
-            free(cpB64);
-        } else {
-            printf(",\"continuationPoint\":null");
-        }
-    } else {
-        printf(",\"continuationPoint\":null");
-    }
-
-    /* Data values */
-    printf(",\"values\":[");
-    if (hdata) {
-        for (size_t i = 0; i < hdata->dataValuesSize; i++) {
-            UA_DataValue *dv = &hdata->dataValues[i];
-            if (i > 0) printf(",");
-            UA_StatusCode dvSc = dv->hasStatus ? dv->status : UA_STATUSCODE_GOOD;
-            const char *dtName = (dv->hasValue && dv->value.type)
-                                 ? type_name(dv->value.type) : "Unknown";
-            int bi = (dv->hasValue && dv->value.type)
-                     ? ua_type_to_builtin_id(dv->value.type) : 0;
-            printf("{");
-            if (dv->hasValue) {
-                printf("\"value\":");
-                output_ua_variant_value(&dv->value);
-            } else {
-                printf("\"value\":null");
-            }
-            printf(",\"dataType\":\"%s\"", dtName);
-            printf(",\"builtInType\":%d", bi);
-            printf(",\"statusCode\":{\"name\":\"%s\",\"code\":%" PRIu32
-                   ",\"severity\":\"%s\"}",
-                   output_status_code_name(dvSc), (uint32_t)dvSc, output_severity(dvSc));
-            if (dv->hasSourceTimestamp) {
-                char tsbuf[64];
-                output_timestamp(dv->sourceTimestamp, tsbuf, sizeof(tsbuf));
-                if (tsbuf[0]) printf(",\"sourceTimestamp\":\"%s\"", tsbuf);
-            }
-            if (dv->hasServerTimestamp) {
-                char tsbuf[64];
-                output_timestamp(dv->serverTimestamp, tsbuf, sizeof(tsbuf));
-                if (tsbuf[0]) printf(",\"serverTimestamp\":\"%s\"", tsbuf);
-            }
-            printf("}");
-        }
-    }
-    printf("]}");
-
+    emit_history_page_json(&nodeId, item_sc, &cpOut, hdata);
     output_close_results();
     output_null_error();
     output_end();
 
+    UA_ByteString_clear(&cpOut);
     UA_HistoryReadResponse_clear(&hrResp);
     UA_NodeId_clear(&nodeId);
     UA_Client_disconnect(client);
@@ -2936,9 +3393,9 @@ static int cmd_transfer_subscriptions(int argc, char **argv) {
 int client_run(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr,
-            "usage: client <endpoints|read|write|browse|call|subscribe"
-            "|subscription-lifecycle|event-subscribe|history-read"
-            "|republish|transfer-subscriptions> ...\n");
+            "usage: client <endpoints|find-servers|read|write|browse|translate|"
+            "call|subscribe|subscription-lifecycle|event-subscribe|history-read|"
+            "republish|transfer-subscriptions> ...\n");
         return 2;
     }
 
@@ -2981,9 +3438,11 @@ int client_run(int argc, char **argv) {
 
     const char *sub = argv[1];
     if (strcmp(sub, "endpoints")              == 0) return cmd_endpoints(argc - 1, argv + 1);
+    if (strcmp(sub, "find-servers")           == 0) return cmd_find_servers(argc - 1, argv + 1);
     if (strcmp(sub, "read")                   == 0) return cmd_read(argc - 1, argv + 1);
     if (strcmp(sub, "write")                  == 0) return cmd_write(argc - 1, argv + 1);
     if (strcmp(sub, "browse")                 == 0) return cmd_browse(argc - 1, argv + 1);
+    if (strcmp(sub, "translate")              == 0) return cmd_translate(argc - 1, argv + 1);
     if (strcmp(sub, "call")                   == 0) return cmd_call(argc - 1, argv + 1);
     if (strcmp(sub, "subscribe")              == 0) return cmd_subscribe(argc - 1, argv + 1);
     if (strcmp(sub, "subscription-lifecycle") == 0) return cmd_subscription_lifecycle(argc - 1, argv + 1);

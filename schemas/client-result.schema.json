@@ -18,9 +18,9 @@
     "operation": {
       "type": "string",
       "enum": [
-        "endpoints", "read", "write", "browse", "call", "subscribe",
-        "subscription-lifecycle", "event-subscribe", "history-read",
-        "republish", "transfer-subscriptions"
+        "endpoints", "find-servers", "read", "write", "browse", "translate",
+        "call", "subscribe", "subscription-lifecycle", "event-subscribe",
+        "history-read", "republish", "transfer-subscriptions"
       ]
     },
     "success": {
@@ -34,9 +34,11 @@
       "items": {
         "oneOf": [
           { "$ref": "#/$defs/endpointResult" },
+          { "$ref": "#/$defs/findServersResult" },
           { "$ref": "#/$defs/readResult" },
           { "$ref": "#/$defs/writeResult" },
           { "$ref": "#/$defs/browseResult" },
+          { "$ref": "#/$defs/translateResult" },
           { "$ref": "#/$defs/subscribeResult" },
           { "$ref": "#/$defs/subscriptionLifecycleResult" },
           { "$ref": "#/$defs/eventSubscribeResult" },
@@ -84,6 +86,27 @@
         "url":            { "type": "string" },
         "securityPolicy": { "type": "string" },
         "securityMode":   { "type": "string" }
+      }
+    },
+    "findServersResult": {
+      "type": "object",
+      "required": ["applicationUri", "applicationName", "productUri", "discoveryUrls"],
+      "additionalProperties": false,
+      "properties": {
+        "applicationUri": { "type": "string" },
+        "applicationName": {
+          "type": "object",
+          "required": ["locale", "text"],
+          "properties": {
+            "locale": { "type": "string" },
+            "text":   { "type": "string" }
+          }
+        },
+        "productUri": { "type": "string" },
+        "discoveryUrls": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
       }
     },
     "readResult": {
@@ -135,6 +158,18 @@
         "nodeClass": {
           "type": "string",
           "enum": ["Object","Variable","Method","ObjectType","VariableType","ReferenceType","DataType","View"]
+        }
+      }
+    },
+    "translateResult": {
+      "type": "object",
+      "required": ["statusCode", "targets"],
+      "additionalProperties": false,
+      "properties": {
+        "statusCode": { "$ref": "#/$defs/statusCode" },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
     },

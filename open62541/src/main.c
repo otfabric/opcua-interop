@@ -48,7 +48,7 @@
 static int cmd_print_capabilities(void) {
     printf("{\n");
     printf("  \"schemaVersion\": \"1.0\",\n");
-    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.5.0\"},\n");
+    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.5.1\"},\n");
     printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.5\"},\n");
     printf("  \"fixtureSchemaVersions\": [\"1.0\"],\n");
     printf("  \"roles\": [\"client\", \"server\"],\n");
@@ -56,9 +56,11 @@ static int cmd_print_capabilities(void) {
     printf("  \"encodings\": [\"binary\"],\n");
     printf("  \"clientOperations\": [\n");
     printf("    \"endpoints\",\n");
+    printf("    \"find-servers\",\n");
     printf("    \"read\",\n");
     printf("    \"write\",\n");
     printf("    \"browse\",\n");
+    printf("    \"translate\",\n");
     printf("    \"call\",\n");
     printf("    \"subscribe\",\n");
     printf("    \"subscription-lifecycle\",\n");

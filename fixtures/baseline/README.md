@@ -13,7 +13,9 @@ Objects (i=85)
     ├── Access        — read-write, read-only, write-only
     ├── Methods       — Add, Multiply, Echo, NoArguments, MultipleOutputs, Fail
     ├── DataValues    — variables with specific status codes and timestamp behavior
-    └── Diagnostics   — adapter name, stack version, fixture id
+    ├── Diagnostics   — adapter name, stack version, fixture id
+    ├── Events        — EventNotifier source emitting deterministic BaseEvents
+    └── History       — gate-compliant fixed raw HistoryRead samples
 ```
 
 ## Namespace

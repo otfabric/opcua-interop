@@ -34,6 +34,8 @@ RUN cmake .. \
       -DUA_BUILD_EXAMPLES=OFF \
       -DUA_BUILD_UNIT_TESTS=OFF \
       -DUA_ENABLE_ENCRYPTION=MBEDTLS \
+      -DUA_ENABLE_HISTORIZING=ON \
+      -DUA_ENABLE_SUBSCRIPTIONS_EVENTS=ON \
     && cmake --build . -- -j"$(nproc)"
 
 # ---------------------------------------------------------------------------
