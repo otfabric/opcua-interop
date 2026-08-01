@@ -1,8 +1,9 @@
 name: Upstream candidates
 run-name: "Candidate upstream probe by @${{ github.actor }}"
 
-# Exercises newer upstreams without mutating release pins.
-# Runs weekly on Monday morning and can be triggered manually.
+# Resolves newer upstreams, builds candidate images, runs smoke, and publishes a
+# pin-vs-latest decision table in the workflow Job Summary.
+# Release pins in Dockerfiles / pom.xml are never mutated.
 on:
   schedule:
     - cron: "0 6 * * 1"
@@ -12,29 +13,54 @@ permissions:
   contents: read
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # open62541 – resolve latest release tag from GitHub, build the adapter
-  # ---------------------------------------------------------------------------
   candidate-open62541:
-    name: open62541-latest
+    name: open62541
     runs-on: ubuntu-latest
+    outputs:
+      pin: ${{ steps.resolve.outputs.pin }}
+      latest: ${{ steps.resolve.outputs.latest }}
+      update: ${{ steps.resolve.outputs.update }}
+      build: ${{ steps.build.outcome }}
+      smoke: ${{ steps.smoke.outcome }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Resolve latest open62541 release
-        id: release
+      - name: Resolve open62541 pin vs latest release
+        id: resolve
         run: |
-          tag="$(curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/open62541/open62541/releases/latest \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")"
-          echo "version=${tag}" >> "$GITHUB_OUTPUT"
-          echo "candidate open62541=${tag}"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import sys
+          import urllib.request
+          from pathlib import Path
 
-      - name: Build open62541 adapter with candidate pin
+          pin = ""
+          for line in Path("open62541/Dockerfile").read_text().splitlines():
+              if line.startswith("ARG OPEN62541_COMMIT="):
+                  pin = line.split("=", 1)[1].strip()
+                  break
+          if not pin:
+              raise SystemExit("could not read OPEN62541_COMMIT from Dockerfile")
+
+          req = urllib.request.Request(
+              "https://api.github.com/repos/open62541/open62541/releases/latest",
+              headers={"Accept": "application/vnd.github+json"},
+          )
+          latest = json.load(urllib.request.urlopen(req))["tag_name"]
+          update = "yes" if pin != latest else "no"
+
+          print(f"pin={pin}")
+          print(f"latest={latest}")
+          print(f"update={update}")
+          print(f"resolved pin={pin} latest={latest} update={update}", file=sys.stderr)
+          PY
+
+      - name: Build open62541 adapter at latest release
+        id: build
+        continue-on-error: true
         uses: docker/build-push-action@v7
         with:
           context: open62541
@@ -43,47 +69,62 @@ jobs:
           load: true
           tags: opcua-interop-open62541:candidate
           build-args: |
-            OPEN62541_COMMIT=${{ steps.release.outputs.version }}
+            OPEN62541_COMMIT=${{ steps.resolve.outputs.latest }}
 
       - name: Run open62541 smoke against candidate image
+        id: smoke
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
         run: bash scripts/smoke.sh open62541 opcua-interop-open62541:candidate
 
-      - name: Record candidate result
-        if: always()
-        run: |
-          mkdir -p dist/candidate
-          {
-            echo "open62541_candidate=${{ steps.release.outputs.version }}"
-            echo "release_pin=v1.5.5"
-            echo "NOTE: release pins in Dockerfile were not modified"
-          } > dist/candidate/open62541.txt
-          cat dist/candidate/open62541.txt
-
-  # ---------------------------------------------------------------------------
-  # Eclipse Milo – resolve latest release from Maven Central, build the adapter
-  # ---------------------------------------------------------------------------
   candidate-milo:
-    name: milo-latest
+    name: milo
     runs-on: ubuntu-latest
+    outputs:
+      pin: ${{ steps.resolve.outputs.pin }}
+      latest: ${{ steps.resolve.outputs.latest }}
+      update: ${{ steps.resolve.outputs.update }}
+      build: ${{ steps.build.outcome }}
+      smoke: ${{ steps.smoke.outcome }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Resolve latest Eclipse Milo release on GitHub
-        id: release
+      - name: Resolve Milo pin vs latest release
+        id: resolve
         run: |
-          tag="$(curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/eclipse/milo/releases/latest \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")"
-          # GitHub tag is vX.Y.Z; Maven artifact version is X.Y.Z (no v prefix)
-          ver="${tag#v}"
-          echo "version=${ver}" >> "$GITHUB_OUTPUT"
-          echo "candidate milo=${ver}"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import re
+          import sys
+          import urllib.request
+          from pathlib import Path
 
-      - name: Build Milo adapter with candidate pin
+          text = Path("milo/pom.xml").read_text()
+          m = re.search(r"<milo\.version>([^<]+)</milo\.version>", text)
+          if not m:
+              raise SystemExit("could not read milo.version from pom.xml")
+          pin = m.group(1)
+
+          req = urllib.request.Request(
+              "https://api.github.com/repos/eclipse/milo/releases/latest",
+              headers={"Accept": "application/vnd.github+json"},
+          )
+          tag = json.load(urllib.request.urlopen(req))["tag_name"]
+          latest = tag[1:] if tag.startswith("v") else tag
+          update = "yes" if pin != latest else "no"
+
+          print(f"pin={pin}")
+          print(f"latest={latest}")
+          print(f"update={update}")
+          print(f"resolved pin={pin} latest={latest} update={update}", file=sys.stderr)
+          PY
+
+      - name: Build Milo adapter at latest release
+        id: build
+        continue-on-error: true
         uses: docker/build-push-action@v7
         with:
           context: milo
@@ -92,18 +133,76 @@ jobs:
           load: true
           tags: opcua-interop-milo:candidate
           build-args: |
-            MILO_VERSION=${{ steps.release.outputs.version }}
+            MILO_VERSION=${{ steps.resolve.outputs.latest }}
 
       - name: Run Milo smoke against candidate image
+        id: smoke
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
         run: bash scripts/smoke.sh milo opcua-interop-milo:candidate
 
-      - name: Record candidate result
-        if: always()
+  summary:
+    name: Decision table
+    runs-on: ubuntu-latest
+    needs: [candidate-open62541, candidate-milo]
+    if: always()
+    steps:
+      - name: Write pin-vs-latest summary
+        env:
+          OA_PIN: ${{ needs.candidate-open62541.outputs.pin }}
+          OA_LATEST: ${{ needs.candidate-open62541.outputs.latest }}
+          OA_UPDATE: ${{ needs.candidate-open62541.outputs.update }}
+          OA_BUILD: ${{ needs.candidate-open62541.outputs.build }}
+          OA_SMOKE: ${{ needs.candidate-open62541.outputs.smoke }}
+          MILO_PIN: ${{ needs.candidate-milo.outputs.pin }}
+          MILO_LATEST: ${{ needs.candidate-milo.outputs.latest }}
+          MILO_UPDATE: ${{ needs.candidate-milo.outputs.update }}
+          MILO_BUILD: ${{ needs.candidate-milo.outputs.build }}
+          MILO_SMOKE: ${{ needs.candidate-milo.outputs.smoke }}
         run: |
-          mkdir -p dist/candidate
-          {
-            echo "milo_candidate=${{ steps.release.outputs.version }}"
-            echo "release_pin=1.1.5"
-            echo "NOTE: release pins in pom.xml were not modified"
-          } > dist/candidate/milo.txt
-          cat dist/candidate/milo.txt
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import os
+
+          def smoke_label(build: str, smoke: str) -> str:
+              if build != "success":
+                  return "skipped"
+              return smoke or "skipped"
+
+          oa_pin = os.environ.get("OA_PIN", "")
+          oa_latest = os.environ.get("OA_LATEST", "")
+          oa_update = os.environ.get("OA_UPDATE", "?")
+          oa_build = os.environ.get("OA_BUILD", "?")
+          oa_smoke = smoke_label(oa_build, os.environ.get("OA_SMOKE", ""))
+
+          milo_pin = os.environ.get("MILO_PIN", "")
+          milo_latest = os.environ.get("MILO_LATEST", "")
+          milo_update = os.environ.get("MILO_UPDATE", "?")
+          milo_build = os.environ.get("MILO_BUILD", "?")
+          milo_smoke = smoke_label(milo_build, os.environ.get("MILO_SMOKE", ""))
+
+          print("## Upstream candidate report")
+          print()
+          print("Release pins were **not** modified. Use this table to decide whether to bump.")
+          print()
+          print("| Stack | Kind | Release pin | Latest upstream | Build | Smoke | Update? |")
+          print("|---|---|---|---|---|---|---|")
+          print(
+              f"| [open62541](https://github.com/open62541/open62541) | git release tag | "
+              f"`{oa_pin}` | `{oa_latest}` | `{oa_build}` | `{oa_smoke}` | **{oa_update}** |"
+          )
+          print(
+              f"| [Eclipse Milo](https://github.com/eclipse/milo) | Maven / GitHub semver | "
+              f"`{milo_pin}` | `{milo_latest}` | `{milo_build}` | `{milo_smoke}` | **{milo_update}** |"
+          )
+          print()
+          print("### Pin locations")
+          print()
+          print("- open62541: `open62541/Dockerfile` (`ARG OPEN62541_COMMIT`)")
+          print("- Milo: `milo/pom.xml` (`milo.version`)")
+          print()
+          print("### How to read this")
+          print()
+          print("- **Update? = yes** means pin ≠ latest upstream release.")
+          print("- **Build** / **Smoke** exercise the candidate pin only; release pins stay unchanged.")
+          print("- Bump deliberately after reviewing upstream changelog / release notes.")
+          PY
