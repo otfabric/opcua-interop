@@ -1,23 +1,61 @@
-# opcua-interop
+# opcua-interop — OPC UA Interoperability Testing with Docker
 
-Containerized OPC UA reference implementations for interoperability testing.
+**opcua-interop is an open-source OPC UA (OPC Unified Architecture)
+interoperability testing infrastructure providing Dockerized
+reference clients and servers based on independent OPC UA
+protocol implementations.**
 
-## Purpose
+Test OPC UA client and server implementations against two established
+reference stacks:
 
-`opcua-interop` provides two independently implemented OPC UA stacks—**open62541** (C) and **Eclipse Milo** (Java/JVM)—as deterministic Docker containers with a shared fixture format. Consumer repositories such as [`go-opcua`](https://github.com/otfabric/go-opcua) use these containers to make defensible client and server interoperability claims.
+- **open62541 (C)** — Open-source OPC UA implementation for
+  embedded, industrial and native applications.
+- **Eclipse Milo (Java)** — Independent OPC UA implementation
+  for Java and JVM-based industrial applications.
 
-**This repository owns:**
-- Containerized reference servers and clients
-- The fixture schema and bundled fixtures
-- Deterministic address-space construction
-- Test PKI and certificate generation
-- Health checks and readiness signals
-- Documented commands for consumer repositories
+The infrastructure provides deterministic test fixtures, simulated
+OPC UA servers, reference client operations, secure communication,
+certificate-based authentication, subscriptions, events, historical
+data and automated protocol compatibility testing.
 
-**Consumer repositories own:**
-- Test scenarios, assertions, and coverage decisions
-- Pass/fail evaluation
-- Compatibility claims and regression tracking
+## Key features
+
+- **Independent reference implementations** — Two independently
+  implemented OPC UA stacks written in C and Java.
+- **Dockerized clients and servers** — Reproducible OPC UA
+  test environments without installing native protocol libraries.
+- **Deterministic fixtures** — Shared OPC UA address spaces,
+  data types, values and expected server behavior.
+- **Client/server interoperability** — Validate OPC UA clients
+  against reference servers and OPC UA servers against
+  reference clients.
+- **Security testing** — Test PKI, X.509 certificates, secure
+  endpoints, encryption policies and authentication.
+- **Subscriptions and events** — Data-change monitoring,
+  event subscriptions and subscription lifecycle testing.
+- **Historical data** — HistoryRead operations, continuation
+  points and historical value retrieval.
+- **Method calls and node management** — Exercise advanced
+  OPC UA services using documented client commands.
+- **Cross-platform containers** — Docker images for
+  Linux AMD64 and ARM64.
+- **CI integration** — Automated testing with consistent
+  fixtures and machine-readable results.
+
+## Independent interoperability infrastructure
+
+This repository provides reusable OPC UA reference environments.
+It does not depend on any particular OPC UA library under test.
+
+Applications and protocol libraries consume the published Docker
+images and implement their own test assertions.
+
+For example,
+[OTFabric go-opcua](https://github.com/otfabric/go-opcua)
+uses these reference implementations to verify its client
+and server interoperability.
+
+**Open Source · Docker · open62541 · Eclipse Milo · OPC UA**
 
 ## Quick start
 
