@@ -231,6 +231,56 @@ check_subscribe() {
     fi
 }
 
+check_register_nodes() {
+    local client_image="$1"
+    local endpoint="$2"
+    local label="$3"
+
+    local node="nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32"
+    local output
+    if output=$(run_client_op "${client_image}" register-nodes \
+            --endpoint "${endpoint}" \
+            --node "${node}"); then
+        validate_envelope "${output}" "${label}:register-nodes" || return
+        if echo "${output}" | jq -e '.success == true and .results[0].statusCode.name == "Good" and .results[0].unregisterStatusCode.name == "Good" and .results[0].value == -123456789' >/dev/null 2>&1; then
+            ok "${label}: register-nodes Scalar.Int32"
+        else
+            fail "${label}: register-nodes — unexpected result: ${output}"
+        fi
+    else
+        fail "${label}: register-nodes command exited non-zero"
+    fi
+}
+
+# Subscribes across two SecureChannel lifetimes (~12 s at 2 notifications/s):
+# the command only succeeds when every SecurityToken renewal is accepted and
+# data keeps flowing. Lifetimes below ~5 s are not usable: the open62541 client
+# schedules renewal coarsely and its old token can expire inside the 25% window.
+check_channel_renewal() {
+    local client_image="$1"
+    local endpoint="$2"
+    local label="$3"
+
+    local node="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter"
+    local output
+    if output=$(run_client_op "${client_image}" subscribe \
+            --endpoint "${endpoint}" \
+            --node "${node}" \
+            --publishing-interval-ms 500 \
+            --notifications 24 \
+            --timeout-ms 40000 \
+            --channel-lifetime-ms 6000); then
+        validate_envelope "${output}" "${label}:channel-renewal" || return
+        if echo "${output}" | jq -e '.success == true and (.results[0].notifications | length) == 24' >/dev/null 2>&1; then
+            ok "${label}: subscribe across SecureChannel renewals (lifetime 6s)"
+        else
+            fail "${label}: channel renewal — unexpected result: ${output}"
+        fi
+    else
+        fail "${label}: channel renewal subscribe exited non-zero"
+    fi
+}
+
 # ── Mode: single adapter ──────────────────────────────────────────────────────
 
 run_single_smoke() {
@@ -253,6 +303,8 @@ run_single_smoke() {
     check_write       "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_call        "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_subscribe   "${image}" "${endpoint}" "${adapter}→${adapter}"
+    check_register_nodes "${image}" "${endpoint}" "${adapter}→${adapter}"
+    check_channel_renewal "${image}" "${endpoint}" "${adapter}→${adapter}"
 
     stop_server "${cname}"
     trap - EXIT
@@ -284,6 +336,8 @@ run_cross_smoke() {
     check_write       "${img_open62541}" "${ep_open62541}" "o62541→o62541"
     check_call        "${img_open62541}" "${ep_open62541}" "o62541→o62541"
     check_subscribe   "${img_open62541}" "${ep_open62541}" "o62541→o62541"
+    check_register_nodes "${img_open62541}" "${ep_open62541}" "o62541→o62541"
+    check_channel_renewal "${img_open62541}" "${ep_open62541}" "o62541→o62541"
 
     log "Cross-stack: open62541-client → milo-server"
     check_endpoints   "${img_open62541}" "${ep_milo}" "o62541→milo"
@@ -292,6 +346,8 @@ run_cross_smoke() {
     check_write       "${img_open62541}" "${ep_milo}" "o62541→milo"
     check_call        "${img_open62541}" "${ep_milo}" "o62541→milo"
     check_subscribe   "${img_open62541}" "${ep_milo}" "o62541→milo"
+    check_register_nodes "${img_open62541}" "${ep_milo}" "o62541→milo"
+    check_channel_renewal "${img_open62541}" "${ep_milo}" "o62541→milo"
 
     log "Cross-stack: milo-client → open62541-server"
     check_endpoints   "${img_milo}" "${ep_open62541}" "milo→o62541"
@@ -300,6 +356,8 @@ run_cross_smoke() {
     check_write       "${img_milo}" "${ep_open62541}" "milo→o62541"
     check_call        "${img_milo}" "${ep_open62541}" "milo→o62541"
     check_subscribe   "${img_milo}" "${ep_open62541}" "milo→o62541"
+    check_register_nodes "${img_milo}" "${ep_open62541}" "milo→o62541"
+    check_channel_renewal "${img_milo}" "${ep_open62541}" "milo→o62541"
 
     log "Cross-stack: milo-client → milo-server"
     check_endpoints   "${img_milo}" "${ep_milo}" "milo→milo"
@@ -308,6 +366,8 @@ run_cross_smoke() {
     check_write       "${img_milo}" "${ep_milo}" "milo→milo"
     check_call        "${img_milo}" "${ep_milo}" "milo→milo"
     check_subscribe   "${img_milo}" "${ep_milo}" "milo→milo"
+    check_register_nodes "${img_milo}" "${ep_milo}" "milo→milo"
+    check_channel_renewal "${img_milo}" "${ep_milo}" "milo→milo"
 
     stop_server "${cname_open62541}"
     stop_server "${cname_milo}"

@@ -1192,7 +1192,7 @@ int server_run(const ServerArgs *args) {
     }
     UA_ServerConfig *cfg = UA_Server_getConfig(server);
 
-    /* In v1.5.5 endpoints are populated after startup from serverUrls.
+    /* In open62541 v1.5.x endpoints are populated after startup from serverUrls.
      * Override endpoint/discovery URLs now for any that are already set,
      * and record adv_url so the startup hooks can apply it too.
      * (Pre-startup arrays may be empty — the loops are no-ops in that case.) */

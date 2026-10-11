@@ -243,14 +243,40 @@ Adds four new client commands to both adapters; `adapter.version` = `0.5.0`:
 3. **`republish`** — flags `--subscription-id`, `--sequence-number`.
 4. **`transfer-subscriptions`** — repeatable `--subscription-id`, `--send-initial-values`.
 
-**Current adapter client surface (13 operations):**
+**As of v0.5.0 adapter client surface (13 operations):**
 `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`,
 `subscribe`, `subscription-lifecycle`, `event-subscribe`, `history-read`,
 `republish`, `transfer-subscriptions`
 
-Fix-forward on `v0.5.0`: BaseEvent emission, gate-compliant raw historian, and
-narrow `event-subscribe` / `history-read --scenario continue` controls
-(see `PUBLISH.md`).
+v0.5.0 also carries BaseEvent emission, the gate-compliant raw historian, and the
+narrow `event-subscribe` / `history-read --scenario continue` controls.
+
+---
+
+## Upstream refresh, channel renewal and node services (0.6.0) ✓
+
+Adapter release **v0.6.0**; `adapter.version` = `0.6.0`:
+
+1. **Upstream pins** — open62541 `v1.5.5` → `v1.5.9`, Eclipse Milo `1.1.5` → `1.1.8`
+   (decided from the *Upstream candidates* workflow report).
+2. **`register-nodes`** — RegisterNodes → Read through the returned aliases →
+   UnregisterNodes; repeatable `--node`.
+3. **`node-management`** — AddNodes (Int32 `BaseDataVariableType` Variable under
+   `--parent`) → Read → DeleteNodes → Read-after-delete.
+4. **`--channel-lifetime-ms`** — global client flag requesting a short SecureChannel
+   lifetime so a long-running command crosses several SecurityToken renewals.
+5. **Smoke** — `register-nodes` and a 24-notification subscribe at a 6 s channel
+   lifetime run in every adapter↔adapter direction.
+
+**Current adapter client surface (15 operations):**
+`endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`,
+`subscribe`, `subscription-lifecycle`, `event-subscribe`, `history-read`,
+`republish`, `transfer-subscriptions`, `register-nodes`, `node-management`
+
+Known limits recorded for consumers: the Milo reference server has no
+NodeManagement service set (AddNodes → `BadNotSupported`), and Milo's SDK does not
+pass `ReleaseContinuationPoints` to the history backend, so the Milo server cannot
+invalidate a released HistoryRead continuation point.
 
 ---
 
@@ -258,11 +284,12 @@ narrow `event-subscribe` / `history-read --scenario continue` controls
 
 | Item | Status |
 |------|--------|
-| Latest released image tag | **v0.5.0** |
-| Publication model | Fix-forward: republish **`v0.5.0`** when requirements change (no RC / `v0.5.1` tags) |
-| Capabilities `adapter.version` | **0.5.0** |
-| Client operations | 13 (see above) |
-| Peer Event / HistoryRead / Republish / Transfer CLI | go-opcua pinned to published `v0.5.0` digests |
+| Latest released image tag | **v0.6.0** |
+| Publication model | Immutable tags: every adapter-surface change gets a new release (see `PUBLISH.md`) |
+| Capabilities `adapter.version` | **0.6.0** |
+| Upstream stacks | open62541 **v1.5.9**, Eclipse Milo **1.1.8** |
+| Client operations | 15 (see above) |
+| Consumer pin | go-opcua re-pins to the published `v0.6.0` digests after release |
 
 ---
 
@@ -277,7 +304,8 @@ narrow `event-subscribe` / `history-read --scenario continue` controls
 | v0.3.0 | go-opcua Phase 13: `subscribe --timestamps`, `serverTimestamp` in subscribe JSON | **released** |
 | v0.4.0 | go-opcua Phase 14: subscribe revised fields + `subscription-lifecycle` command; capabilities 0.4.0 | **released** |
 | v0.5.0-dev | Phase 18 (WP1B) development capabilities label | **superseded** |
-| v0.5.0 | Phase 18 WP1B + events/historian/find-servers/translate/continue (fix-forward) | **released / fix-forward** |
+| v0.5.0 | Phase 18 WP1B + events/historian/find-servers/translate/continue | **released** |
+| v0.6.0 | open62541 v1.5.9 / Milo 1.1.8; `register-nodes`, `node-management`, `--channel-lifetime-ms`; capabilities 0.6.0 | **released** |
 | Later | Alarms; reverse connect; NodeSet2 import; PubSub | — |
 
 ---

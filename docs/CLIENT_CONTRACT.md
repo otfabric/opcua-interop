@@ -31,6 +31,8 @@ this contract. Changes that break it require a major schema version bump.
 | `history-read` | HistoryRead with ReadRawModifiedDetails (raw only); optional continuation point |
 | `republish` | RepublishRequest for a subscription sequence number |
 | `transfer-subscriptions` | TransferSubscriptions for one or more subscription ids |
+| `register-nodes` | RegisterNodes, Read through the registered aliases, UnregisterNodes |
+| `node-management` | AddNodes (Int32 Variable), Read, DeleteNodes, Read-after-delete |
 
 ### Global flags
 
@@ -47,6 +49,7 @@ this contract. Changes that break it require a major schema version bump.
 | `--trust-list <path>` | Trusted CA certificate (PEM or DER file); may be repeated | — |
 | `--username <name>` | Username for UserName identity token | — |
 | `--password <secret>` | Password for UserName identity token | — |
+| `--channel-lifetime-ms <n>` | Requested SecureChannel lifetime in ms; small values force SecurityToken renewals during the command | stack default |
 
 Security policy names: `None`, `Basic128Rsa15`, `Basic256`, `Basic256Sha256`,
 `Aes128_Sha256_RsaOaep`, `Aes256_Sha256_RsaPss`.
@@ -191,6 +194,39 @@ Adapter servers expose gate-compliant fixed raw samples on
 |------|-------------|---------|
 | `--subscription-id <n>` | Subscription id to transfer (repeatable) | required (≥1) |
 | `--send-initial-values <true\|false>` | `SendInitialValues` | `false` |
+
+### `register-nodes` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--node <nodeId>` | NodeId to register (repeatable) | required (≥1) |
+
+One session: RegisterNodes → Read `Value` through each returned alias →
+UnregisterNodes. `success` when every read and the unregister are Good.
+
+### `node-management` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--parent <nodeId>` | Parent node; the new node is added with `HasComponent` | required |
+| `--node <nodeId>` | Requested NodeId of the new Variable | required |
+| `--browse-name <name>` | BrowseName / DisplayName (namespace of `--node`) | `InteropAdded` |
+| `--value <int32>` | Initial Int32 value | `42` |
+
+One session: AddNodes (Int32 `BaseDataVariableType` Variable) → Read →
+DeleteNodes (`DeleteTargetReferences=true`) → Read again. `success` when the add,
+read-back (value equals `--value`) and delete are Good **and** the read after
+delete is Bad. A server without NodeManagement yields exit 4 with the service
+fault (typically `BadServiceUnsupported`) in `serviceResult`.
+
+### Channel renewal (`--channel-lifetime-ms`)
+
+Combine with a long-running command (typically `subscribe` with enough
+`--notifications` to span several lifetimes) to prove SecurityToken renewal:
+both stacks renew at 75% of the revised lifetime, so the command only completes
+if every renewal succeeded and traffic continued on the new token. Use
+lifetimes of 5000 ms or more: the open62541 client schedules renewal coarsely,
+so with very short lifetimes its old token can expire inside the 25% window.
 
 ---
 
@@ -581,6 +617,47 @@ omitted or zeroed; `serviceResult` carries the fault.
 ```
 
 One result object per requested `--subscription-id`, in request order.
+
+### `register-nodes`
+
+```json
+"results": [
+  {
+    "nodeId":               "ns=1;s=Scalar.Int32",
+    "registeredNodeId":     "ns=1;s=Scalar.Int32",
+    "statusCode":           { "name": "Good", "code": 0, "severity": "Good" },
+    "dataType":             "Int32",
+    "builtInType":          6,
+    "value":                -123456789,
+    "unregisterStatusCode": { "name": "Good", "code": 0, "severity": "Good" }
+  }
+]
+```
+
+One result object per `--node`, in request order. `registeredNodeId` is whatever
+alias the server returned (servers may return the original NodeId).
+`dataType` / `builtInType` / `value` are present only when the read is Good.
+
+### `node-management`
+
+```json
+"results": [
+  {
+    "parentNodeId":              "ns=1;s=Compatibility",
+    "requestedNodeId":           "ns=1;s=Interop.Added",
+    "addStatusCode":             { "name": "Good", "code": 0, "severity": "Good" },
+    "addedNodeId":               "ns=1;s=Interop.Added",
+    "readStatusCode":            { "name": "Good", "code": 0, "severity": "Good" },
+    "dataType":                  "Int32",
+    "builtInType":               6,
+    "value":                     42,
+    "deleteStatusCode":          { "name": "Good", "code": 0, "severity": "Good" },
+    "readAfterDeleteStatusCode": { "name": "BadNodeIdUnknown", "code": 2150891520, "severity": "Bad" }
+  }
+]
+```
+
+Fields after `addStatusCode` are present only when the add succeeded.
 
 ---
 

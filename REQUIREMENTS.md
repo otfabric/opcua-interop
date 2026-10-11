@@ -79,7 +79,7 @@ count at Phase 9 close: 212 tests, 0 skips (consumer suite has grown since).
   `monitoring-mode`, `delete`)
 - Capabilities `adapter.version` = `0.4.0`; seven `clientOperations`
 
-### v0.5.0 — WP1B baseline (go-opcua Phase 18)
+### v0.5.0 (released) — WP1B baseline (go-opcua Phase 18)
 
 - New `event-subscribe` command: `EventFilter` with BaseEvent SelectClauses (EventId,
   EventType, SourceName, Message, Severity, Time); collect *N* events or timeout (exit 7)
@@ -97,7 +97,18 @@ count at Phase 9 close: 212 tests, 0 skips (consumer suite has grown since).
 - `event-subscribe --of-type` / `--min-severity`; `history-read --scenario continue`
 - Reference-server BaseEvent emission and gate-compliant `History.Temperature` raw samples
 - Capabilities `adapter.version` = `0.5.0`; thirteen `clientOperations`
-- Fix-forward by republishing the `v0.5.0` tag / GHCR images when requirements change (no `v0.5.1` / RC tags)
+
+### v0.6.0 — upstream refresh, renewal and node services
+
+- Upstream pins: open62541 `v1.5.9` (was `v1.5.5`), Eclipse Milo `1.1.8` (was `1.1.5`)
+- New `register-nodes` command: RegisterNodes → Read via alias → UnregisterNodes
+- New `node-management` command: AddNodes (Int32 Variable) → Read → DeleteNodes → Read
+- Global `--channel-lifetime-ms` client flag to force SecurityToken renewals mid-command
+  (use ≥ 5000 ms; the open62541 client schedules renewal coarsely)
+- Smoke covers `register-nodes` and a subscribe across SecureChannel renewals in every
+  adapter↔adapter direction
+- Capabilities `adapter.version` = `0.6.0`; fifteen `clientOperations`
+- Releases are immutable: a change to the adapter surface gets a new tag
 
 ### Later (planned) — remaining type surface
 

@@ -67,7 +67,7 @@ public class ClientCommand {
         if (args.length < 1) {
             System.err.println("usage: client <endpoints|find-servers|read|write|browse|translate|"
                 + "call|subscribe|subscription-lifecycle|event-subscribe|history-read|"
-                + "republish|transfer-subscriptions> ...");
+                + "republish|transfer-subscriptions|register-nodes|node-management> ...");
             return 1;
         }
         String op = args[0];
@@ -88,6 +88,8 @@ public class ClientCommand {
                 case "history-read":           return cmdHistoryRead(rest);
                 case "republish":              return cmdRepublish(rest);
                 case "transfer-subscriptions": return cmdTransferSubscriptions(rest);
+                case "register-nodes":         return cmdRegisterNodes(rest);
+                case "node-management":        return cmdNodeManagement(rest);
                 default:
                     System.err.println("unknown client subcommand: " + op);
                     return 1;
@@ -1657,9 +1659,190 @@ public class ClientCommand {
                             username, password != null ? password : ""));
         }
 
-        OpcUaClient client = OpcUaClient.create(cfgBuilder.build());
+        // Short requested lifetimes force SecurityToken renewals during the
+        // command (Milo renews at 75% of the revised lifetime).
+        final long channelLifetimeMs = args != null ? parseLongArg(args, "--channel-lifetime-ms", 0) : 0;
+        OpcUaClient client = OpcUaClient.create(cfgBuilder.build(), transport -> {
+            if (channelLifetimeMs > 0) {
+                transport.setChannelLifetime(UInteger.valueOf(channelLifetimeMs));
+            }
+        });
         client.connect();
         return client;
+    }
+
+    // -------------------------------------------------------------------------
+    // register-nodes: RegisterNodes -> Read via registered alias -> UnregisterNodes
+    // -------------------------------------------------------------------------
+
+    private static int cmdRegisterNodes(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        List<String> nodeStrs = findAllArgs(args, "--node");
+        if (endpointUrl == null || nodeStrs.isEmpty()) {
+            System.out.println(new ResultBuilder("register-nodes")
+                    .error("input", "missing --endpoint or --node").toJson());
+            return 2;
+        }
+        long cto = connectTimeoutMs(args);
+        long rto = requestTimeoutMs(args);
+        long dto = disconnectTimeoutMs(args);
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
+        try {
+            List<NodeId> nodeIds = new ArrayList<>();
+            for (String ns : nodeStrs) {
+                nodeIds.add(NodeIdParser.resolveWithClient(ns, client, rto));
+            }
+
+            RegisterNodesResponse regResp = client.registerNodes(nodeIds);
+            NodeId[] registered = regResp.getRegisteredNodeIds();
+            if (registered == null || registered.length != nodeIds.size()) {
+                System.out.println(new ResultBuilder("register-nodes").success(false)
+                        .serviceResult(new StatusCode(0x80010000L))
+                        .error("service", "RegisterNodes returned an unexpected number of ids").toJson());
+                return 4;
+            }
+
+            List<ReadValueId> readIds = new ArrayList<>();
+            for (NodeId r : registered) {
+                readIds.add(new ReadValueId(r, AttributeId.Value.uid(), null, null));
+            }
+            DataValue[] dvs = client.read(0.0, TimestampsToReturn.Source, readIds).getResults();
+
+            UnregisterNodesResponse unregResp = client.unregisterNodes(Arrays.asList(registered));
+            StatusCode unregSc = unregResp.getResponseHeader().getServiceResult();
+
+            ResultBuilder rb = new ResultBuilder("register-nodes");
+            boolean anyBad = !unregSc.isGood();
+            StatusCode firstBad = unregSc.isGood() ? null : unregSc;
+            for (int i = 0; i < nodeIds.size(); i++) {
+                DataValue dv = dvs[i];
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("nodeId",           ResultBuilder.nodeIdToString(nodeIds.get(i)));
+                result.put("registeredNodeId", ResultBuilder.nodeIdToString(registered[i]));
+                result.put("statusCode",       ResultBuilder.statusCodeJson(dv.getStatusCode()));
+                if (dv.getStatusCode().isGood()) {
+                    String typeName = ResultBuilder.builtInTypeName(dv.getValue());
+                    result.put("dataType",    typeName);
+                    result.put("builtInType", ResultBuilder.builtInTypeId(typeName));
+                    result.put("value",       ResultBuilder.encodeVariantValue(dv.getValue()));
+                } else {
+                    anyBad = true;
+                    if (firstBad == null) firstBad = dv.getStatusCode();
+                }
+                result.put("unregisterStatusCode", ResultBuilder.statusCodeJson(unregSc));
+                rb.addResult(result);
+            }
+            if (firstBad != null) rb.serviceResult(firstBad);
+            if (anyBad) rb.success(false);
+            System.out.println(rb.toJson());
+            return anyBad ? 4 : 0;
+        } finally {
+            safeDisconnect(client, dto);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // node-management: AddNodes (Int32 Variable) -> Read -> DeleteNodes -> Read
+    // -------------------------------------------------------------------------
+
+    private static int cmdNodeManagement(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        String parentStr   = findArg(args, "--parent");
+        String nodeStr     = findArg(args, "--node");
+        String browseName  = findArg(args, "--browse-name");
+        if (endpointUrl == null || parentStr == null || nodeStr == null) {
+            System.out.println(new ResultBuilder("node-management")
+                    .error("input", "missing --endpoint, --parent or --node").toJson());
+            return 2;
+        }
+        if (browseName == null) browseName = "InteropAdded";
+        int value = parseIntArg(args, "--value", 42);
+        long cto = connectTimeoutMs(args);
+        long rto = requestTimeoutMs(args);
+        long dto = disconnectTimeoutMs(args);
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
+        try {
+            NodeId parentId = NodeIdParser.resolveWithClient(parentStr, client, rto);
+            NodeId newId    = NodeIdParser.resolveWithClient(nodeStr, client, rto);
+
+            // AccessLevel | DataType | DisplayName | UserAccessLevel | ValueRank | Value
+            UInteger specified = uint(1 | 16 | 64 | 65536 | 524288 | 2097152);
+            VariableAttributes attrs = new VariableAttributes(
+                    specified,
+                    LocalizedText.english(browseName),
+                    LocalizedText.NULL_VALUE,
+                    uint(0), uint(0),
+                    new Variant(value),
+                    Identifiers.Int32,
+                    -1,
+                    null,
+                    ubyte(3), ubyte(3),
+                    0.0,
+                    false);
+
+            AddNodesItem item = new AddNodesItem(
+                    parentId.expanded(),
+                    Identifiers.HasComponent,
+                    newId.expanded(),
+                    new QualifiedName(newId.getNamespaceIndex(), browseName),
+                    org.eclipse.milo.opcua.stack.core.types.enumerated.NodeClass.Variable,
+                    ExtensionObject.encode(client.getStaticEncodingContext(), attrs),
+                    Identifiers.BaseDataVariableType.expanded());
+
+            AddNodesResult[] addResults = client.addNodes(List.of(item)).getResults();
+            StatusCode addSc = (addResults != null && addResults.length == 1)
+                    ? addResults[0].getStatusCode() : new StatusCode(0x80010000L);
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("parentNodeId",    ResultBuilder.nodeIdToString(parentId));
+            result.put("requestedNodeId", ResultBuilder.nodeIdToString(newId));
+            result.put("addStatusCode",   ResultBuilder.statusCodeJson(addSc));
+
+            boolean ok = false;
+            StatusCode emit = addSc;
+            if (addSc.isGood()) {
+                NodeId added = addResults[0].getAddedNodeId();
+                result.put("addedNodeId", ResultBuilder.nodeIdToString(added));
+
+                List<ReadValueId> rid = List.of(new ReadValueId(added, AttributeId.Value.uid(), null, null));
+                DataValue dv = client.read(0.0, TimestampsToReturn.Source, rid).getResults()[0];
+                result.put("readStatusCode", ResultBuilder.statusCodeJson(dv.getStatusCode()));
+                boolean valueMatches = false;
+                if (dv.getStatusCode().isGood()) {
+                    String typeName = ResultBuilder.builtInTypeName(dv.getValue());
+                    result.put("dataType",    typeName);
+                    result.put("builtInType", ResultBuilder.builtInTypeId(typeName));
+                    result.put("value",       ResultBuilder.encodeVariantValue(dv.getValue()));
+                    Object v = dv.getValue().getValue();
+                    valueMatches = (v instanceof Integer) && ((Integer) v) == value;
+                }
+
+                StatusCode[] delResults = client.deleteNodes(
+                        List.of(new DeleteNodesItem(added, true))).getResults();
+                StatusCode delSc = (delResults != null && delResults.length == 1)
+                        ? delResults[0] : new StatusCode(0x80010000L);
+                result.put("deleteStatusCode", ResultBuilder.statusCodeJson(delSc));
+
+                DataValue gone = client.read(0.0, TimestampsToReturn.Source, rid).getResults()[0];
+                result.put("readAfterDeleteStatusCode", ResultBuilder.statusCodeJson(gone.getStatusCode()));
+
+                ok = dv.getStatusCode().isGood() && valueMatches && delSc.isGood()
+                        && gone.getStatusCode().isBad();
+                if (!dv.getStatusCode().isGood()) emit = dv.getStatusCode();
+                else if (!delSc.isGood()) emit = delSc;
+            }
+
+            ResultBuilder rb = new ResultBuilder("node-management");
+            rb.addResult(result);
+            rb.serviceResult(emit);
+            if (!ok) rb.success(false);
+            System.out.println(rb.toJson());
+            return ok ? 0 : 4;
+        } finally {
+            safeDisconnect(client, dto);
+        }
     }
 
     private static void safeDisconnect(OpcUaClient client, long timeoutMs) {

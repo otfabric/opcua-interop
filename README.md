@@ -79,13 +79,15 @@ opcua-interop/
 │   ├── baseline/       # Baseline fixture (scalars, access, browse, methods, subscriptions, events, history)
 │   ├── subscriptions/  # Dynamic-value and subscription fixture
 │   ├── methods/        # Method fixture
-│   ├── security/       # Security policy fixture (Phase 8)
+│   ├── security/       # Security policy fixture
 │   └── edge-cases/     # Edge-case and stress fixture
 ├── certs/              # Test PKI generation script and generated tree
 │   ├── generate.sh     # Generates test-pki/ from scratch (requires openssl >= 1.1)
 │   └── test-pki/       # Generated certificates (checked in for convenience)
 ├── open62541/          # C adapter (Dockerfile, CMakeLists, source)
 ├── milo/               # Java adapter (Dockerfile, pom.xml, source)
+├── schemas/            # JSON Schemas for client results and print-capabilities
+├── docs/               # Client command contract (CLIENT_CONTRACT.md)
 ├── scripts/            # Readiness, smoke, and validation helpers
 ├── compose.yaml        # Docker Compose service definitions
 └── .github/            # CI workflows and Dependabot config
@@ -142,7 +144,7 @@ The fixture's `users` array controls which username/password credentials are acc
 
 ### Client commands
 
-Thirteen client operations (see `print-capabilities` → `clientOperations` and
+Fifteen client operations (see `print-capabilities` → `clientOperations` and
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
 
 ```sh
@@ -164,6 +166,17 @@ client history-read --endpoint ... --node '...' --start <rfc3339> --end <rfc3339
 client republish --endpoint ... --subscription-id <n> --sequence-number <n>
 client transfer-subscriptions --endpoint ... --subscription-id <n> \
                  [--send-initial-values false]
+client register-nodes --endpoint ... --node '...' [--node '...']
+client node-management --endpoint ... --parent '...' --node '...' \
+                 [--browse-name Name] [--value 42]
+```
+
+Every client command also accepts `--channel-lifetime-ms <n>` to request a short
+SecureChannel lifetime and force SecurityToken renewals mid-command:
+
+```sh
+client subscribe --endpoint ... --node '...' --notifications 24 --timeout-ms 40000 \
+                 --channel-lifetime-ms 6000
 ```
 
 `subscribe` JSON includes `subscriptionId` and revised CreateSubscription fields
@@ -245,33 +258,36 @@ make run-open62541       # Start open62541 server (foreground, port 4840)
 make run-milo            # Start Milo server (foreground, port 4841)
 make certs               # Generate test PKI (requires openssl >= 1.1)
 make clean               # Remove build artifacts and containers
-make release VERSION=v0.5.0  # Build and push multi-arch release images
+make release VERSION=v0.6.0  # Build and push multi-arch release images
 ```
 
 ## Versioning
 
 | Version type | Location |
 |---|---|
-| Repository release | Git tag and image tag — latest **`v0.5.0`** (fix-forward republish on the same tag) |
-| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.5.0`** (must match tag; fix-forward if drifted) |
+| Repository release | Git tag and image tag — latest **`v0.6.0`** |
+| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.6.0`** (must match the tag) |
 | Upstream stack version | Image label and `print-capabilities` → `stack.version` |
 | Fixture schema version | `schemaVersion` field in every fixture |
 
-Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`, `v0.5.0`
-([latest release](https://github.com/otfabric/opcua-interop/releases/tag/v0.5.0)).
-`v0.5.0` is the WP1B baseline; fix-forward by republishing the `v0.5.0` tag / GHCR images when requirements change — no `v0.5.1` or RC tags.
+Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`, `v0.5.0`, `v0.6.0`
+([latest release](https://github.com/otfabric/opcua-interop/releases/tag/v0.6.0)).
+`v0.6.0` moves the reference stacks to open62541 v1.5.9 / Eclipse Milo 1.1.8 and adds
+`register-nodes`, `node-management` and `--channel-lifetime-ms`. Every change to the
+adapter surface gets a new tag; published tags are not moved. See [`PUBLISH.md`](PUBLISH.md).
 
 ## Reference stacks
 
 | Adapter | Language | Stack | Why included |
 |---|---|---|---|
-| open62541 | C | open62541 v1.5.5 | Native/embedded diversity, OPC UA Binary, certified example-server history |
-| Eclipse Milo | Java | Eclipse Milo v1.1.5 | JVM/enterprise diversity, independent serialization and security code paths |
+| open62541 | C | open62541 v1.5.9 | Native/embedded diversity, OPC UA Binary, certified example-server history |
+| Eclipse Milo | Java | Eclipse Milo v1.1.8 | JVM/enterprise diversity, independent serialization and security code paths |
 
 ## Security
 
 The test PKI (`certs/test-pki/`) landed in v0.1.1; Basic256Sha256 / username verification
-completed in v0.2.0; Aes128 / Aes256 profiles are verified as of Phase 9 (v0.2.1 era).
+completed in v0.2.0; Aes128 / Aes256 profiles followed in v0.2.1; SecureChannel renewal
+(`--channel-lifetime-ms`) is exercised cross-stack as of v0.6.0.
 
 **What is implemented and verified:**
 - Full test PKI with CA, seven identities (including go-server), and OPC UA PKI directory layout

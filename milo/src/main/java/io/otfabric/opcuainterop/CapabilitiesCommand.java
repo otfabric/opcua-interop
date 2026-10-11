@@ -10,7 +10,7 @@ public class CapabilitiesCommand {
     public static void run() throws Exception {
         Map<String, Object> adapter = new LinkedHashMap<>();
         adapter.put("name",    "milo");
-        adapter.put("version", "0.5.0");
+        adapter.put("version", "0.6.0");
 
         Map<String, Object> stack = new LinkedHashMap<>();
         stack.put("name",    "eclipse-milo");
@@ -41,7 +41,8 @@ public class CapabilitiesCommand {
         out.put("clientOperations",      Arrays.asList(
                 "endpoints", "find-servers", "read", "write", "browse", "translate",
                 "call", "subscribe", "subscription-lifecycle", "event-subscribe",
-                "history-read", "republish", "transfer-subscriptions"));
+                "history-read", "republish", "transfer-subscriptions",
+                "register-nodes", "node-management"));
         out.put("serverServices",        Arrays.asList(
                 "GetEndpoints", "Browse", "Read", "Write", "Call",
                 "CreateSubscription", "CreateMonitoredItems", "Publish",
@@ -67,6 +68,6 @@ public class CapabilitiesCommand {
         } catch (Exception ignored) {
             // fall through to default
         }
-        return "1.1.5";
+        return "1.1.8";
     }
 }
