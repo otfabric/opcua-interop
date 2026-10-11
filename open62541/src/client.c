@@ -1,6 +1,11 @@
-#include "client.h"
-#include "output.h"
+#define _GNU_SOURCE
 
+#include "client.h"
+#include "client_internal.h"
+#include "output.h"
+#include "values.h"
+
+#include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +13,10 @@
 #include <time.h>
 
 #include <open62541.h>
+
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 /* Synchronous generic service call. Defined (non-static) in the amalgamation
  * but not declared in open62541.h for the 1.5 series; declare it here so the
@@ -28,7 +37,20 @@ void __UA_Client_Service(UA_Client *client, const void *request,
  * would break envelope validation in the smoke harness. */
 static void silent_log(void *ctx, UA_LogLevel level, UA_LogCategory cat,
                        const char *msg, va_list args) {
-    (void)ctx; (void)level; (void)cat; (void)msg; (void)args;
+    (void)ctx; (void)cat;
+    /* OPCUA_CLIENT_LOG=1 sends the stack's log to stderr (never stdout). */
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("OPCUA_CLIENT_LOG");
+        enabled = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
+    }
+    if (!enabled) return;
+    /* The stack uses its own format extensions (%S for UA_String). */
+    char text[1024];
+    UA_String out = { sizeof(text) - 1, (UA_Byte *)text };
+    if (UA_String_vformat(&out, msg, args) != UA_STATUSCODE_GOOD) return;
+    fprintf(stderr, "[open62541] client log(%d): %.*s\n", (int)level,
+            (int)out.length, text);
 }
 static UA_Logger g_silent_logger = { silent_log, NULL, NULL };
 
@@ -104,9 +126,14 @@ typedef struct {
     const char  *username;      /* NULL = anonymous */
     const char  *password;      /* NULL = treat as empty string */
     int          channelLifetimeMs; /* 0 = stack default; >0 requested SecureChannel lifetime */
+    const char  *applicationUri;    /* NULL = SAN URI of --certificate, else stack default */
+    int          reverseListenPort; /* 0 = dial; >0 wait for a ReverseHello on this port */
+    int          reverseTimeoutMs;  /* how long to wait for the reverse connection */
+    const char  *reverseServerUri;  /* optional expected server ApplicationUri */
 } ClientSecurity;
 
-static ClientSecurity g_sec = { "None", "None", NULL, NULL, NULL, 0, NULL, NULL, 0 };
+static ClientSecurity g_sec = { "None", "None", NULL, NULL, NULL, 0, NULL, NULL, 0,
+                                NULL, 0, 30000, NULL };
 
 static UA_MessageSecurityMode security_mode_enum(const char *s) {
     if (!s || strcmp(s, "None") == 0)        return UA_MESSAGESECURITYMODE_NONE;
@@ -123,6 +150,14 @@ static const char *security_policy_uri(const char *name) {
         { "Basic256Sha256",     "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"     },
         { "Aes128_Sha256_RsaOaep","http://opcfoundation.org/UA/SecurityPolicy#Aes128_Sha256_RsaOaep"},
         { "Aes256_Sha256_RsaPss","http://opcfoundation.org/UA/SecurityPolicy#Aes256_Sha256_RsaPss" },
+        { "ECC_nistP256",       "http://opcfoundation.org/UA/SecurityPolicy#ECC_nistP256"       },
+        { "ECC_nistP384",       "http://opcfoundation.org/UA/SecurityPolicy#ECC_nistP384"       },
+        { "ECC_brainpoolP256r1","http://opcfoundation.org/UA/SecurityPolicy#ECC_brainpoolP256r1"},
+        { "ECC_brainpoolP384r1","http://opcfoundation.org/UA/SecurityPolicy#ECC_brainpoolP384r1"},
+        { "ECC_curve25519",     "http://opcfoundation.org/UA/SecurityPolicy#ECC_curve25519"     },
+        { "ECC_curve448",       "http://opcfoundation.org/UA/SecurityPolicy#ECC_curve448"       },
+        { "ECC_nistP256_AesGcm","http://opcfoundation.org/UA/SecurityPolicy#ECC_nistP256_AesGcm"},
+        { "ECC_nistP256_ChaChaPoly","http://opcfoundation.org/UA/SecurityPolicy#ECC_nistP256_ChaChaPoly"},
     };
     for (size_t i = 0; i < sizeof(tbl)/sizeof(tbl[0]); i++) {
         if (name && strcmp(name, tbl[i].n) == 0) return tbl[i].uri;
@@ -132,6 +167,106 @@ static const char *security_policy_uri(const char *name) {
 
 static UA_Boolean security_is_none(void) {
     return security_mode_enum(g_sec.modeName) == UA_MESSAGESECURITYMODE_NONE;
+}
+
+/* 1 when `name` is one of the policy names this adapter accepts. */
+static int security_policy_known(const char *name) {
+    if (!name) return 1;
+    const char *uri = security_policy_uri(name);
+    const char *hash = strrchr(uri, '#');
+    return hash && strcmp(hash + 1, name) == 0;
+}
+
+/* -------------------------------------------------------------------------
+ * ECC SecurityPolicies
+ *
+ * open62541 v1.5.9 (OpenSSL backend) only puts the AEAD ECC policies and the
+ * Curve25519/448 policies into its default set; ECC_nistP256 / ECC_nistP384 /
+ * ECC_brainpoolP256r1 / ECC_brainpoolP384r1 have to be added explicitly. A
+ * policy can only be instantiated with a certificate of its own curve.
+ * ---------------------------------------------------------------------- */
+
+typedef UA_StatusCode (*EccPolicyCtor)(UA_SecurityPolicy *policy,
+                                       const UA_ApplicationType applicationType,
+                                       const UA_ByteString localCertificate,
+                                       const UA_ByteString localPrivateKey,
+                                       const UA_Logger *logger);
+
+static EccPolicyCtor ecc_policy_ctor(const char *name) {
+    if (!name) return NULL;
+    if (strcmp(name, "ECC_nistP256") == 0)            return UA_SecurityPolicy_EccNistP256;
+    if (strcmp(name, "ECC_nistP384") == 0)            return UA_SecurityPolicy_EccNistP384;
+    if (strcmp(name, "ECC_brainpoolP256r1") == 0)     return UA_SecurityPolicy_EccBrainpoolP256r1;
+    if (strcmp(name, "ECC_brainpoolP384r1") == 0)     return UA_SecurityPolicy_EccBrainpoolP384r1;
+    if (strcmp(name, "ECC_curve25519") == 0)          return UA_SecurityPolicy_EccCurve25519;
+    if (strcmp(name, "ECC_curve448") == 0)            return UA_SecurityPolicy_EccCurve448;
+    if (strcmp(name, "ECC_nistP256_AesGcm") == 0)     return UA_SecurityPolicy_EccNistP256AesGcm;
+    if (strcmp(name, "ECC_nistP256_ChaChaPoly") == 0) return UA_SecurityPolicy_EccNistP256ChaChaPoly;
+    return NULL;
+}
+
+static int policy_array_has(const UA_SecurityPolicy *arr, size_t n, const char *uri) {
+    UA_String want = UA_STRING((char *)(uintptr_t)uri);
+    for (size_t i = 0; i < n; i++)
+        if (UA_String_equal(&arr[i].policyUri, &want)) return 1;
+    return 0;
+}
+
+/* Append the ECC policy `name` to a client policy array unless present. */
+static UA_StatusCode policy_array_add_ecc(UA_SecurityPolicy **arr, size_t *n,
+                                          const char *name,
+                                          const UA_ByteString cert,
+                                          const UA_ByteString key,
+                                          const UA_Logger *logger) {
+    EccPolicyCtor ctor = ecc_policy_ctor(name);
+    if (!ctor) return UA_STATUSCODE_GOOD; /* not an ECC policy */
+    if (policy_array_has(*arr, *n, security_policy_uri(name)))
+        return UA_STATUSCODE_GOOD;
+
+    UA_SecurityPolicy *grown = (UA_SecurityPolicy *)
+        UA_realloc(*arr, sizeof(UA_SecurityPolicy) * (*n + 1));
+    if (!grown) return UA_STATUSCODE_BADOUTOFMEMORY;
+    *arr = grown;
+    memset(&grown[*n], 0, sizeof(UA_SecurityPolicy));
+    UA_StatusCode sc = ctor(&grown[*n], UA_APPLICATIONTYPE_CLIENT, cert, key, logger);
+    if (sc == UA_STATUSCODE_GOOD) (*n)++;
+    return sc;
+}
+
+/* -------------------------------------------------------------------------
+ * ApplicationUri from the certificate's subjectAltName
+ * ---------------------------------------------------------------------- */
+
+/* Returns a malloc'd copy of the first URI SAN of a PEM or DER certificate
+ * file, or NULL. */
+static char *certificate_san_uri(const char *path) {
+    if (!path || !*path) return NULL;
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    X509 *x = PEM_read_X509(f, NULL, NULL, NULL);
+    if (!x) {
+        rewind(f);
+        x = d2i_X509_fp(f, NULL);
+    }
+    fclose(f);
+    if (!x) return NULL;
+
+    char *result = NULL;
+    GENERAL_NAMES *names = (GENERAL_NAMES *)
+        X509_get_ext_d2i(x, NID_subject_alt_name, NULL, NULL);
+    if (names) {
+        int count = sk_GENERAL_NAME_num(names);
+        for (int i = 0; i < count && !result; i++) {
+            const GENERAL_NAME *gn = sk_GENERAL_NAME_value(names, i);
+            if (gn->type != GEN_URI) continue;
+            const unsigned char *data = ASN1_STRING_get0_data(gn->d.uniformResourceIdentifier);
+            int len = ASN1_STRING_length(gn->d.uniformResourceIdentifier);
+            if (data && len > 0) result = strndup((const char *)data, (size_t)len);
+        }
+        GENERAL_NAMES_free(names);
+    }
+    X509_free(x);
+    return result;
 }
 
 /* -------------------------------------------------------------------------
@@ -389,6 +524,19 @@ static int endpoint_check_security(const char *url, UA_StatusCode *out_sc) {
     size_t epCount = 0;
     UA_StatusCode sc = UA_Client_getEndpoints(c, url, &epCount, &eps);
     UA_Client_delete(c);
+
+    /* Milo/Netty warm-up: the very first GetEndpoints occasionally fails with
+     * BadSecureChannelClosed. Retry once (as the endpoints command does). */
+    if (sc == UA_STATUSCODE_BADSECURECHANNELCLOSED ||
+        sc == UA_STATUSCODE_BADSECURECHANNELIDINVALID) {
+        c = UA_Client_new();
+        if (!c) { *out_sc = UA_STATUSCODE_BADOUTOFMEMORY; return 0; }
+        UA_Client_getConfig(c)->logging = &g_silent_logger;
+        UA_ClientConfig_setDefault(UA_Client_getConfig(c));
+        client_silence_logger(UA_Client_getConfig(c));
+        sc = UA_Client_getEndpoints(c, url, &epCount, &eps);
+        UA_Client_delete(c);
+    }
     *out_sc = sc;
 
     if (sc != UA_STATUSCODE_GOOD) return 0;
@@ -410,22 +558,134 @@ static int endpoint_check_security(const char *url, UA_StatusCode *out_sc) {
 }
 
 /* -------------------------------------------------------------------------
+ * Reverse connect (Part 6 7.1.3)
+ *
+ * The client opens a listen socket and the server dials in with a
+ * ReverseHello. open62541 opens that first channel with SecurityPolicy None,
+ * calls GetEndpoints on it and, when the selected endpoint needs another
+ * policy / mode (or advertises another EndpointUrl than the ReverseHello),
+ * closes the channel so it can be reopened. On a reverse connection only the
+ * server can reopen, so we listen again and wait for the server's next
+ * attempt; the endpoint selected in the first round is then used directly.
+ * ---------------------------------------------------------------------- */
+
+static long long mono_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
+/*
+ * Wait for a reverse connection. With want_session the call returns once the
+ * session is activated; otherwise once the SecureChannel is open.
+ */
+static UA_StatusCode reverse_connect(UA_Client *client, int want_session) {
+    UA_ClientConfig *cfg = UA_Client_getConfig(client);
+    cfg->noSession   = want_session ? UA_FALSE : UA_TRUE;
+    cfg->noReconnect = UA_TRUE; /* never fall back to dialling */
+    cfg->tcpReuseAddr = UA_TRUE; /* the port is listened on again after a close */
+
+    int timeout_ms = g_sec.reverseTimeoutMs > 0 ? g_sec.reverseTimeoutMs : 30000;
+    long long deadline = mono_ms() + timeout_ms;
+    UA_StatusCode last = UA_STATUSCODE_BADTIMEOUT;
+
+    while (mono_ms() < deadline) {
+        UA_SecureChannelState ch;
+        UA_SessionState ss;
+        UA_StatusCode cs;
+
+        /* Let a previous channel finish closing before listening again. */
+        UA_Client_getState(client, &ch, &ss, &cs);
+        while (ch != UA_SECURECHANNELSTATE_CLOSED && mono_ms() < deadline) {
+            UA_Client_run_iterate(client, 20);
+            UA_Client_getState(client, &ch, &ss, &cs);
+        }
+        if (ch != UA_SECURECHANNELSTATE_CLOSED) break;
+
+        UA_StatusCode sc = UA_Client_startListeningForReverseConnect(
+            client, NULL, 0, (UA_UInt16)g_sec.reverseListenPort);
+        if (sc != UA_STATUSCODE_GOOD) {
+            /* A bad endpoint certificate / unavailable policy is final. */
+            if (sc != UA_STATUSCODE_BADCONNECTIONCLOSED) return sc;
+            last = sc;
+            UA_Client_run_iterate(client, 100);
+            continue;
+        }
+
+        int listening = 0;
+        while (mono_ms() < deadline) {
+            UA_Client_run_iterate(client, 20);
+            UA_Client_getState(client, &ch, &ss, &cs);
+            if (ch == UA_SECURECHANNELSTATE_REVERSE_LISTENING) listening = 1;
+            if (want_session && ss == UA_SESSIONSTATE_ACTIVATED)
+                return UA_STATUSCODE_GOOD;
+            if (!want_session && ch == UA_SECURECHANNELSTATE_OPEN)
+                return UA_STATUSCODE_GOOD;
+            if (cs != UA_STATUSCODE_GOOD) {
+                /* BadNotConnected is the "would reconnect" marker set because
+                 * of noReconnect; everything else is a real failure. */
+                if (cs != UA_STATUSCODE_BADNOTCONNECTED &&
+                    cs != UA_STATUSCODE_BADCONNECTIONCLOSED)
+                    return cs;
+                last = cs;
+                break;
+            }
+            if (ch == UA_SECURECHANNELSTATE_CLOSED && listening) break;
+        }
+    }
+    return UA_STATUSCODE_BADTIMEOUT;
+}
+
+/* Compare ServerArray[0] of the connected server with --reverse-server-uri. */
+static UA_StatusCode reverse_check_server_uri(UA_Client *client) {
+    UA_Variant v;
+    UA_Variant_init(&v);
+    UA_StatusCode sc = UA_Client_readValueAttribute(
+        client, UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERARRAY), &v);
+    if (sc != UA_STATUSCODE_GOOD) return sc;
+    sc = UA_STATUSCODE_BADSERVERURIINVALID;
+    if (v.type == &UA_TYPES[UA_TYPES_STRING] && v.arrayLength > 0) {
+        UA_String want = UA_STRING((char *)(uintptr_t)g_sec.reverseServerUri);
+        if (UA_String_equal(&((UA_String *)v.data)[0], &want))
+            sc = UA_STATUSCODE_GOOD;
+    }
+    UA_Variant_clear(&v);
+    return sc;
+}
+
+/* -------------------------------------------------------------------------
  * Client connect helper
  * ---------------------------------------------------------------------- */
 
 /*
- * Checks endpoint security then creates and connects a client.
+ * Checks endpoint security and creates a client configured from the global
+ * flags (security, identity, lifetimes) without connecting it.
  * On failure: emits the complete error envelope for operation op, sets
- * *exit_code to 3, and returns NULL.
- * On success: returns a connected UA_Client* (caller must disconnect+delete).
+ * *exit_code, and returns NULL.
  */
-static UA_Client *make_client(const char *url,
-                               int request_ms,
-                               const char *op,
-                               int *exit_code) {
-    /* Verify a matching endpoint exists */
+static UA_Client *make_client_unconnected(const char *url,
+                                          int request_ms,
+                                          const char *op,
+                                          int *exit_code) {
+    /* A security policy this build does not know must not silently fall back
+     * to None. */
+    if (!security_policy_known(g_sec.policyName)) {
+        char msg_buf[256];
+        snprintf(msg_buf, sizeof(msg_buf), "unknown --security-policy '%s'",
+                 g_sec.policyName ? g_sec.policyName : "");
+        output_begin("open62541", op);
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", msg_buf);
+        output_end();
+        *exit_code = 2;
+        return NULL;
+    }
+
+    /* Verify a matching endpoint exists. Not possible when waiting for a
+     * reverse connection: the server is the one that dials. */
     UA_StatusCode ep_sc = UA_STATUSCODE_GOOD;
-    if (!endpoint_check_security(url, &ep_sc)) {
+    if (g_sec.reverseListenPort <= 0 && !endpoint_check_security(url, &ep_sc)) {
         UA_StatusCode err_sc = (ep_sc != UA_STATUSCODE_GOOD)
                                ? ep_sc
                                : UA_STATUSCODE_BADSECURITYPOLICYREJECTED;
@@ -460,6 +720,11 @@ static UA_Client *make_client(const char *url,
 
     UA_ClientConfig *cfg = UA_Client_getConfig(client);
 
+    /* Install the silent logger before the config helpers run: they log
+     * (to stdout) while loading policies, and stdout is reserved for the
+     * result envelope. */
+    cfg->logging = &g_silent_logger;
+
 #ifdef UA_ENABLE_ENCRYPTION
     if (!security_is_none()) {
         UA_ByteString cert = load_cert_file(g_sec.certFile);
@@ -481,6 +746,26 @@ static UA_Client *make_client(const char *url,
             trust_list, trust_count,
             NULL, 0);
 
+        /* The ECC policies that are not part of the stack's default set are
+         * added here, for the SecureChannel and for user-token encryption
+         * (EccEncryptedSecret). */
+        const char *policy_err = "UA_ClientConfig_setDefaultEncryption failed";
+        if (sc == UA_STATUSCODE_GOOD && ecc_policy_ctor(g_sec.policyName)) {
+            UA_ByteString der = UA_BYTESTRING_NULL;
+            sc = UA_CertificateUtils_decryptPrivateKey(key, UA_BYTESTRING_NULL, &der);
+            if (sc == UA_STATUSCODE_GOOD)
+                sc = policy_array_add_ecc(&cfg->securityPolicies,
+                                          &cfg->securityPoliciesSize,
+                                          g_sec.policyName, cert, der, cfg->logging);
+            if (sc == UA_STATUSCODE_GOOD)
+                sc = policy_array_add_ecc(&cfg->authSecurityPolicies,
+                                          &cfg->authSecurityPoliciesSize,
+                                          g_sec.policyName, cert, der, cfg->logging);
+            UA_ByteString_clear(&der);
+            policy_err = "the certificate / private key cannot be used with the "
+                         "requested ECC security policy (curve mismatch?)";
+        }
+
         UA_ByteString_clear(&cert);
         UA_ByteString_clear(&key);
         for (size_t i = 0; i < trust_count; i++)
@@ -492,7 +777,7 @@ static UA_Client *make_client(const char *url,
             output_begin("open62541", op);
             output_success(0);
             output_service_result(sc);
-            output_error("internal", "UA_ClientConfig_setDefaultEncryption failed");
+            output_error("internal", policy_err);
             output_end();
             *exit_code = 6;
             return NULL;
@@ -535,6 +820,20 @@ static UA_Client *make_client(const char *url,
     if (g_sec.channelLifetimeMs > 0)
         cfg->secureChannelLifeTime = (UA_UInt32)g_sec.channelLifetimeMs;
 
+    /* ApplicationUri: explicit flag, else the URI in the certificate's
+     * subjectAltName (servers compare the two in CreateSession). */
+    {
+        char *san = NULL;
+        const char *uri = g_sec.applicationUri;
+        if (!uri && !security_is_none())
+            uri = san = certificate_san_uri(g_sec.certFile);
+        if (uri && *uri) {
+            UA_String_clear(&cfg->clientDescription.applicationUri);
+            cfg->clientDescription.applicationUri = UA_STRING_ALLOC(uri);
+        }
+        free(san);
+    }
+
     /* Set user identity token */
     if (g_sec.username) {
         UA_UserNameIdentityToken token;
@@ -549,16 +848,48 @@ static UA_Client *make_client(const char *url,
         UA_UserNameIdentityToken_clear(&token);
     }
 
-    UA_StatusCode sc = UA_Client_connect(client, url);
+    return client;
+}
+
+/*
+ * Checks endpoint security then creates and connects a client.
+ * On failure: emits the complete error envelope for operation op, sets
+ * *exit_code to 3, and returns NULL.
+ * On success: returns a connected UA_Client* (caller must disconnect+delete).
+ */
+static UA_Client *make_client(const char *url,
+                               int request_ms,
+                               const char *op,
+                               int *exit_code) {
+    UA_Client *client = make_client_unconnected(url, request_ms, op, exit_code);
+    if (!client) return NULL;
+
+    UA_StatusCode sc;
+    const char *reverse_msg = NULL;
+    if (g_sec.reverseListenPort > 0) {
+        sc = reverse_connect(client, 1);
+        if (sc == UA_STATUSCODE_GOOD && g_sec.reverseServerUri) {
+            sc = reverse_check_server_uri(client);
+            if (sc != UA_STATUSCODE_GOOD) {
+                UA_Client_disconnect(client);
+                reverse_msg = "the reverse-connected server does not have the "
+                              "expected --reverse-server-uri";
+            }
+        }
+    } else {
+        sc = UA_Client_connect(client, url);
+    }
     if (sc != UA_STATUSCODE_GOOD) {
         UA_Client_delete(client);
         const char *msg;
         int ec;
         if (sc == UA_STATUSCODE_BADTIMEOUT) {
-            msg = "connection timed out";
+            msg = g_sec.reverseListenPort > 0
+                  ? "timed out waiting for the reverse connection"
+                  : "connection timed out";
             ec  = 7;
         } else {
-            msg = "failed to connect";
+            msg = reverse_msg ? reverse_msg : "failed to connect";
             ec  = 3;
         }
         output_begin("open62541", op);
@@ -678,6 +1009,48 @@ static UA_Client *resolve_node_ids(const char **nodes, int n,
 }
 
 /* -------------------------------------------------------------------------
+ * Session-less clients (discovery services)
+ * ---------------------------------------------------------------------- */
+
+UA_Client *cli_new_plain_client(int request_ms) {
+    UA_Client *client = UA_Client_new();
+    if (!client) return NULL;
+    UA_ClientConfig *cfg = UA_Client_getConfig(client);
+    cfg->logging = &g_silent_logger;
+    UA_ClientConfig_setDefault(cfg);
+    client_silence_logger(cfg);
+    if (request_ms > 0) cfg->timeout = (UA_UInt32)request_ms;
+    return client;
+}
+
+/*
+ * Run one session-less service on a reverse connection. The stack may close
+ * the first channel after its own GetEndpoints handshake (see
+ * reverse_connect); the call is then repeated on the server's next attempt.
+ */
+static UA_StatusCode reverse_discovery_call(UA_Client *client,
+                                            const void *req, const UA_DataType *reqType,
+                                            void *resp, const UA_DataType *respType) {
+    int timeout_ms = g_sec.reverseTimeoutMs > 0 ? g_sec.reverseTimeoutMs : 30000;
+    long long deadline = mono_ms() + timeout_ms;
+    UA_StatusCode sc = UA_STATUSCODE_BADTIMEOUT;
+    while (mono_ms() < deadline) {
+        sc = reverse_connect(client, 0);
+        if (sc != UA_STATUSCODE_GOOD) return sc;
+        UA_clear(resp, respType);
+        UA_init(resp, respType);
+        __UA_Client_Service(client, req, reqType, resp, respType);
+        sc = ((UA_ResponseHeader *)resp)->serviceResult;
+        if (sc != UA_STATUSCODE_BADCONNECTIONCLOSED &&
+            sc != UA_STATUSCODE_BADSECURECHANNELCLOSED &&
+            sc != UA_STATUSCODE_BADNOTCONNECTED &&
+            sc != UA_STATUSCODE_BADSERVERNOTCONNECTED)
+            return sc;
+    }
+    return sc;
+}
+
+/* -------------------------------------------------------------------------
  * Security mode name
  * ---------------------------------------------------------------------- */
 
@@ -705,7 +1078,7 @@ static int cmd_endpoints(int argc, char **argv) {
         return 2;
     }
 
-    UA_Client *client = UA_Client_new();
+    UA_Client *client = cli_new_plain_client(0);
     if (!client) {
         output_begin("open62541", "endpoints");
         output_success(0);
@@ -714,19 +1087,38 @@ static int cmd_endpoints(int argc, char **argv) {
         output_end();
         return 6;
     }
-    UA_ClientConfig_setDefault(UA_Client_getConfig(client));
-    client_silence_logger(UA_Client_getConfig(client));
 
     UA_EndpointDescription *eps = NULL;
     size_t epCount = 0;
-    UA_StatusCode sc = UA_Client_getEndpoints(client, endpoint, &epCount, &eps);
+    UA_StatusCode sc;
+    UA_GetEndpointsResponse revResp;
+    UA_GetEndpointsResponse_init(&revResp);
+    if (g_sec.reverseListenPort > 0) {
+        /* GetEndpoints on the SecureChannel the server opened towards us. */
+        UA_GetEndpointsRequest req;
+        UA_GetEndpointsRequest_init(&req);
+        req.endpointUrl = UA_STRING((char *)(uintptr_t)endpoint);
+        sc = reverse_discovery_call(client, &req, &UA_TYPES[UA_TYPES_GETENDPOINTSREQUEST],
+                                    &revResp, &UA_TYPES[UA_TYPES_GETENDPOINTSRESPONSE]);
+        if (sc == UA_STATUSCODE_GOOD) {
+            eps = revResp.endpoints;
+            epCount = revResp.endpointsSize;
+            revResp.endpoints = NULL;
+            revResp.endpointsSize = 0;
+        }
+        UA_GetEndpointsResponse_clear(&revResp);
+        UA_Client_disconnect(client);
+    } else {
+        sc = UA_Client_getEndpoints(client, endpoint, &epCount, &eps);
+    }
 
     /* Milo/Netty warm-up: the very first GetEndpoints call occasionally fails with
      * BadSecureChannelClosed before Netty's thread pool is fully ready.  Retry once. */
-    if (sc == UA_STATUSCODE_BADSECURECHANNELCLOSED ||
-        sc == UA_STATUSCODE_BADSECURECHANNELIDINVALID) {
+    if (g_sec.reverseListenPort <= 0 &&
+        (sc == UA_STATUSCODE_BADSECURECHANNELCLOSED ||
+         sc == UA_STATUSCODE_BADSECURECHANNELIDINVALID)) {
         UA_Client_delete(client);
-        client = UA_Client_new();
+        client = cli_new_plain_client(0);
         if (!client) {
             output_begin("open62541", "endpoints");
             output_success(0);
@@ -735,8 +1127,6 @@ static int cmd_endpoints(int argc, char **argv) {
             output_end();
             return 6;
         }
-        UA_ClientConfig_setDefault(UA_Client_getConfig(client));
-        client_silence_logger(UA_Client_getConfig(client));
         sc = UA_Client_getEndpoints(client, endpoint, &epCount, &eps);
     }
 
@@ -803,7 +1193,7 @@ static int cmd_find_servers(int argc, char **argv) {
         return 2;
     }
 
-    UA_Client *client = UA_Client_new();
+    UA_Client *client = cli_new_plain_client(0);
     if (!client) {
         output_begin("open62541", "find-servers");
         output_success(0);
@@ -812,20 +1202,38 @@ static int cmd_find_servers(int argc, char **argv) {
         output_end();
         return 6;
     }
-    UA_ClientConfig_setDefault(UA_Client_getConfig(client));
-    client_silence_logger(UA_Client_getConfig(client));
 
     UA_ApplicationDescription *apps = NULL;
     size_t appCount = 0;
-    UA_StatusCode sc = UA_Client_findServers(client, endpoint,
-                                             0, NULL, 0, NULL,
-                                             &appCount, &apps);
+    UA_StatusCode sc;
+    if (g_sec.reverseListenPort > 0) {
+        /* FindServers on the SecureChannel the server opened towards us. */
+        UA_FindServersRequest req;
+        UA_FindServersRequest_init(&req);
+        UA_FindServersResponse resp;
+        UA_FindServersResponse_init(&resp);
+        sc = reverse_discovery_call(client, &req, &UA_TYPES[UA_TYPES_FINDSERVERSREQUEST],
+                                    &resp, &UA_TYPES[UA_TYPES_FINDSERVERSRESPONSE]);
+        if (sc == UA_STATUSCODE_GOOD) {
+            apps = resp.servers;
+            appCount = resp.serversSize;
+            resp.servers = NULL;
+            resp.serversSize = 0;
+        }
+        UA_FindServersResponse_clear(&resp);
+        UA_Client_disconnect(client);
+    } else {
+        sc = UA_Client_findServers(client, endpoint,
+                                   0, NULL, 0, NULL,
+                                   &appCount, &apps);
+    }
 
     /* Milo/Netty warm-up retry (same as GetEndpoints). */
-    if (sc == UA_STATUSCODE_BADSECURECHANNELCLOSED ||
-        sc == UA_STATUSCODE_BADSECURECHANNELIDINVALID) {
+    if (g_sec.reverseListenPort <= 0 &&
+        (sc == UA_STATUSCODE_BADSECURECHANNELCLOSED ||
+         sc == UA_STATUSCODE_BADSECURECHANNELIDINVALID)) {
         UA_Client_delete(client);
-        client = UA_Client_new();
+        client = cli_new_plain_client(0);
         if (!client) {
             output_begin("open62541", "find-servers");
             output_success(0);
@@ -834,8 +1242,6 @@ static int cmd_find_servers(int argc, char **argv) {
             output_end();
             return 6;
         }
-        UA_ClientConfig_setDefault(UA_Client_getConfig(client));
-        client_silence_logger(UA_Client_getConfig(client));
         sc = UA_Client_findServers(client, endpoint,
                                    0, NULL, 0, NULL,
                                    &appCount, &apps);
@@ -1185,57 +1591,18 @@ static int cmd_read(int argc, char **argv) {
  * write subcommand
  * ---------------------------------------------------------------------- */
 
+/* Literal -> Variant for `write --type/--value` and `call --input`. The
+ * literal grammar (all 25 built-in types, `Type[]` arrays) lives in values.c.
+ * An unknown type or unparsable literal yields an empty Variant, which the
+ * server answers with its own status (typically BadTypeMismatch). */
 static UA_Variant build_write_variant(const char *typeStr, const char *valStr) {
     UA_Variant var; UA_Variant_init(&var);
     if (!typeStr || !valStr) return var;
-
-#define SET_SCALAR(UATYPE, CTYPE, PARSE) \
-    { CTYPE v = (CTYPE)(PARSE); \
-      UA_Variant_setScalarCopy(&var, &v, &UA_TYPES[UATYPE]); return var; }
-
-    if (strcmp(typeStr, "Boolean") == 0)
-        SET_SCALAR(UA_TYPES_BOOLEAN, UA_Boolean,
-                   strcmp(valStr,"true")==0 || strcmp(valStr,"1")==0)
-    if (strcmp(typeStr, "SByte")   == 0) SET_SCALAR(UA_TYPES_SBYTE,  UA_SByte,  atoi(valStr))
-    if (strcmp(typeStr, "Byte")    == 0) SET_SCALAR(UA_TYPES_BYTE,   UA_Byte,   atoi(valStr))
-    if (strcmp(typeStr, "Int16")   == 0) SET_SCALAR(UA_TYPES_INT16,  UA_Int16,  atoi(valStr))
-    if (strcmp(typeStr, "UInt16")  == 0) SET_SCALAR(UA_TYPES_UINT16, UA_UInt16, atoi(valStr))
-    if (strcmp(typeStr, "Int32")   == 0) SET_SCALAR(UA_TYPES_INT32,  UA_Int32,  atoi(valStr))
-    if (strcmp(typeStr, "UInt32")  == 0)
-        SET_SCALAR(UA_TYPES_UINT32, UA_UInt32, (uint32_t)strtoul(valStr,NULL,10))
-    if (strcmp(typeStr, "Int64")   == 0)
-        SET_SCALAR(UA_TYPES_INT64,  UA_Int64,  strtoll(valStr,NULL,10))
-    if (strcmp(typeStr, "UInt64")  == 0)
-        SET_SCALAR(UA_TYPES_UINT64, UA_UInt64, strtoull(valStr,NULL,10))
-    if (strcmp(typeStr, "Float")   == 0)
-        SET_SCALAR(UA_TYPES_FLOAT,  UA_Float,  (float)atof(valStr))
-    if (strcmp(typeStr, "Double")  == 0)
-        SET_SCALAR(UA_TYPES_DOUBLE, UA_Double, atof(valStr))
-    if (strcmp(typeStr, "String")  == 0) {
-        UA_String s = UA_STRING_ALLOC(valStr);
-        UA_Variant_setScalarCopy(&var, &s, &UA_TYPES[UA_TYPES_STRING]);
-        UA_String_clear(&s);
-        return var;
+    char errBuf[256];
+    if (value_parse(typeStr, valStr, NULL, &var, errBuf, sizeof(errBuf)) != 0) {
+        fprintf(stderr, "[open62541] warn: %s\n", errBuf);
+        UA_Variant_init(&var);
     }
-    /* Comma-separated Int32 array, e.g. --type Int32[] --value 1,2,3 */
-    if (strcmp(typeStr, "Int32[]") == 0) {
-        size_t count = 1;
-        for (const char *p = valStr; *p; p++)
-            if (*p == ',') count++;
-        UA_Int32 *arr = (UA_Int32 *)UA_Array_new(count, &UA_TYPES[UA_TYPES_INT32]);
-        if (!arr) return var;
-        size_t idx = 0;
-        char *dup = strdup(valStr);
-        char *tok = strtok(dup, ",");
-        while (tok && idx < count) {
-            arr[idx++] = (UA_Int32)atoi(tok);
-            tok = strtok(NULL, ",");
-        }
-        free(dup);
-        UA_Variant_setArray(&var, arr, idx, &UA_TYPES[UA_TYPES_INT32]);
-        return var;
-    }
-#undef SET_SCALAR
     return var;
 }
 
@@ -1810,6 +2177,46 @@ static int cmd_subscribe(int argc, char **argv) {
         else if (strcmp(tsStr, "Both") == 0)    ts = UA_TIMESTAMPSTORETURN_BOTH;
     }
 
+    /* DataChangeFilter: --deadband-absolute | --deadband-percent, --trigger. */
+    const char *dbAbsStr = find_arg(argc, argv, "--deadband-absolute");
+    const char *dbPctStr = find_arg(argc, argv, "--deadband-percent");
+    const char *trigStr  = find_arg(argc, argv, "--trigger");
+    int useFilter = (dbAbsStr || dbPctStr || trigStr);
+    UA_DataChangeFilter dcFilter;
+    UA_DataChangeFilter_init(&dcFilter);
+    dcFilter.trigger = UA_DATACHANGETRIGGER_STATUSVALUE;
+    dcFilter.deadbandType = UA_DEADBANDTYPE_NONE;
+    {
+        const char *filterErr = NULL;
+        if (dbAbsStr && dbPctStr)
+            filterErr = "--deadband-absolute and --deadband-percent are mutually exclusive";
+        if (trigStr) {
+            if (strcmp(trigStr, "Status") == 0)
+                dcFilter.trigger = UA_DATACHANGETRIGGER_STATUS;
+            else if (strcmp(trigStr, "StatusValue") == 0)
+                dcFilter.trigger = UA_DATACHANGETRIGGER_STATUSVALUE;
+            else if (strcmp(trigStr, "StatusValueTimestamp") == 0)
+                dcFilter.trigger = UA_DATACHANGETRIGGER_STATUSVALUETIMESTAMP;
+            else
+                filterErr = "--trigger must be Status, StatusValue or StatusValueTimestamp";
+        }
+        if (dbAbsStr) {
+            dcFilter.deadbandType  = UA_DEADBANDTYPE_ABSOLUTE;
+            dcFilter.deadbandValue = atof(dbAbsStr);
+        } else if (dbPctStr) {
+            dcFilter.deadbandType  = UA_DEADBANDTYPE_PERCENT;
+            dcFilter.deadbandValue = atof(dbPctStr);
+        }
+        if (filterErr) {
+            output_begin("open62541", "subscribe");
+            output_success(0);
+            output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+            output_error("input", filterErr);
+            output_end();
+            return 2;
+        }
+    }
+
     int exit_code = 3;
     UA_Client *client = make_client(endpoint, 5000, "subscribe", &exit_code);
     if (!client) return exit_code;
@@ -1858,6 +2265,12 @@ static int cmd_subscribe(int argc, char **argv) {
     monReq.requestedParameters.samplingInterval = siMs;
     monReq.requestedParameters.queueSize        = queueSize;
     monReq.requestedParameters.discardOldest    = discardOldest;
+    if (useFilter) {
+        monReq.requestedParameters.filter.encoding = UA_EXTENSIONOBJECT_DECODED_NODELETE;
+        monReq.requestedParameters.filter.content.decoded.type =
+            &UA_TYPES[UA_TYPES_DATACHANGEFILTER];
+        monReq.requestedParameters.filter.content.decoded.data = &dcFilter;
+    }
     UA_MonitoredItemCreateResult monResp =
         UA_Client_MonitoredItems_createDataChange(
             client, subResp.subscriptionId, ts,
@@ -1893,6 +2306,33 @@ static int cmd_subscribe(int argc, char **argv) {
            ",\"severity\":\"%s\"}",
            output_status_code_name(mon_sc), (uint32_t)mon_sc,
            output_severity(mon_sc));
+    if (useFilter) {
+        /* Only present when a DataChangeFilter was requested, so the result
+         * of unfiltered subscriptions is unchanged. */
+        static const char *trigNames[] = { "Status", "StatusValue", "StatusValueTimestamp" };
+        static const char *dbNames[]   = { "None", "Absolute", "Percent" };
+        printf(",\"monitoredItemId\":%" PRIu32, (uint32_t)monResp.monitoredItemId);
+        printf(",\"revisedSamplingInterval\":%.17g", monResp.revisedSamplingInterval);
+        printf(",\"revisedQueueSize\":%" PRIu32, (uint32_t)monResp.revisedQueueSize);
+        printf(",\"filter\":{\"trigger\":\"%s\",\"deadbandType\":\"%s\",\"deadbandValue\":%.17g}",
+               trigNames[dcFilter.trigger], dbNames[dcFilter.deadbandType],
+               dcFilter.deadbandValue);
+        printf(",\"filterResult\":");
+        const UA_ExtensionObject *fr = &monResp.filterResult;
+        if (fr->encoding == UA_EXTENSIONOBJECT_ENCODED_NOBODY) {
+            printf("null");
+        } else if (fr->encoding == UA_EXTENSIONOBJECT_DECODED ||
+                   fr->encoding == UA_EXTENSIONOBJECT_DECODED_NODELETE) {
+            printf("{\"typeId\":");
+            output_nodeid(&fr->content.decoded.type->typeId);
+            printf(",\"typeName\":\"%s\"}", fr->content.decoded.type->typeName
+                                               ? fr->content.decoded.type->typeName : "");
+        } else {
+            printf("{\"typeId\":");
+            output_nodeid(&fr->content.encoded.typeId);
+            printf("}");
+        }
+    }
     printf(",\"notifications\":[");
     for (int i = 0; i < store.count; i++) {
         NotifEntry *e = &store.entries[i];
@@ -1917,15 +2357,20 @@ static int cmd_subscribe(int argc, char **argv) {
     if (timedOut)
         printf(",\"error\":{\"category\":\"timeout\","
                "\"message\":\"timeout waiting for notifications\"}");
+    else if (!UA_StatusCode_isGood(mon_sc))
+        printf(",\"error\":{\"category\":\"service\","
+               "\"message\":\"CreateMonitoredItems rejected the monitored item\"}");
     else
         printf(",\"error\":null");
     output_end();
 
+    UA_MonitoredItemCreateResult_clear(&monResp);
     UA_Client_Subscriptions_deleteSingle(client, subResp.subscriptionId);
     UA_NodeId_clear(&nodeId);
     UA_Client_disconnect(client);
     UA_Client_delete(client);
-    return timedOut ? 7 : 0;
+    if (timedOut) return 7;
+    return UA_StatusCode_isGood(mon_sc) ? 0 : 4;
 }
 
 /* -------------------------------------------------------------------------
@@ -2058,7 +2503,9 @@ static int slc_publishing_mode(UA_Client *client, UA_NodeId nodeId, int toMs) {
 
     UA_MonitoredItemCreateRequest monReq =
         UA_MonitoredItemCreateRequest_default(nodeId);
-    monReq.requestedParameters.samplingInterval = 100.0;
+    /* 0 = report every change: the queue-window assertions must not depend
+     * on how a server throttles samples within a sampling interval. */
+    monReq.requestedParameters.samplingInterval = 0.0;
     monReq.requestedParameters.queueSize        = 3;
     monReq.requestedParameters.discardOldest    = UA_TRUE;
     UA_MonitoredItemCreateResult monResp =
@@ -2179,7 +2626,9 @@ static int slc_monitoring_mode(UA_Client *client, UA_NodeId nodeId, int toMs) {
 
     UA_MonitoredItemCreateRequest monReq =
         UA_MonitoredItemCreateRequest_default(nodeId);
-    monReq.requestedParameters.samplingInterval = 100.0;
+    /* 0 = report every change: the queue-window assertions must not depend
+     * on how a server throttles samples within a sampling interval. */
+    monReq.requestedParameters.samplingInterval = 0.0;
     monReq.requestedParameters.queueSize        = 5;
     monReq.requestedParameters.discardOldest    = UA_TRUE;
     UA_MonitoredItemCreateResult monResp =
@@ -3654,6 +4103,65 @@ static int cmd_node_management(int argc, char **argv) {
 }
 
 /* -------------------------------------------------------------------------
+ * client_internal.h wrappers
+ * ---------------------------------------------------------------------- */
+
+const char *cli_find_arg(int argc, char **argv, const char *flag) {
+    return find_arg(argc, argv, flag);
+}
+
+int cli_count_flag(int argc, char **argv, const char *flag) {
+    return count_flag(argc, argv, flag);
+}
+
+int cli_validate_nodeid(const char *s) {
+    return validate_nodeid_structure(s);
+}
+
+UA_NodeId cli_parse_nodeid_local(const char *s) {
+    return parse_nodeid_local(s);
+}
+
+int cli_resolve_nsu_nodeid(UA_Client *client, const char *s, UA_NodeId *out) {
+    return resolve_nsu_nodeid(client, s, out);
+}
+
+UA_Client *cli_make_client(const char *url, int request_ms, const char *op,
+                           int *exit_code) {
+    return make_client(url, request_ms, op, exit_code);
+}
+
+UA_Client *cli_make_channel_client(const char *url, int request_ms, const char *op,
+                                   int *exit_code) {
+    UA_Client *client = make_client_unconnected(url, request_ms, op, exit_code);
+    if (!client) return NULL;
+    /* Discovery services run on a SecureChannel without a Session. */
+    UA_StatusCode sc = UA_Client_connectSecureChannel(client, url);
+    if (sc != UA_STATUSCODE_GOOD) {
+        UA_Client_delete(client);
+        int timeout = (sc == UA_STATUSCODE_BADTIMEOUT);
+        cli_emit_failure(op, sc, timeout ? "timeout" : "transport",
+                         timeout ? "connection timed out" : "failed to connect");
+        *exit_code = timeout ? 7 : 3;
+        return NULL;
+    }
+    return client;
+}
+
+void cli_emit_failure(const char *op, UA_StatusCode sc, const char *category,
+                      const char *message) {
+    output_begin("open62541", op);
+    output_success(0);
+    output_service_result(sc);
+    output_error(category, message);
+    output_end();
+}
+
+void cli_print_status(const char *key, UA_StatusCode sc) {
+    print_sc_obj(key, sc);
+}
+
+/* -------------------------------------------------------------------------
  * Dispatch
  * ---------------------------------------------------------------------- */
 
@@ -3662,7 +4170,8 @@ int client_run(int argc, char **argv) {
         fprintf(stderr,
             "usage: client <endpoints|find-servers|read|write|browse|translate|"
             "call|subscribe|subscription-lifecycle|event-subscribe|history-read|"
-            "republish|transfer-subscriptions|register-nodes|node-management> ...\n");
+            "republish|transfer-subscriptions|register-nodes|node-management|"
+            "find-servers-on-network|register-server|codec> ...\n");
         return 2;
     }
 
@@ -3684,6 +4193,14 @@ int client_run(int argc, char **argv) {
             g_sec.password = v;
         if ((v = find_arg(argc, argv, "--channel-lifetime-ms")) != NULL)
             g_sec.channelLifetimeMs = atoi(v);
+        if ((v = find_arg(argc, argv, "--application-uri")) != NULL)
+            g_sec.applicationUri = v;
+        if ((v = find_arg(argc, argv, "--reverse-listen")) != NULL)
+            g_sec.reverseListenPort = atoi(v);
+        if ((v = find_arg(argc, argv, "--reverse-timeout-ms")) != NULL)
+            g_sec.reverseTimeoutMs = atoi(v);
+        if ((v = find_arg(argc, argv, "--reverse-server-uri")) != NULL)
+            g_sec.reverseServerUri = v;
 
         /* Collect all --trust-list values */
         int tc = count_flag(argc, argv, "--trust-list");
@@ -3721,6 +4238,9 @@ int client_run(int argc, char **argv) {
     if (strcmp(sub, "transfer-subscriptions") == 0) return cmd_transfer_subscriptions(argc - 1, argv + 1);
     if (strcmp(sub, "register-nodes")         == 0) return cmd_register_nodes(argc - 1, argv + 1);
     if (strcmp(sub, "node-management")        == 0) return cmd_node_management(argc - 1, argv + 1);
+    if (strcmp(sub, "find-servers-on-network") == 0) return cmd_find_servers_on_network(argc - 1, argv + 1);
+    if (strcmp(sub, "register-server")        == 0) return cmd_register_server(argc - 1, argv + 1);
+    if (strcmp(sub, "codec")                  == 0) return cmd_codec(argc - 1, argv + 1);
     fprintf(stderr, "unknown client subcommand: %s\n", sub);
     return 2;
 }

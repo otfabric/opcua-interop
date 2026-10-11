@@ -68,8 +68,32 @@ int server_parse_args(int argc, char **argv, ServerArgs *out,
         } else if (strcmp(argv[i], "--ready-file") == 0 && i+1 < argc) {
             free(out->readyFile);      out->readyFile      = strdup(argv[++i]);
             out->readyFileExplicit = 1;
+        } else if (strcmp(argv[i], "--ecc-dir") == 0 && i+1 < argc) {
+            free(out->eccDir);         out->eccDir         = strdup(argv[++i]);
+        } else if (strcmp(argv[i], "--reverse-connect") == 0 && i+1 < argc) {
+            if (out->reverseConnectCount < SERVER_MAX_REVERSE)
+                out->reverseConnect[out->reverseConnectCount++] = strdup(argv[i+1]);
+            i++;
+        } else if (strcmp(argv[i], "--reverse-connect-interval-ms") == 0 && i+1 < argc) {
+            out->reverseIntervalMs = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--lds") == 0) {
+            out->lds = 1;
+        } else if (strcmp(argv[i], "--lds-cleanup-timeout") == 0 && i+1 < argc) {
+            out->ldsCleanupTimeoutS = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--mdns-name") == 0 && i+1 < argc) {
+            free(out->mdnsName);       out->mdnsName       = strdup(argv[++i]);
+        } else if (strcmp(argv[i], "--mdns-capability") == 0 && i+1 < argc) {
+            if (out->mdnsCapCount < SERVER_MAX_CAPS)
+                out->mdnsCaps[out->mdnsCapCount++] = strdup(argv[i+1]);
+            i++;
+        } else if (strcmp(argv[i], "--register-with") == 0 && i+1 < argc) {
+            free(out->registerWith);   out->registerWith   = strdup(argv[++i]);
+        } else if (strcmp(argv[i], "--register-interval-ms") == 0 && i+1 < argc) {
+            out->registerIntervalMs = atoi(argv[++i]);
         }
     }
+    if (out->reverseIntervalMs <= 0)  out->reverseIntervalMs  = 1000;
+    if (out->registerIntervalMs <= 0) out->registerIntervalMs = 30000;
 
     if (!out->fixturePath || !*out->fixturePath) {
         snprintf(errBuf, errLen, "missing --fixture (or OPCUA_FIXTURE)");
@@ -998,6 +1022,162 @@ static UA_StatusCode interop_add_event_type(UA_Server *server, UA_NodeId *outTyp
 }
 
 /* -------------------------------------------------------------------------
+ * ECC SecurityPolicies
+ *
+ * Each ECC policy needs an application certificate of its own curve. They are
+ * looked up as <ecc-dir>/ecc-<curve>/cert.crt and cert.key. Only policies that
+ * are listed in the fixture's securityProfiles and whose certificate exists
+ * get an endpoint.
+ * ---------------------------------------------------------------------- */
+
+#ifdef UA_ENABLE_ENCRYPTION
+
+typedef UA_StatusCode (*EccAddPolicy)(UA_ServerConfig *config,
+                                      const UA_ByteString *certificate,
+                                      const UA_ByteString *privateKey);
+
+static const struct {
+    const char  *name;      /* fixture securityPolicy name */
+    const char  *curveDir;  /* sub-directory of --ecc-dir */
+    EccAddPolicy add;
+} g_eccPolicies[] = {
+    { "ECC_nistP256",            "ecc-nistp256",        UA_ServerConfig_addSecurityPolicyEccNistP256 },
+    { "ECC_nistP384",            "ecc-nistp384",        UA_ServerConfig_addSecurityPolicyEccNistP384 },
+    { "ECC_brainpoolP256r1",     "ecc-brainpoolp256r1", UA_ServerConfig_addSecurityPolicyEccBrainpoolP256r1 },
+    { "ECC_brainpoolP384r1",     "ecc-brainpoolp384r1", UA_ServerConfig_addSecurityPolicyEccBrainpoolP384r1 },
+    { "ECC_curve25519",          "ecc-curve25519",      UA_ServerConfig_addSecurityPolicyEccCurve25519 },
+    { "ECC_curve448",            "ecc-curve448",        UA_ServerConfig_addSecurityPolicyEccCurve448 },
+    { "ECC_nistP256_AesGcm",     "ecc-nistp256",        UA_ServerConfig_addSecurityPolicyEccNistP256AesGcm },
+    { "ECC_nistP256_ChaChaPoly", "ecc-nistp256",        UA_ServerConfig_addSecurityPolicyEccNistP256ChaChaPoly },
+};
+
+static UA_MessageSecurityMode security_mode_from_name(const char *s) {
+    if (s && strcmp(s, "Sign") == 0)           return UA_MESSAGESECURITYMODE_SIGN;
+    if (s && strcmp(s, "SignAndEncrypt") == 0) return UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+    return UA_MESSAGESECURITYMODE_NONE;
+}
+
+/* Adds the ECC policies + endpoints named in the fixture. Returns the number
+ * of endpoints added. */
+static size_t add_ecc_endpoints(UA_ServerConfig *cfg, const Fixture *fixture,
+                                const char *eccDir) {
+    size_t added = 0;
+    for (size_t pi = 0; pi < sizeof(g_eccPolicies) / sizeof(g_eccPolicies[0]); pi++) {
+        const char *name = g_eccPolicies[pi].name;
+
+        /* Is this policy requested by the fixture at all? */
+        int wanted = 0;
+        for (size_t i = 0; i < fixture->securityProfileCount; i++)
+            if (fixture->securityProfiles[i].policy &&
+                strcmp(fixture->securityProfiles[i].policy, name) == 0)
+                wanted = 1;
+        if (!wanted) continue;
+
+        char certPath[1100], keyPath[1100], uri[128];
+        snprintf(certPath, sizeof(certPath), "%s/%s/cert.crt", eccDir, g_eccPolicies[pi].curveDir);
+        snprintf(keyPath,  sizeof(keyPath),  "%s/%s/cert.key", eccDir, g_eccPolicies[pi].curveDir);
+        if (access(certPath, R_OK) != 0 || access(keyPath, R_OK) != 0) {
+            fprintf(stderr, "[open62541] info: ECC policy %s skipped (no %s)\n", name, certPath);
+            continue;
+        }
+        UA_ByteString cert = load_cert_file(certPath);
+        UA_ByteString key  = load_cert_file(keyPath);
+        UA_StatusCode sc = g_eccPolicies[pi].add(cfg, &cert, &key);
+        UA_ByteString_clear(&cert);
+        UA_ByteString_clear(&key);
+        if (sc != UA_STATUSCODE_GOOD) {
+            fprintf(stderr, "[open62541] warn: ECC policy %s not available: %s\n",
+                    name, UA_StatusCode_name(sc));
+            continue;
+        }
+
+        snprintf(uri, sizeof(uri), "http://opcfoundation.org/UA/SecurityPolicy#%s", name);
+        for (size_t i = 0; i < fixture->securityProfileCount; i++) {
+            const SecurityProfile *sp = &fixture->securityProfiles[i];
+            if (!sp->policy || strcmp(sp->policy, name) != 0) continue;
+            UA_MessageSecurityMode mode = security_mode_from_name(sp->mode);
+            if (mode == UA_MESSAGESECURITYMODE_NONE) continue;
+            sc = UA_ServerConfig_addEndpoint(cfg, UA_STRING(uri), mode);
+            if (sc == UA_STATUSCODE_GOOD) {
+                added++;
+                fprintf(stderr, "[open62541] info: ECC endpoint %s/%s\n", name, sp->mode);
+            } else {
+                fprintf(stderr, "[open62541] warn: ECC endpoint %s/%s: %s\n",
+                        name, sp->mode, UA_StatusCode_name(sc));
+            }
+        }
+    }
+    return added;
+}
+
+#endif /* UA_ENABLE_ENCRYPTION */
+
+/* -------------------------------------------------------------------------
+ * Reverse connect / discovery registration
+ * ---------------------------------------------------------------------- */
+
+static void reverse_state_cb(UA_Server *server, UA_UInt64 handle,
+                             UA_SecureChannelState state, void *context) {
+    (void)server;
+    fprintf(stderr, "[open62541] info: reverse connect #%" PRIu64 " to %s: channel state %d\n",
+            (uint64_t)handle, context ? (const char *)context : "?", (int)state);
+}
+
+#ifdef UA_ENABLE_DISCOVERY
+
+static void register_with_lds(UA_Server *server, void *data) {
+    const char *url = (const char *)data;
+    UA_ClientConfig cc;
+    memset(&cc, 0, sizeof(cc));
+    UA_ClientConfig_setDefault(&cc);
+    cc.securityMode = UA_MESSAGESECURITYMODE_NONE;
+    UA_StatusCode sc = UA_Server_registerDiscovery(
+        server, &cc, UA_STRING((char *)(uintptr_t)url), UA_STRING_NULL);
+    if (sc != UA_STATUSCODE_GOOD)
+        fprintf(stderr, "[open62541] warn: register with %s: %s\n", url, UA_StatusCode_name(sc));
+}
+
+#endif /* UA_ENABLE_DISCOVERY */
+
+/* -------------------------------------------------------------------------
+ * EURange property (AnalogItemType)
+ * ---------------------------------------------------------------------- */
+
+static void set_eu_range(UA_Server *server, const UA_NodeId *varId,
+                         const char *fixtureId, double low, double high) {
+    UA_Range range;
+    range.low  = low;
+    range.high = high;
+    UA_Variant val;
+    UA_Variant_init(&val);
+    UA_Variant_setScalar(&val, &range, &UA_TYPES[UA_TYPES_RANGE]);
+
+    /* AnalogItemType instances get their mandatory EURange child from the
+     * type; write it if it is there, otherwise add the property. */
+    UA_QualifiedName qn = UA_QUALIFIEDNAME(0, "EURange");
+    UA_BrowsePathResult bpr = UA_Server_browseSimplifiedBrowsePath(server, *varId, 1, &qn);
+    UA_StatusCode sc;
+    if (bpr.statusCode == UA_STATUSCODE_GOOD && bpr.targetsSize > 0) {
+        sc = UA_Server_writeValue(server, bpr.targets[0].targetId.nodeId, val);
+    } else {
+        UA_VariableAttributes attr = UA_VariableAttributes_default;
+        attr.displayName = UA_LOCALIZEDTEXT("en", "EURange");
+        attr.dataType    = UA_TYPES[UA_TYPES_RANGE].typeId;
+        attr.valueRank   = UA_VALUERANK_SCALAR;
+        attr.accessLevel = UA_ACCESSLEVELMASK_READ;
+        attr.value       = val;
+        sc = UA_Server_addVariableNode(server, UA_NODEID_NULL, *varId,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), qn,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
+                                       attr, NULL, NULL);
+    }
+    UA_BrowsePathResult_clear(&bpr);
+    if (sc != UA_STATUSCODE_GOOD)
+        fprintf(stderr, "[open62541] warn: EURange of '%s': %s\n",
+                fixtureId, UA_StatusCode_name(sc));
+}
+
+/* -------------------------------------------------------------------------
  * server_run
  * ---------------------------------------------------------------------- */
 
@@ -1042,15 +1222,18 @@ int server_run(const ServerArgs *args) {
     UA_ServerConfig cfg_val;
     memset(&cfg_val, 0, sizeof(UA_ServerConfig));
 
-    /* Determine whether to enable security (cert + key required) */
-    UA_Boolean use_security = (args->certFile && *args->certFile &&
-                                args->keyFile  && *args->keyFile);
+    /* Determine whether to enable security: an RSA application certificate
+     * (cert + key) and / or a directory with ECC application certificates. */
+    UA_Boolean have_rsa = (args->certFile && *args->certFile &&
+                           args->keyFile  && *args->keyFile);
+    UA_Boolean have_ecc = (args->eccDir && *args->eccDir);
+    UA_Boolean use_security = have_rsa || have_ecc;
 
 #ifdef UA_ENABLE_ENCRYPTION
     if (use_security) {
-        UA_ByteString cert = load_cert_file(args->certFile);
-        UA_ByteString key  = load_cert_file(args->keyFile);
-        if (cert.length == 0 || key.length == 0) {
+        UA_ByteString cert = have_rsa ? load_cert_file(args->certFile) : UA_BYTESTRING_NULL;
+        UA_ByteString key  = have_rsa ? load_cert_file(args->keyFile)  : UA_BYTESTRING_NULL;
+        if (have_rsa && (cert.length == 0 || key.length == 0)) {
             fprintf(stderr, "[open62541] error: failed to load certificate or private key\n");
             UA_ByteString_clear(&cert);
             UA_ByteString_clear(&key);
@@ -1085,7 +1268,17 @@ int server_run(const ServerArgs *args) {
             fixture_free(fixture);
             return 1;
         }
-        fprintf(stderr, "[open62541] info: security enabled from %s\n", args->certFile);
+        if (have_rsa)
+            fprintf(stderr, "[open62541] info: security enabled from %s\n", args->certFile);
+
+        if (have_ecc) {
+            size_t n = add_ecc_endpoints(&cfg_val, fixture, args->eccDir);
+            fprintf(stderr, "[open62541] info: %zu ECC endpoint(s) from %s\n", n, args->eccDir);
+            /* The user token policies are derived from the SecurityPolicy
+             * list; rebuild them now that it has grown. (Repeated below with
+             * the fixture users, if any.) */
+            UA_AccessControl_default(&cfg_val, UA_TRUE, NULL, 0, NULL);
+        }
     } else {
         UA_StatusCode cfgSc = UA_ServerConfig_setDefault(&cfg_val);
         if (cfgSc != UA_STATUSCODE_GOOD) {
@@ -1180,6 +1373,51 @@ int server_run(const ServerArgs *args) {
                     fixture->userCount);
         }
     }
+
+    /* Reverse connect retry interval (the stack default is 15 s). */
+    cfg_val.reverseReconnectInterval = (UA_UInt32)args->reverseIntervalMs;
+
+#ifdef UA_ENABLE_DISCOVERY
+    if (args->lds) {
+        /* RegisterServer / RegisterServer2 are only served by a
+         * DiscoveryServer application. */
+        cfg_val.applicationDescription.applicationType = UA_APPLICATIONTYPE_DISCOVERYSERVER;
+        if (args->ldsCleanupTimeoutS > 0)
+            cfg_val.discoveryCleanupTimeout = (UA_UInt32)args->ldsCleanupTimeoutS;
+    }
+# ifdef UA_ENABLE_DISCOVERY_MULTICAST
+    {
+        /* The mDNS record (also sent in RegisterServer2). mDNS itself is on
+         * for an LDS (FindServersOnNetwork) and with --mdns-name. */
+        const char *mdns_name = (args->mdnsName && *args->mdnsName)
+            ? args->mdnsName
+            : (args->lds ? "opcua-interop-lds"
+                         : (fixture->applicationName ? fixture->applicationName
+                                                     : "opcua-interop"));
+        UA_String_clear(&cfg_val.mdnsConfig.mdnsServerName);
+        cfg_val.mdnsConfig.mdnsServerName = UA_STRING_ALLOC(mdns_name);
+
+        size_t capCount = args->mdnsCapCount > 0 ? (size_t)args->mdnsCapCount : 1;
+        UA_String *caps = (UA_String *)UA_Array_new(capCount, &UA_TYPES[UA_TYPES_STRING]);
+        if (caps) {
+            if (args->mdnsCapCount > 0) {
+                for (size_t i = 0; i < capCount; i++)
+                    caps[i] = UA_STRING_ALLOC(args->mdnsCaps[i]);
+            } else {
+                caps[0] = UA_STRING_ALLOC(args->lds ? "LDS" : "NA");
+            }
+            UA_Array_delete(cfg_val.mdnsConfig.serverCapabilities,
+                            cfg_val.mdnsConfig.serverCapabilitiesSize,
+                            &UA_TYPES[UA_TYPES_STRING]);
+            cfg_val.mdnsConfig.serverCapabilities = caps;
+            cfg_val.mdnsConfig.serverCapabilitiesSize = capCount;
+        }
+        cfg_val.mdnsEnabled = (args->lds || (args->mdnsName && *args->mdnsName));
+        if (cfg_val.mdnsEnabled)
+            fprintf(stderr, "[open62541] info: mDNS enabled name=%s\n", mdns_name);
+    }
+# endif
+#endif
 
     UA_Server *server = UA_Server_newWithConfig(&cfg_val);
     if (!server) {
@@ -1307,6 +1545,9 @@ int server_run(const ServerArgs *args) {
                 sc = UA_Server_addVariableNode(server, nodeId, parentId,
                     refTypeId, bn, typeDefId, attr, NULL, NULL);
                 UA_Variant_clear(&attr.value);
+                if (sc == UA_STATUSCODE_GOOD && nd->hasEuRange)
+                    set_eu_range(server, &nodeId, nd->nodeId,
+                                 nd->euRangeLow, nd->euRangeHigh);
                 break;
             }
             case NODE_METHOD: {
@@ -1450,6 +1691,45 @@ int server_run(const ServerArgs *args) {
     fprintf(stderr, "[open62541] info: server started bind_port=%d adv=%s\n",
             bind_port, adv_url);
 
+    /* The stack fills applicationDescription.discoveryUrls from the listen
+     * sockets (opc.tcp://<hostname>:<port>). Publish the advertised endpoint
+     * URL instead: it is what FindServers returns, what is registered with an
+     * LDS, and the EndpointUrl of the ReverseHello. */
+    {
+        UA_Array_delete(cfg->applicationDescription.discoveryUrls,
+                        cfg->applicationDescription.discoveryUrlsSize,
+                        &UA_TYPES[UA_TYPES_STRING]);
+        cfg->applicationDescription.discoveryUrls = NULL;
+        cfg->applicationDescription.discoveryUrlsSize = 0;
+        UA_String adv = UA_STRING(adv_url);
+        if (UA_Array_copy(&adv, 1, (void **)&cfg->applicationDescription.discoveryUrls,
+                          &UA_TYPES[UA_TYPES_STRING]) == UA_STATUSCODE_GOOD)
+            cfg->applicationDescription.discoveryUrlsSize = 1;
+    }
+
+    for (int ri = 0; ri < args->reverseConnectCount; ri++) {
+        UA_UInt64 handle = 0;
+        UA_StatusCode rsc = UA_Server_addReverseConnect(
+            server, UA_STRING(args->reverseConnect[ri]),
+            reverse_state_cb, args->reverseConnect[ri], &handle);
+        fprintf(stderr, "[open62541] info: reverse connect to %s every %d ms: %s\n",
+                args->reverseConnect[ri], args->reverseIntervalMs,
+                UA_StatusCode_name(rsc));
+    }
+
+#ifdef UA_ENABLE_DISCOVERY
+    /* (UA_Server_setRegisterServerCallback is declared by v1.5.9 but not
+     * implemented, so registrations are not logged here.) */
+    if (args->registerWith && *args->registerWith) {
+        UA_UInt64 regCbId = 0;
+        register_with_lds(server, args->registerWith);
+        UA_Server_addRepeatedCallback(server, register_with_lds, args->registerWith,
+                                      (UA_Double)args->registerIntervalMs, &regCbId);
+        fprintf(stderr, "[open62541] info: registering with %s every %d ms\n",
+                args->registerWith, args->registerIntervalMs);
+    }
+#endif
+
     /* Write readiness file atomically */
     if (args->readyFile && *args->readyFile) {
         int r = write_ready_file_atomic(args->readyFile, args->readyFileExplicit,
@@ -1469,6 +1749,29 @@ int server_run(const ServerArgs *args) {
     }
 
     fprintf(stderr, "[open62541] info: shutting down\n");
+#ifdef UA_ENABLE_DISCOVERY
+    if (args->registerWith && *args->registerWith) {
+        /* Unregister (isOnline=false) and give the async exchange a moment. */
+        UA_ClientConfig cc;
+        memset(&cc, 0, sizeof(cc));
+        UA_ClientConfig_setDefault(&cc);
+        cc.securityMode = UA_MESSAGESECURITYMODE_NONE;
+        UA_StatusCode dsc = UA_Server_deregisterDiscovery(
+            server, &cc, UA_STRING(args->registerWith));
+        fprintf(stderr, "[open62541] info: unregister from %s: %s\n",
+                args->registerWith, UA_StatusCode_name(dsc));
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (;;) {
+            UA_Server_run_iterate(server, UA_FALSE);
+            struct timespec nap = { 0, 10 * 1000 * 1000 };
+            nanosleep(&nap, NULL);
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            if ((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 >= 1500)
+                break;
+        }
+    }
+#endif
     UA_Server_run_shutdown(server);
     UA_Server_delete(server);
 

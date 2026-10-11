@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
 # Generate the opcua-interop test PKI.
 #
-# Requirements: openssl >= 1.1
+# Usage:
+#   generate.sh             regenerate everything (CA, RSA identities, ECC certificates)
+#   generate.sh --add-ecc   keep the existing CA and RSA identities untouched and
+#                           only (re)generate the ecc-<curve>/ certificates
+#
+# Requirements: openssl >= 1.1.1 (ECC: brainpool, Ed25519 and Ed448 support)
 # Output: certs/test-pki/
 #
 # Certificates generated here are for ISOLATED TEST ENVIRONMENTS ONLY.
 # Never use them in production.
 
 set -euo pipefail
+
+MODE="full"
+case "${1:-}" in
+    "")        ;;
+    --add-ecc) MODE="add-ecc" ;;
+    *) echo "usage: generate.sh [--add-ecc]" >&2; exit 2 ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKI_DIR="${SCRIPT_DIR}/test-pki"
@@ -136,6 +148,100 @@ gen_untrusted_cert() {
     log "Untrusted cert: ${cn}"
 }
 
+# ── ECC application certificates ─────────────────────────────────────────────
+#
+# One certificate per identity and curve, in <identity>/ecc-<curve>/:
+#   cert.crt  PEM certificate (same subject / SAN URI as the RSA certificate)
+#   cert.key  PEM private key (PKCS#8)
+# They are issued by the same test CA as the RSA certificates, so every
+# existing trust directory (CA in trusted/certs) already accepts them.
+#
+#   directory             key                 SecurityPolicy
+#   ecc-nistp256          EC prime256v1       ECC_nistP256 (+ _AesGcm / _ChaChaPoly)
+#   ecc-nistp384          EC secp384r1        ECC_nistP384
+#   ecc-brainpoolp256r1   EC brainpoolP256r1  ECC_brainpoolP256r1
+#   ecc-brainpoolp384r1   EC brainpoolP384r1  ECC_brainpoolP384r1
+#   ecc-curve25519        Ed25519             ECC_curve25519
+#   ecc-curve448          Ed448               ECC_curve448
+
+ECC_CURVES="nistp256 nistp384 brainpoolp256r1 brainpoolp384r1 curve25519 curve448"
+
+gen_ecc_key() {
+    local curve="$1"
+    local out="$2"
+    case "${curve}" in
+        nistp256)        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:prime256v1      -pkeyopt ec_param_enc:named_curve -out "${out}" 2>/dev/null ;;
+        nistp384)        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1       -pkeyopt ec_param_enc:named_curve -out "${out}" 2>/dev/null ;;
+        brainpoolp256r1) openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:brainpoolP256r1 -pkeyopt ec_param_enc:named_curve -out "${out}" 2>/dev/null ;;
+        brainpoolp384r1) openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:brainpoolP384r1 -pkeyopt ec_param_enc:named_curve -out "${out}" 2>/dev/null ;;
+        curve25519)      openssl genpkey -algorithm ED25519 -out "${out}" 2>/dev/null ;;
+        curve448)        openssl genpkey -algorithm ED448   -out "${out}" 2>/dev/null ;;
+        *) return 1 ;;
+    esac
+}
+
+gen_ecc_certs() {
+    local identity_dir="$1"
+    local cn="$2"
+    local app_uri="$3"
+    local san_extras="${4:-}"
+
+    local san="URI:${app_uri},DNS:localhost,IP:127.0.0.1"
+    if [[ -n "${san_extras}" ]]; then
+        san="${san},${san_extras}"
+    fi
+
+    local curve dir
+    for curve in ${ECC_CURVES}; do
+        dir="${identity_dir}/ecc-${curve}"
+        rm -rf "${dir}"
+        mkdir -p "${dir}"
+        if ! gen_ecc_key "${curve}" "${dir}/cert.key"; then
+            log "ECC ${curve}: not supported by this openssl; skipped (${cn})"
+            rm -rf "${dir}"
+            continue
+        fi
+        openssl req -new -key "${dir}/cert.key" \
+            -out  "${dir}/cert.csr" \
+            -subj "/CN=${cn}/O=OTFabric/OU=Test PKI" 2>/dev/null
+        openssl x509 -req \
+            -in     "${dir}/cert.csr" \
+            -CA     "${PKI_DIR}/ca/ca.crt" \
+            -CAkey  "${PKI_DIR}/ca/ca.key" \
+            -CAcreateserial \
+            -sha256 \
+            -out    "${dir}/cert.crt" \
+            -days   "${CERT_DAYS}" \
+            -extfile <(printf "subjectAltName=%s\nextendedKeyUsage=serverAuth,clientAuth\nkeyUsage=critical,digitalSignature,nonRepudiation,keyAgreement\nbasicConstraints=critical,CA:FALSE\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid" "${san}") \
+            2>/dev/null
+        rm -f "${dir}/cert.csr"
+    done
+    log "ECC certs: ${cn} (${app_uri})"
+}
+
+gen_untrusted_ecc_cert() {
+    local dir="$1"
+    local cn="$2"
+    rm -rf "${dir}"
+    mkdir -p "${dir}"
+    gen_ecc_key nistp256 "${dir}/cert.key"
+    openssl req -x509 -new -key "${dir}/cert.key" \
+        -out    "${dir}/cert.crt" \
+        -days   "${CERT_DAYS}" \
+        -subj   "/CN=${cn}/O=OTFabric/OU=Untrusted Test" \
+        -addext "subjectAltName=URI:urn:otfabric:opcua-interop:client:untrusted,DNS:localhost" \
+        2>/dev/null
+    log "Untrusted ECC cert: ${cn}"
+}
+
+gen_all_ecc() {
+    gen_ecc_certs "${PKI_DIR}/open62541-server" "open62541 Server" "${SERVER_APP_URI}"       "DNS:open62541"
+    gen_ecc_certs "${PKI_DIR}/open62541-client" "open62541 Client" "${OPEN62541_CLIENT_URI}" "DNS:open62541"
+    gen_ecc_certs "${PKI_DIR}/consumer"         "Consumer Client"  "${CONSUMER_CLIENT_URI}"  ""
+    gen_ecc_certs "${PKI_DIR}/go-server"        "Go OPC UA Server" "${GO_SERVER_URI}"        "DNS:host.docker.internal"
+    gen_untrusted_ecc_cert "${PKI_DIR}/untrusted/ecc-nistp256" "Untrusted Client"
+}
+
 populate_trust_dir() {
     local adapter_pki_dir="$1"
     local trusted_certs_dir="${adapter_pki_dir}/trusted/certs"
@@ -151,6 +257,18 @@ populate_trust_dir() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
+if [[ "${MODE}" == "add-ecc" ]]; then
+    if [[ ! -f "${PKI_DIR}/ca/ca.crt" || ! -f "${PKI_DIR}/ca/ca.key" ]]; then
+        echo "generate.sh --add-ecc: no existing CA in ${PKI_DIR}/ca (run generate.sh first)" >&2
+        exit 1
+    fi
+    log "Adding ECC certificates to the existing test PKI in ${PKI_DIR}"
+    gen_all_ecc
+    log ""
+    log "ECC certificates generated (CA and RSA identities left untouched)."
+    exit 0
+fi
 
 log "Generating test PKI in ${PKI_DIR}"
 
@@ -196,6 +314,10 @@ gen_cert "${PKI_DIR}/go-server" \
     "DNS:host.docker.internal"
 
 gen_untrusted_cert "${PKI_DIR}/untrusted" "Untrusted Client"
+
+# ECC application certificates (Milo implements no ECC SecurityPolicy, so the
+# milo-* identities stay RSA-only).
+gen_all_ecc
 
 populate_trust_dir "${PKI_DIR}/open62541-server/pki"
 populate_trust_dir "${PKI_DIR}/open62541-client/pki"

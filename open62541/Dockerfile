@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       cmake \
       git \
-      libmbedtls-dev \
+      libssl-dev \
       python3 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -24,6 +24,10 @@ RUN git clone --depth 1 --branch "${OPEN62541_COMMIT}" "${OPEN62541_REPO}" open6
     && cd open62541 \
     && git submodule update --init --depth 1
 
+# Only the amalgamation target is built: the adapter compiles open62541.c itself,
+# and with UA_ENABLE_AMALGAMATION + mDNS (mdnsd) the non-amalgamated object
+# library of v1.5.9 does not compile (ua_discovery_mdns.c skips the xht.h /
+# sdtxt.h includes under UA_ENABLE_AMALGAMATION).
 WORKDIR /src/open62541/build
 RUN cmake .. \
       -DCMAKE_BUILD_TYPE=Release \
@@ -33,10 +37,14 @@ RUN cmake .. \
       -DUA_MULTITHREADING=0 \
       -DUA_BUILD_EXAMPLES=OFF \
       -DUA_BUILD_UNIT_TESTS=OFF \
-      -DUA_ENABLE_ENCRYPTION=MBEDTLS \
+      -DUA_ENABLE_ENCRYPTION=OPENSSL \
       -DUA_ENABLE_HISTORIZING=ON \
       -DUA_ENABLE_SUBSCRIPTIONS_EVENTS=ON \
-    && cmake --build . -- -j"$(nproc)"
+      -DUA_ENABLE_DISCOVERY=ON \
+      -DUA_ENABLE_DISCOVERY_MULTICAST=MDNSD \
+      -DUA_ENABLE_JSON_ENCODING=ON \
+      -DUA_ENABLE_XML_ENCODING=ON \
+    && cmake --build . --target open62541-amalgamation -- -j"$(nproc)"
 
 # ---------------------------------------------------------------------------
 # Stage 2 — compile the adapter
@@ -47,7 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       cmake \
       libcjson-dev \
-      libmbedtls-dev \
+      libssl-dev \
       pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
@@ -55,14 +63,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=open62541-build /src/open62541/build/open62541.h /opt/open62541/include/open62541.h
 COPY --from=open62541-build /src/open62541/build/open62541.c /opt/open62541/src/open62541.c
 
-    # Copy adapter source
+# Compile the amalgamation once into a static library. This layer is cached
+# until the open62541 pin / build options (or amalgam/CMakeLists.txt) change.
+COPY amalgam/ /src/amalgam/
+WORKDIR /src/amalgam/build
+RUN cmake .. \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DUA_AMALGAM_INCLUDE=/opt/open62541/include \
+      -DUA_AMALGAM_SOURCE=/opt/open62541/src/open62541.c \
+    && cmake --build . -- -j"$(nproc)" \
+    && cmake --install . --prefix /opt/open62541
+
+# Copy adapter source
 COPY . /src/adapter
 
 WORKDIR /src/adapter/build
 RUN cmake .. \
       -DCMAKE_BUILD_TYPE=Release \
       -DUA_AMALGAM_INCLUDE=/opt/open62541/include \
-      -DUA_AMALGAM_SOURCE=/opt/open62541/src/open62541.c \
+      -DUA_AMALGAM_LIBRARY=/opt/open62541/lib/libopen62541.a \
     && cmake --build . -- -j"$(nproc)" \
     && cmake --install . --prefix /opt/opcua-interop
 
@@ -75,7 +94,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       bash \
       ca-certificates \
       libcjson1 \
-      libmbedtls14 \
+      libssl3 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home --home-dir /home/opcua \
          --shell /usr/sbin/nologin opcua

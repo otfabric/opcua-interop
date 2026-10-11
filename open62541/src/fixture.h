@@ -45,6 +45,9 @@ typedef struct {
     size_t     arrayDimensionsSize;
     uint8_t    accessLevel;
     cJSON     *initialValue;
+    int        hasEuRange;   /* 1 when the node declares "euRange" */
+    double     euRangeLow;
+    double     euRangeHigh;
 
     /* Method fields */
     char     *methodBehavior;

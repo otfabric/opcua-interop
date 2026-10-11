@@ -17,6 +17,11 @@
  *   --endpoint-path <path>       (default: from fixture)
  *   --pki-dir <path>
  *   --ready-file <path>
+ *   --ecc-dir <path>             ECC certificates (<path>/ecc-<curve>/cert.crt|cert.key)
+ *   --reverse-connect <url>      dial a client and send ReverseHello (repeatable)
+ *   --lds                        act as Local Discovery Server (with mDNS)
+ *   --mdns-name <name>           announce via mDNS under this name
+ *   --register-with <lds-url>    register with a Local Discovery Server
  *
  * Client exit codes:
  *   0  success
@@ -48,7 +53,7 @@
 static int cmd_print_capabilities(void) {
     printf("{\n");
     printf("  \"schemaVersion\": \"1.0\",\n");
-    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.6.0\"},\n");
+    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.7.0\"},\n");
     printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.9\"},\n");
     printf("  \"fixtureSchemaVersions\": [\"1.0\"],\n");
     printf("  \"roles\": [\"client\", \"server\"],\n");
@@ -69,8 +74,40 @@ static int cmd_print_capabilities(void) {
     printf("    \"republish\",\n");
     printf("    \"transfer-subscriptions\",\n");
     printf("    \"register-nodes\",\n");
+    printf("    \"node-management\",\n");
+    printf("    \"find-servers-on-network\",\n");
+    printf("    \"register-server\",\n");
+    printf("    \"codec\"\n");
+    printf("  ],\n");
+    printf("  \"clientFeatures\": [\n");
+    printf("    \"channel-lifetime\",\n");
+    printf("    \"deadband\",\n");
+    printf("    \"reverse-listen\",\n");
+    printf("    \"ecc-security\",\n");
+    printf("    \"ecc-user-token\",\n");
+    printf("    \"application-uri\",\n");
+    printf("    \"register-server2\",\n");
+    printf("    \"codec-json\",\n");
+    printf("    \"codec-xml\"\n");
+    printf("  ],\n");
+    printf("  \"serverFeatures\": [\n");
+    printf("    \"deadband\",\n");
+    printf("    \"percent-deadband\",\n");
+    printf("    \"reverse-connect\",\n");
+    printf("    \"ecc-security\",\n");
+    printf("    \"ecc-user-token\",\n");
+    printf("    \"lds\",\n");
+    printf("    \"mdns\",\n");
+    printf("    \"register-with\",\n");
     printf("    \"node-management\"\n");
     printf("  ],\n");
+    printf("  \"codec\": {\n");
+    printf("    \"formats\": [\"json\", \"xml\"],\n");
+    printf("    \"jsonVersion\": \"1.05\",\n");
+    printf("    \"jsonModes\": [\"compact\"],\n");
+    printf("    \"xmlEncodeUnsupported\": [\"DataValue\", \"DiagnosticInfo\", \"Matrix\"],\n");
+    printf("    \"xmlDecodeUnsupported\": [\"DataValue\", \"DiagnosticInfo\", \"XmlElement\"]\n");
+    printf("  },\n");
     printf("  \"serverServices\": [\n");
     printf("    \"GetEndpoints\",\n");
     printf("    \"CreateSession\",\n");
@@ -87,14 +124,28 @@ static int cmd_print_capabilities(void) {
     printf("    \"DeleteSubscriptions\",\n");
     printf("    \"HistoryRead\",\n");
     printf("    \"Republish\",\n");
-    printf("    \"TransferSubscriptions\"\n");
+    printf("    \"TransferSubscriptions\",\n");
+    printf("    \"FindServers\",\n");
+    printf("    \"FindServersOnNetwork\",\n");
+    printf("    \"RegisterServer\",\n");
+    printf("    \"RegisterServer2\"\n");
     printf("  ],\n");
     printf("  \"securityProfiles\": [\n");
     printf("    {\"policy\": \"None\",                  \"mode\": \"None\"},\n");
     printf("    {\"policy\": \"Basic256Sha256\",        \"mode\": \"Sign\"},\n");
     printf("    {\"policy\": \"Basic256Sha256\",        \"mode\": \"SignAndEncrypt\"},\n");
     printf("    {\"policy\": \"Aes128_Sha256_RsaOaep\", \"mode\": \"SignAndEncrypt\"},\n");
-    printf("    {\"policy\": \"Aes256_Sha256_RsaPss\",  \"mode\": \"SignAndEncrypt\"}\n");
+    printf("    {\"policy\": \"Aes256_Sha256_RsaPss\",  \"mode\": \"SignAndEncrypt\"},\n");
+    printf("    {\"policy\": \"ECC_nistP256\",            \"mode\": \"Sign\"},\n");
+    printf("    {\"policy\": \"ECC_nistP256\",            \"mode\": \"SignAndEncrypt\"},\n");
+    printf("    {\"policy\": \"ECC_nistP384\",            \"mode\": \"Sign\"},\n");
+    printf("    {\"policy\": \"ECC_nistP384\",            \"mode\": \"SignAndEncrypt\"},\n");
+    printf("    {\"policy\": \"ECC_brainpoolP256r1\",     \"mode\": \"SignAndEncrypt\"},\n");
+    printf("    {\"policy\": \"ECC_brainpoolP384r1\",     \"mode\": \"SignAndEncrypt\"},\n");
+    printf("    {\"policy\": \"ECC_curve25519\",          \"mode\": \"SignAndEncrypt\"},\n");
+    printf("    {\"policy\": \"ECC_curve448\",            \"mode\": \"SignAndEncrypt\"},\n");
+    printf("    {\"policy\": \"ECC_nistP256_AesGcm\",     \"mode\": \"SignAndEncrypt\"},\n");
+    printf("    {\"policy\": \"ECC_nistP256_ChaChaPoly\", \"mode\": \"SignAndEncrypt\"}\n");
     printf("  ],\n");
     printf("  \"userTokenTypes\": [\"Anonymous\", \"UserName\"]\n");
     printf("}\n");

@@ -15,7 +15,8 @@ Objects (i=85)
     ├── DataValues    — variables with specific status codes and timestamp behavior
     ├── Diagnostics   — adapter name, stack version, fixture id
     ├── Events        — EventNotifier source emitting deterministic BaseEvents
-    └── History       — gate-compliant fixed raw HistoryRead samples
+    ├── History       — gate-compliant fixed raw HistoryRead samples
+    └── Analog        — AnalogItemType variables with EURange (deadband filters)
 ```
 
 ## Namespace
@@ -60,6 +61,26 @@ These values are chosen to reveal binary encoding errors:
 | `Dynamic.Counter` | counter | 250 ms | Int64, starts at 0, increments by 1 |
 | `Dynamic.Toggle` | toggle | 500 ms | Boolean, alternates true/false |
 | `Dynamic.Ramp` | ramp | 100 ms | Double, 0.0→100.0 then resets |
+| `Analog.Level` | ramp | 100 ms | Double, 0.0→100.0 in steps of 2.0, then resets |
+
+## Analog items (DataChangeFilter)
+
+| Node | Type | Access | EURange | Behavior |
+|---|---|---|---|---|
+| `Analog.Level` | Double, AnalogItemType (`i=2368`) | read | 0..100 | ramp, +2.0 every 100 ms |
+| `Analog.Setpoint` | Double, AnalogItemType (`i=2368`) | read/write | 0..100 | static, initial `50.0` |
+
+Both have a `0:EURange` property (HasProperty, DataType Range), declared in the
+fixture with the node property `"euRange": {"low": 0.0, "high": 100.0}`. The
+property's NodeId is adapter-specific (open62541: the numeric id of the child
+instantiated from AnalogItemType; Milo: `<node>.EURange`) — find it by browse
+name. Servers accept a **percent deadband** only on these nodes (percent of
+EURange, i.e. 10 % = 10.0) and reject it elsewhere
+(`BadMonitoredItemFilterUnsupported`); an **absolute deadband** works on every
+numeric node and is rejected on non-numeric ones (`BadFilterNotAllowed`). A
+notification is sent when `|value − last reported| > deadband`. Write
+`Analog.Setpoint` to drive a filter deterministically; `Analog.Level` gives a
+steady stream (deadband 10 → every 6th sample).
 
 ## Methods
 
@@ -101,6 +122,19 @@ Gate-compliant raw samples only (no DB, no update/delete, no aggregates/interpol
 | `test-user` | `test-password` | AuthenticatedUser |
 
 These credentials are for isolated test environments only.
+
+## Security profiles
+
+`None/None`, `Basic256Sha256` (Sign, SignAndEncrypt), `Aes128_Sha256_RsaOaep`,
+`Aes256_Sha256_RsaPss` (SignAndEncrypt) and the ECC policies `ECC_nistP256`,
+`ECC_nistP384` (Sign, SignAndEncrypt), `ECC_brainpoolP256r1`,
+`ECC_brainpoolP384r1`, `ECC_curve25519`, `ECC_curve448`, `ECC_nistP256_AesGcm`,
+`ECC_nistP256_ChaChaPoly` (SignAndEncrypt).
+
+The ECC entries only take effect on the open62541 server and only when it is
+started with `--ecc-dir`; the Milo server skips them (Milo 1.1.8 has no ECC
+policies). The open62541 server advertises every RSA policy its stack enables
+in both modes regardless of this list (unchanged behaviour).
 
 ## Schema version
 

@@ -63,17 +63,43 @@ public class ClientCommand {
         public TransportException(String msg) { super(msg); }
     }
 
+    /** Invalid or unsupported command-line input — maps to exit 2. */
+    static class InputException extends Exception {
+        public InputException(String msg) { super(msg); }
+    }
+
+    /** Security policy names this adapter accepts (Milo 1.1.8 has no ECC policies). */
+    private static final Set<String> KNOWN_POLICIES = Set.of(
+        "None", "Basic128Rsa15", "Basic256", "Basic256Sha256",
+        "Aes128_Sha256_RsaOaep", "Aes256_Sha256_RsaPss");
+
+    /** Reject features Eclipse Milo 1.1.8 does not implement instead of ignoring the flag. */
+    private static void rejectUnsupported(String[] args) throws InputException {
+        if (findArg(args, "--reverse-listen") != null || findArg(args, "--reverse-server-uri") != null) {
+            throw new InputException(
+                "--reverse-listen: reverse connect (ReverseHello) is not implemented by Eclipse Milo 1.1.8");
+        }
+        String policy = findArg(args, "--security-policy");
+        if (policy != null && !KNOWN_POLICIES.contains(policy)) {
+            throw new InputException("--security-policy " + policy
+                + " is not supported by Eclipse Milo 1.1.8"
+                + (policy.startsWith("ECC_") ? " (no ECC security policies)" : ""));
+        }
+    }
+
     public static int run(String[] args) {
         if (args.length < 1) {
             System.err.println("usage: client <endpoints|find-servers|read|write|browse|translate|"
                 + "call|subscribe|subscription-lifecycle|event-subscribe|history-read|"
-                + "republish|transfer-subscriptions|register-nodes|node-management> ...");
+                + "republish|transfer-subscriptions|register-nodes|node-management|"
+                + "find-servers-on-network|register-server|codec> ...");
             return 1;
         }
         String op = args[0];
         String[] rest = Arrays.copyOfRange(args, 1, args.length);
 
         try {
+            rejectUnsupported(rest);
             switch (op) {
                 case "endpoints":    return cmdEndpoints(rest);
                 case "find-servers": return cmdFindServers(rest);
@@ -90,12 +116,20 @@ public class ClientCommand {
                 case "transfer-subscriptions": return cmdTransferSubscriptions(rest);
                 case "register-nodes":         return cmdRegisterNodes(rest);
                 case "node-management":        return cmdNodeManagement(rest);
+                case "find-servers-on-network": return cmdFindServersOnNetwork(rest);
+                case "register-server":        return cmdRegisterServer(rest);
+                case "codec":                  return CodecCommand.run(rest);
                 default:
                     System.err.println("unknown client subcommand: " + op);
                     return 1;
             }
         } catch (NodeIdParser.InvalidNodeIdException | NodeIdParser.UnknownNamespaceException e) {
             System.out.println(new ResultBuilder(op).error("input", e.getMessage()).toJson());
+            return 2;
+        } catch (InputException e) {
+            System.out.println(new ResultBuilder(op)
+                .serviceResult(org.eclipse.milo.opcua.stack.core.StatusCodes.Bad_InvalidArgument)
+                .error("input", e.getMessage()).toJson());
             return 2;
         } catch (TransportException e) {
             System.out.println(new ResultBuilder(op).error("transport", e.getMessage()).toJson());
@@ -575,6 +609,40 @@ public class ClientCommand {
         boolean discardOld = !hasFlagValue(args, "--discard-oldest", "false");
         TimestampsToReturn timestamps = parseTimestamps(args);
 
+        // DataChangeFilter: --deadband-absolute | --deadband-percent, --trigger.
+        String dbAbs = findArg(args, "--deadband-absolute");
+        String dbPct = findArg(args, "--deadband-percent");
+        String trig  = findArg(args, "--trigger");
+        boolean useFilter = dbAbs != null || dbPct != null || trig != null;
+        String triggerName = trig != null ? trig : "StatusValue";
+        String deadbandName = dbAbs != null ? "Absolute" : dbPct != null ? "Percent" : "None";
+        double deadbandValue = 0.0;
+        DataChangeFilter dcFilter = null;
+        if (useFilter) {
+            if (dbAbs != null && dbPct != null) {
+                throw new InputException("--deadband-absolute and --deadband-percent are mutually exclusive");
+            }
+            org.eclipse.milo.opcua.stack.core.types.enumerated.DataChangeTrigger trigger;
+            switch (triggerName) {
+                case "Status":
+                    trigger = org.eclipse.milo.opcua.stack.core.types.enumerated.DataChangeTrigger.Status; break;
+                case "StatusValue":
+                    trigger = org.eclipse.milo.opcua.stack.core.types.enumerated.DataChangeTrigger.StatusValue; break;
+                case "StatusValueTimestamp":
+                    trigger = org.eclipse.milo.opcua.stack.core.types.enumerated.DataChangeTrigger.StatusValueTimestamp; break;
+                default:
+                    throw new InputException("--trigger must be Status, StatusValue or StatusValueTimestamp");
+            }
+            try {
+                deadbandValue = dbAbs != null ? Double.parseDouble(dbAbs)
+                              : dbPct != null ? Double.parseDouble(dbPct) : 0.0;
+            } catch (NumberFormatException e) {
+                throw new InputException("invalid deadband value");
+            }
+            long deadbandType = dbAbs != null ? 1 : dbPct != null ? 2 : 0;
+            dcFilter = new DataChangeFilter(trigger, uint(deadbandType), deadbandValue);
+        }
+
         OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
         try {
             NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
@@ -596,6 +664,7 @@ public class ClientCommand {
             monItem.setSamplingInterval(siMs);
             monItem.setQueueSize(uint(Math.max(1, queueSize)));
             monItem.setDiscardOldest(discardOld);
+            if (dcFilter != null) monItem.setFilter(dcFilter);
 
             subscription.addMonitoredItem(monItem);
             // OpcUaSubscription.createMonitoredItems() hardcodes Both; pass --timestamps.
@@ -643,6 +712,27 @@ public class ClientCommand {
             resultItem.put("revisedLifetimeCount", rlt.longValue());
             resultItem.put("revisedMaxKeepAliveCount", rmk.longValue());
             resultItem.put("monitoredItemStatusCode", ResultBuilder.statusCodeJson(monSc));
+            if (useFilter) {
+                // Only present when a DataChangeFilter was requested, so the result
+                // of unfiltered subscriptions is unchanged.
+                resultItem.put("monitoredItemId", monItem.getMonitoredItemId().orElse(uint(0)).longValue());
+                resultItem.put("revisedSamplingInterval", monItem.getRevisedSamplingInterval().orElse(0.0));
+                resultItem.put("revisedQueueSize", monItem.getRevisedQueueSize().orElse(uint(0)).longValue());
+                Map<String, Object> f = new LinkedHashMap<>();
+                f.put("trigger", triggerName);
+                f.put("deadbandType", deadbandName);
+                f.put("deadbandValue", deadbandValue);
+                resultItem.put("filter", f);
+                ExtensionObject fr = monItem.getFilterResult().orElse(null);
+                if (fr == null || fr.getBody() == null
+                        || fr.getEncodingOrTypeId() == null || fr.getEncodingOrTypeId().isNull()) {
+                    resultItem.put("filterResult", null);
+                } else {
+                    Map<String, Object> frm = new LinkedHashMap<>();
+                    frm.put("typeId", ResultBuilder.nodeIdToString(fr.getEncodingOrTypeId()));
+                    resultItem.put("filterResult", frm);
+                }
+            }
             resultItem.put("notifications", new ArrayList<>(notifications));
 
             ResultBuilder rb = new ResultBuilder("subscribe")
@@ -651,6 +741,8 @@ public class ClientCommand {
                 .addResult(resultItem);
             if (timedOut) {
                 rb.error("timeout", "timeout waiting for notifications");
+            } else if (!monSc.isGood()) {
+                rb.error("service", "CreateMonitoredItems rejected the monitored item");
             }
             System.out.println(rb.toJson());
 
@@ -743,7 +835,9 @@ public class ClientCommand {
         ReadValueId rvId = new ReadValueId(nodeId, AttributeId.Value.uid(), null,
             QualifiedName.NULL_VALUE);
         OpcUaMonitoredItem monItem = new OpcUaMonitoredItem(rvId);
-        monItem.setSamplingInterval(100.0);
+        // 0 = report every change: the queue-window assertions must not depend
+        // on how a server throttles samples within a sampling interval.
+        monItem.setSamplingInterval(0.0);
         monItem.setQueueSize(uint(3));
         monItem.setDiscardOldest(true);
         sub.addMonitoredItem(monItem);
@@ -828,7 +922,9 @@ public class ClientCommand {
         ReadValueId rvId = new ReadValueId(nodeId, AttributeId.Value.uid(), null,
             QualifiedName.NULL_VALUE);
         OpcUaMonitoredItem monItem = new OpcUaMonitoredItem(rvId);
-        monItem.setSamplingInterval(100.0);
+        // 0 = report every change: the queue-window assertions must not depend
+        // on how a server throttles samples within a sampling interval.
+        monItem.setSamplingInterval(0.0);
         monItem.setQueueSize(uint(5));
         monItem.setDiscardOldest(true);
         sub.addMonitoredItem(monItem);
@@ -1566,7 +1662,7 @@ public class ClientCommand {
      * security policy and mode.  When {@code args} contains --security-policy and
      * --security-mode flags, they override the default None/None.
      */
-    private static OpcUaClient connectClient(String endpointUrl,
+    static OpcUaClient connectClient(String endpointUrl,
                                               long connectTimeoutMs,
                                               long requestTimeoutMs,
                                               String[] args) throws Exception {
@@ -1669,6 +1765,130 @@ public class ClientCommand {
         });
         client.connect();
         return client;
+    }
+
+    // -------------------------------------------------------------------------
+    // find-servers-on-network (FindServersOnNetwork against an LDS-ME)
+    // -------------------------------------------------------------------------
+
+    private static int cmdFindServersOnNetwork(String[] args) throws Exception {
+        final String op = "find-servers-on-network";
+        String endpointUrl = findArg(args, "--endpoint");
+        if (endpointUrl == null) {
+            System.out.println(new ResultBuilder(op).error("input", "missing --endpoint").toJson());
+            return 2;
+        }
+        long rto = requestTimeoutMs(args);
+        long start = parseLongArg(args, "--starting-record-id", 0);
+        long max   = parseLongArg(args, "--max-records", 0);
+        String[] caps = findAllArgs(args, "--capability").toArray(new String[0]);
+
+        Object resp;
+        try (DiscoveryOps.Channel ch = DiscoveryOps.open(endpointUrl, connectTimeoutMs(args))) {
+            resp = DiscoveryOps.findServersOnNetwork(ch, start, max, caps, rto);
+        }
+        if (resp instanceof StatusCode sc) {
+            System.out.println(new ResultBuilder(op).serviceResult(sc)
+                .error("service", "FindServersOnNetwork failed").toJson());
+            return 4;
+        }
+        FindServersOnNetworkResponse r = (FindServersOnNetworkResponse) resp;
+        StatusCode sc = r.getResponseHeader().getServiceResult();
+        if (sc != null && !sc.isGood()) {
+            System.out.println(new ResultBuilder(op).serviceResult(sc)
+                .error("service", "FindServersOnNetwork failed").toJson());
+            return 4;
+        }
+        ResultBuilder rb = new ResultBuilder(op);
+        String reset = r.getLastCounterResetTime() != null && r.getLastCounterResetTime().getUtcTime() != 0
+            ? r.getLastCounterResetTime().getJavaInstant().toString() : null;
+        if (r.getServers() != null) {
+            for (ServerOnNetwork son : r.getServers()) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("recordId", son.getRecordId().longValue());
+                m.put("serverName", son.getServerName() != null ? son.getServerName() : "");
+                m.put("discoveryUrl", son.getDiscoveryUrl() != null ? son.getDiscoveryUrl() : "");
+                m.put("serverCapabilities", son.getServerCapabilities() != null
+                    ? Arrays.asList(son.getServerCapabilities()) : List.of());
+                if (reset != null) m.put("lastCounterResetTime", reset);
+                rb.addResult(m);
+            }
+        }
+        System.out.println(rb.toJson());
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // register-server (RegisterServer2 with fallback to RegisterServer)
+    // -------------------------------------------------------------------------
+
+    private static int cmdRegisterServer(String[] args) throws Exception {
+        final String op = "register-server";
+        String endpointUrl = findArg(args, "--endpoint");
+        String serverUri   = findArg(args, "--server-uri");
+        List<String> urls  = findAllArgs(args, "--discovery-url");
+        if (endpointUrl == null || serverUri == null || urls.isEmpty()) {
+            System.out.println(new ResultBuilder(op).error("input",
+                "usage: register-server --endpoint <lds-url> --server-uri <uri>"
+                + " --discovery-url <url> [--discovery-url ...] [--server-name <text>]"
+                + " [--product-uri <uri>] [--server-type Server|Client|ClientAndServer|DiscoveryServer]"
+                + " [--online true|false] [--service auto|RegisterServer2|RegisterServer]"
+                + " [--mdns-name <name>] [--capability <cap> ...]").toJson());
+            return 2;
+        }
+        String name       = findArg(args, "--server-name");
+        String nameLocale = findArg(args, "--server-name-locale");
+        String productUri = findArg(args, "--product-uri");
+        String service    = findArg(args, "--service");
+        String mdnsName   = findArg(args, "--mdns-name");
+        String typeStr    = findArg(args, "--server-type");
+        if (name == null) name = serverUri;
+        if (nameLocale == null) nameLocale = "en";
+        if (service == null) service = "auto";
+        if (typeStr == null) typeStr = "Server";
+        org.eclipse.milo.opcua.stack.core.types.enumerated.ApplicationType appType;
+        try {
+            appType = org.eclipse.milo.opcua.stack.core.types.enumerated.ApplicationType.valueOf(typeStr);
+        } catch (IllegalArgumentException e) {
+            throw new InputException("invalid --service or --server-type");
+        }
+        if (!List.of("auto", "RegisterServer2", "RegisterServer").contains(service)) {
+            throw new InputException("invalid --service or --server-type");
+        }
+        boolean online = !hasFlagValue(args, "--online", "false");
+        String[] caps = findAllArgs(args, "--capability").toArray(new String[0]);
+
+        RegisteredServer rs = new RegisteredServer(
+            serverUri, productUri != null ? productUri : "",
+            new LocalizedText[] {new LocalizedText(nameLocale, name)},
+            appType, findArg(args, "--gateway-server-uri"),
+            urls.toArray(new String[0]), findArg(args, "--semaphore-file"), online);
+
+        DiscoveryOps.RegisterResult res;
+        try (DiscoveryOps.Channel ch = DiscoveryOps.open(endpointUrl, connectTimeoutMs(args))) {
+            res = DiscoveryOps.register(ch, rs, mdnsName != null ? mdnsName : name, caps,
+                                        service, requestTimeoutMs(args));
+        }
+
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("service", res.service);
+        m.put("serverUri", serverUri);
+        m.put("isOnline", online);
+        m.put("statusCode", ResultBuilder.statusCodeJson(res.status));
+        m.put("fallback", res.fallback);
+        if (res.registerServer2Status != null) {
+            m.put("registerServer2StatusCode", ResultBuilder.statusCodeJson(res.registerServer2Status));
+        }
+        List<Object> cfg = new ArrayList<>();
+        for (StatusCode c : res.configurationResults) {
+            cfg.add(ResultBuilder.statusCodeJson(c != null ? c : StatusCode.GOOD));
+        }
+        m.put("configurationResults", cfg);
+
+        ResultBuilder rb = new ResultBuilder(op).serviceResult(res.status).addResult(m);
+        if (!res.ok()) rb.error("service", res.service + " failed");
+        System.out.println(rb.toJson());
+        return res.ok() ? 0 : 4;
     }
 
     // -------------------------------------------------------------------------
@@ -1845,7 +2065,7 @@ public class ClientCommand {
         }
     }
 
-    private static void safeDisconnect(OpcUaClient client, long timeoutMs) {
+    static void safeDisconnect(OpcUaClient client, long timeoutMs) {
         try {
             client.disconnect();
         } catch (Exception e) {
@@ -1876,7 +2096,10 @@ public class ClientCommand {
                 }
                 return new Variant(arr);
             }
-            default:         return new Variant(val);
+            default:
+                // Every other built-in type and Type[] array: shared literal grammar.
+                if (ValueParser.supports(typeStr)) return ValueParser.parse(typeStr, val, null);
+                return new Variant(val);
         }
     }
 
@@ -1931,9 +2154,9 @@ public class ClientCommand {
         return val != null && val.equalsIgnoreCase(value);
     }
 
-    private static long connectTimeoutMs(String[] args)    { return parseLongArg(args, "--connect-timeout",    5) * 1000; }
-    private static long requestTimeoutMs(String[] args)    { return parseLongArg(args, "--request-timeout",    5) * 1000; }
-    private static long disconnectTimeoutMs(String[] args) { return parseLongArg(args, "--disconnect-timeout", 2) * 1000; }
+    static long connectTimeoutMs(String[] args)    { return parseLongArg(args, "--connect-timeout",    5) * 1000; }
+    static long requestTimeoutMs(String[] args)    { return parseLongArg(args, "--request-timeout",    5) * 1000; }
+    static long disconnectTimeoutMs(String[] args) { return parseLongArg(args, "--disconnect-timeout", 2) * 1000; }
 
     /**
      * Build a RequestHeader with the active session AuthenticationToken.

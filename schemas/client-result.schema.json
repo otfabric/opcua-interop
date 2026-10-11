@@ -21,7 +21,8 @@
         "endpoints", "find-servers", "read", "write", "browse", "translate",
         "call", "subscribe", "subscription-lifecycle", "event-subscribe",
         "history-read", "republish", "transfer-subscriptions",
-        "register-nodes", "node-management"
+        "register-nodes", "node-management",
+        "find-servers-on-network", "register-server", "codec"
       ]
     },
     "success": {
@@ -47,7 +48,12 @@
           { "$ref": "#/$defs/republishResult" },
           { "$ref": "#/$defs/transferSubscriptionsResult" },
           { "$ref": "#/$defs/registerNodesResult" },
-          { "$ref": "#/$defs/nodeManagementResult" }
+          { "$ref": "#/$defs/nodeManagementResult" },
+          { "$ref": "#/$defs/findServersOnNetworkResult" },
+          { "$ref": "#/$defs/registerServerResult" },
+          { "$ref": "#/$defs/codecEncodeResult" },
+          { "$ref": "#/$defs/codecDecodeResult" },
+          { "$ref": "#/$defs/codecNodeResult" }
         ]
       }
     },
@@ -187,6 +193,26 @@
         "revisedLifetimeCount":      { "type": "integer", "minimum": 0 },
         "revisedMaxKeepAliveCount":  { "type": "integer", "minimum": 0 },
         "monitoredItemStatusCode":   { "$ref": "#/$defs/statusCode" },
+        "monitoredItemId":           { "type": "integer", "minimum": 0 },
+        "revisedSamplingInterval":   { "type": "number" },
+        "revisedQueueSize":          { "type": "integer", "minimum": 0 },
+        "filter": {
+          "type": "object",
+          "description": "Requested DataChangeFilter; present only with --deadband-absolute / --deadband-percent / --trigger.",
+          "required": ["trigger", "deadbandType", "deadbandValue"],
+          "additionalProperties": false,
+          "properties": {
+            "trigger":       { "type": "string", "enum": ["Status", "StatusValue", "StatusValueTimestamp"] },
+            "deadbandType":  { "type": "string", "enum": ["None", "Absolute", "Percent"] },
+            "deadbandValue": { "type": "number" }
+          }
+        },
+        "filterResult": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "object", "required": ["typeId"], "properties": { "typeId": { "type": "string" }, "typeName": { "type": "string" } } }
+          ]
+        },
         "notifications": {
           "type": "array",
           "items": {
@@ -369,6 +395,125 @@
         "value":                     {},
         "deleteStatusCode":          { "$ref": "#/$defs/statusCode" },
         "readAfterDeleteStatusCode": { "$ref": "#/$defs/statusCode" }
+      }
+    },
+    "findServersOnNetworkResult": {
+      "type": "object",
+      "required": ["recordId", "serverName", "discoveryUrl", "serverCapabilities"],
+      "additionalProperties": false,
+      "properties": {
+        "recordId":             { "type": "integer", "minimum": 0 },
+        "serverName":           { "type": "string" },
+        "discoveryUrl":         { "type": "string" },
+        "serverCapabilities":   { "type": "array", "items": { "type": "string" } },
+        "lastCounterResetTime": { "type": "string" }
+      }
+    },
+    "registerServerResult": {
+      "type": "object",
+      "required": ["service", "serverUri", "isOnline", "statusCode", "fallback", "configurationResults"],
+      "additionalProperties": false,
+      "properties": {
+        "service":                   { "type": "string", "enum": ["RegisterServer2", "RegisterServer"] },
+        "serverUri":                 { "type": "string" },
+        "isOnline":                  { "type": "boolean" },
+        "statusCode":                { "$ref": "#/$defs/statusCode" },
+        "fallback":                  { "type": "boolean" },
+        "registerServer2StatusCode": { "$ref": "#/$defs/statusCode" },
+        "configurationResults":      { "type": "array", "items": { "$ref": "#/$defs/statusCode" } }
+      }
+    },
+    "codecDocument": {
+      "description": "A JSON / XML document embedded as a string, or null when the stack could not produce it.",
+      "type": ["string", "null"]
+    },
+    "codecEncodeResult": {
+      "type": "object",
+      "required": ["action", "format", "source", "dataType", "builtInType", "valueRank", "value", "dataValue", "encoded", "statusCodes", "binary"],
+      "additionalProperties": false,
+      "properties": {
+        "action":          { "const": "encode" },
+        "format":          { "type": "string", "enum": ["json", "xml"] },
+        "jsonMode":        { "type": "string", "enum": ["compact", "verbose"] },
+        "source":          { "type": "string", "enum": ["literal", "node"] },
+        "nodeId":          { "type": "string" },
+        "dataType":        { "type": "string" },
+        "builtInType":     { "type": "integer", "minimum": 0, "maximum": 25 },
+        "valueRank":       { "type": "integer" },
+        "arrayDimensions": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "value":           {},
+        "dataValue":       { "type": "object" },
+        "encoded": {
+          "type": "object",
+          "required": ["variant", "dataValue"],
+          "additionalProperties": false,
+          "properties": {
+            "value":     { "$ref": "#/$defs/codecDocument" },
+            "variant":   { "$ref": "#/$defs/codecDocument" },
+            "dataValue": { "$ref": "#/$defs/codecDocument" }
+          }
+        },
+        "statusCodes": {
+          "type": "object",
+          "required": ["variant", "dataValue"],
+          "additionalProperties": false,
+          "properties": {
+            "value":     { "$ref": "#/$defs/statusCode" },
+            "variant":   { "$ref": "#/$defs/statusCode" },
+            "dataValue": { "$ref": "#/$defs/statusCode" }
+          }
+        },
+        "binary": {
+          "type": "object",
+          "description": "OPC UA Binary encodings, Base64.",
+          "required": ["variant", "dataValue"],
+          "additionalProperties": false,
+          "properties": {
+            "value":     { "type": ["string", "null"] },
+            "variant":   { "type": ["string", "null"] },
+            "dataValue": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "codecDecodeResult": {
+      "type": "object",
+      "required": ["action", "format", "type", "statusCode"],
+      "additionalProperties": false,
+      "properties": {
+        "action":          { "const": "decode" },
+        "format":          { "type": "string", "enum": ["json", "xml"] },
+        "jsonMode":        { "type": "string", "enum": ["compact", "verbose"] },
+        "type":            { "type": "string" },
+        "statusCode":      { "$ref": "#/$defs/statusCode" },
+        "dataType":        { "type": "string" },
+        "builtInType":     { "type": "integer", "minimum": 0, "maximum": 25 },
+        "valueRank":       { "type": "integer" },
+        "arrayDimensions": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "value":           {},
+        "dataValue":       { "type": "object" },
+        "binary":          { "type": ["string", "null"] },
+        "reencoded":       { "$ref": "#/$defs/codecDocument" }
+      }
+    },
+    "codecNodeResult": {
+      "type": "object",
+      "required": ["nodeId", "statusCode", "json", "xml"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId":          { "type": "string" },
+        "statusCode":      { "$ref": "#/$defs/statusCode" },
+        "dataType":        { "type": "string" },
+        "builtInType":     { "type": "integer", "minimum": 0, "maximum": 25 },
+        "valueRank":       { "type": "integer" },
+        "arrayDimensions": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "value":           {},
+        "json":            { "$ref": "#/$defs/codecDocument" },
+        "xml":             { "$ref": "#/$defs/codecDocument" },
+        "dataValueJson":   { "$ref": "#/$defs/codecDocument" },
+        "dataValueXml":    { "$ref": "#/$defs/codecDocument" },
+        "binary":          { "type": ["string", "null"] },
+        "dataValueBinary": { "type": ["string", "null"] }
       }
     }
   }

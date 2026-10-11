@@ -228,6 +228,16 @@
           },
           "default": ["CurrentRead"]
         },
+        "euRange": {
+          "type": "object",
+          "description": "For Variable nodes: adds an EURange property (0:EURange, DataType Range, HasProperty) with these bounds. Use with typeDefinition i=2368 (AnalogItemType) so servers accept percent-deadband DataChangeFilters on the node.",
+          "required": ["low", "high"],
+          "additionalProperties": false,
+          "properties": {
+            "low":  { "type": "number" },
+            "high": { "type": "number" }
+          }
+        },
         "minimumSamplingInterval": {
           "type": "number",
           "description": "Minimum sampling interval in milliseconds. -1=continuous, 0=fastest.",
@@ -365,7 +375,15 @@
             "Basic256",
             "Basic256Sha256",
             "Aes128_Sha256_RsaOaep",
-            "Aes256_Sha256_RsaPss"
+            "Aes256_Sha256_RsaPss",
+            "ECC_nistP256",
+            "ECC_nistP384",
+            "ECC_brainpoolP256r1",
+            "ECC_brainpoolP384r1",
+            "ECC_curve25519",
+            "ECC_curve448",
+            "ECC_nistP256_AesGcm",
+            "ECC_nistP256_ChaChaPoly"
           ]
         },
         "securityMode": {

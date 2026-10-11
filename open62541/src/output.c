@@ -74,9 +74,14 @@ int ua_type_to_builtin_id(const UA_DataType *type) {
     if (type == &UA_TYPES[UA_TYPES_BYTESTRING])    return 15;
     if (type == &UA_TYPES[UA_TYPES_XMLELEMENT])    return 16;
     if (type == &UA_TYPES[UA_TYPES_NODEID])        return 17;
+    if (type == &UA_TYPES[UA_TYPES_EXPANDEDNODEID]) return 18;
     if (type == &UA_TYPES[UA_TYPES_STATUSCODE])    return 19;
     if (type == &UA_TYPES[UA_TYPES_QUALIFIEDNAME]) return 20;
     if (type == &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]) return 21;
+    if (type == &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]) return 22;
+    if (type == &UA_TYPES[UA_TYPES_DATAVALUE])     return 23;
+    if (type == &UA_TYPES[UA_TYPES_VARIANT])       return 24;
+    if (type == &UA_TYPES[UA_TYPES_DIAGNOSTICINFO]) return 25;
     return 0;
 }
 
@@ -204,6 +209,184 @@ static void print_ua_guid(const UA_Guid *g) {
            g->data4[5], g->data4[6], g->data4[7]);
 }
 
+/* The identifier part of a NodeId (`i=..`, `s=..`, `g=..`, `b=..`) without
+ * quotes, JSON-escaped for use inside a JSON string. */
+static void print_nodeid_ident_raw(const UA_NodeId *nid) {
+    switch (nid->identifierType) {
+        case UA_NODEIDTYPE_NUMERIC:
+            printf("i=%" PRIu32, nid->identifier.numeric);
+            break;
+        case UA_NODEIDTYPE_STRING: {
+            const UA_String *str = &nid->identifier.string;
+            printf("s=");
+            for (size_t i = 0; i < str->length; i++) {
+                unsigned char c = str->data[i];
+                if (c == '"' || c == '\\') putchar('\\');
+                putchar((char)c);
+            }
+            break;
+        }
+        case UA_NODEIDTYPE_GUID: {
+            const UA_Guid *g = &nid->identifier.guid;
+            printf("g=%08" PRIx32 "-%04" PRIx16 "-%04" PRIx16
+                   "-%02" PRIx8 "%02" PRIx8
+                   "-%02" PRIx8 "%02" PRIx8 "%02" PRIx8
+                   "%02" PRIx8 "%02" PRIx8 "%02" PRIx8,
+                   g->data1, g->data2, g->data3,
+                   g->data4[0], g->data4[1],
+                   g->data4[2], g->data4[3], g->data4[4],
+                   g->data4[5], g->data4[6], g->data4[7]);
+            break;
+        }
+        case UA_NODEIDTYPE_BYTESTRING:
+            printf("b=");
+            if (nid->identifier.byteString.data && nid->identifier.byteString.length > 0)
+                print_base64(nid->identifier.byteString.data,
+                             nid->identifier.byteString.length);
+            break;
+        default:
+            break;
+    }
+}
+
+/* ExpandedNodeId: [svr=<n>;][nsu=<uri>;|ns=<n>;]<ident> (Part 6 5.3.1.11). */
+static void print_expanded_nodeid(const UA_ExpandedNodeId *en) {
+    putchar('"');
+    if (en->serverIndex != 0)
+        printf("svr=%" PRIu32 ";", en->serverIndex);
+    if (en->namespaceUri.length > 0) {
+        printf("nsu=");
+        for (size_t i = 0; i < en->namespaceUri.length; i++) {
+            unsigned char c = en->namespaceUri.data[i];
+            if (c == '"' || c == '\\') putchar('\\');
+            putchar((char)c);
+        }
+        putchar(';');
+    } else if (en->nodeId.namespaceIndex != 0) {
+        printf("ns=%" PRIu16 ";", en->nodeId.namespaceIndex);
+    }
+    print_nodeid_ident_raw(&en->nodeId);
+    putchar('"');
+}
+
+static void print_scalar(const void *data, const UA_DataType *type);
+
+static void print_status_obj(UA_StatusCode sc) {
+    printf("{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
+           output_status_code_name(sc), (uint32_t)sc, output_severity(sc));
+}
+
+void output_ua_datavalue(const UA_DataValue *dv) {
+    printf("{");
+    int first = 1;
+    if (dv->hasValue) {
+        printf("\"dataType\":");
+        print_json_string(dv->value.type ? (dv->value.type->typeName ? dv->value.type->typeName : "Unknown") : "Null");
+        printf(",\"builtInType\":%d", ua_type_to_builtin_id(dv->value.type));
+        if (dv->value.arrayDimensionsSize > 0) {
+            printf(",\"arrayDimensions\":[");
+            for (size_t i = 0; i < dv->value.arrayDimensionsSize; i++)
+                printf("%s%" PRIu32, i ? "," : "", dv->value.arrayDimensions[i]);
+            printf("]");
+        }
+        printf(",\"value\":");
+        output_ua_variant_value(&dv->value);
+        first = 0;
+    }
+    if (dv->hasStatus) {
+        printf("%s\"statusCode\":", first ? "" : ",");
+        print_status_obj(dv->status);
+        first = 0;
+    }
+    if (dv->hasSourceTimestamp) {
+        char buf[64];
+        output_timestamp(dv->sourceTimestamp, buf, sizeof(buf));
+        printf("%s\"sourceTimestamp\":\"%s\"", first ? "" : ",", buf);
+        first = 0;
+    }
+    if (dv->hasSourcePicoseconds) {
+        printf("%s\"sourcePicoseconds\":%" PRIu16, first ? "" : ",", dv->sourcePicoseconds);
+        first = 0;
+    }
+    if (dv->hasServerTimestamp) {
+        char buf[64];
+        output_timestamp(dv->serverTimestamp, buf, sizeof(buf));
+        printf("%s\"serverTimestamp\":\"%s\"", first ? "" : ",", buf);
+        first = 0;
+    }
+    if (dv->hasServerPicoseconds) {
+        printf("%s\"serverPicoseconds\":%" PRIu16, first ? "" : ",", dv->serverPicoseconds);
+        first = 0;
+    }
+    printf("}");
+}
+
+static void print_diagnostic_info(const UA_DiagnosticInfo *di) {
+    printf("{");
+    int first = 1;
+#define SEP() do { if (!first) putchar(','); first = 0; } while (0)
+    if (di->hasSymbolicId)    { SEP(); printf("\"symbolicId\":%" PRId32, di->symbolicId); }
+    if (di->hasNamespaceUri)  { SEP(); printf("\"namespaceUri\":%" PRId32, di->namespaceUri); }
+    if (di->hasLocalizedText) { SEP(); printf("\"localizedText\":%" PRId32, di->localizedText); }
+    if (di->hasLocale)        { SEP(); printf("\"locale\":%" PRId32, di->locale); }
+    if (di->hasAdditionalInfo) {
+        SEP(); printf("\"additionalInfo\":");
+        print_ua_string_nn(&di->additionalInfo);
+    }
+    if (di->hasInnerStatusCode) {
+        SEP(); printf("\"innerStatusCode\":");
+        print_status_obj(di->innerStatusCode);
+    }
+    if (di->hasInnerDiagnosticInfo && di->innerDiagnosticInfo) {
+        SEP(); printf("\"innerDiagnosticInfo\":");
+        print_diagnostic_info(di->innerDiagnosticInfo);
+    }
+#undef SEP
+    printf("}");
+}
+
+static void print_extension_object(const UA_ExtensionObject *eo) {
+    switch (eo->encoding) {
+        case UA_EXTENSIONOBJECT_ENCODED_NOBODY:
+            printf("null");
+            return;
+        case UA_EXTENSIONOBJECT_ENCODED_BYTESTRING:
+        case UA_EXTENSIONOBJECT_ENCODED_XML:
+            printf("{\"typeId\":");
+            print_ua_nodeid(&eo->content.encoded.typeId);
+            printf(",\"encoding\":\"%s\",\"body\":",
+                   eo->encoding == UA_EXTENSIONOBJECT_ENCODED_XML ? "xml" : "binary");
+            if (eo->encoding == UA_EXTENSIONOBJECT_ENCODED_XML) {
+                print_ua_string_nn(&eo->content.encoded.body);
+            } else {
+                putchar('"');
+                if (eo->content.encoded.body.data)
+                    print_base64(eo->content.encoded.body.data,
+                                 eo->content.encoded.body.length);
+                putchar('"');
+            }
+            printf("}");
+            return;
+        default: {
+            /* Decoded structure: report the DataType and its binary body so
+             * the value can be compared bit-exactly. */
+            const UA_DataType *t = eo->content.decoded.type;
+            printf("{\"typeId\":");
+            print_ua_nodeid(&t->binaryEncodingId);
+            printf(",\"encoding\":\"binary\",\"dataTypeName\":");
+            print_json_string(t->typeName ? t->typeName : "");
+            printf(",\"body\":\"");
+            UA_ByteString bin = UA_BYTESTRING_NULL;
+            if (UA_encodeBinary(eo->content.decoded.data, t, &bin, NULL) == UA_STATUSCODE_GOOD
+                && bin.data)
+                print_base64(bin.data, bin.length);
+            UA_ByteString_clear(&bin);
+            printf("\"}");
+            return;
+        }
+    }
+}
+
 static void print_scalar(const void *data, const UA_DataType *type) {
     if (!data || !type) { printf("null"); return; }
 
@@ -267,9 +450,41 @@ static void print_scalar(const void *data, const UA_DataType *type) {
         UA_StatusCode sc = *(UA_StatusCode*)data;
         printf("{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
                output_status_code_name(sc), (uint32_t)sc, output_severity(sc));
+    } else if (type == &UA_TYPES[UA_TYPES_EXPANDEDNODEID]) {
+        print_expanded_nodeid((const UA_ExpandedNodeId *)data);
+    } else if (type == &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]) {
+        print_extension_object((const UA_ExtensionObject *)data);
+    } else if (type == &UA_TYPES[UA_TYPES_DATAVALUE]) {
+        output_ua_datavalue((const UA_DataValue *)data);
+    } else if (type == &UA_TYPES[UA_TYPES_VARIANT]) {
+        const UA_Variant *inner = (const UA_Variant *)data;
+        if (UA_Variant_isEmpty(inner)) {
+            printf("null");
+        } else {
+            printf("{\"dataType\":");
+            print_json_string(inner->type->typeName ? inner->type->typeName : "Unknown");
+            printf(",\"builtInType\":%d,\"value\":", ua_type_to_builtin_id(inner->type));
+            output_ua_variant_value(inner);
+            printf("}");
+        }
+    } else if (type == &UA_TYPES[UA_TYPES_DIAGNOSTICINFO]) {
+        print_diagnostic_info((const UA_DiagnosticInfo *)data);
     } else {
         printf("null");
     }
+}
+
+void output_ua_scalar(const void *data, const UA_DataType *type) {
+    print_scalar(data, type);
+}
+
+void output_json_string(const char *s) {
+    print_json_string(s);
+}
+
+void output_json_string_len(const unsigned char *data, size_t len) {
+    if (!data && len == 0) { printf("\"\""); return; }
+    print_json_string_len(data, len);
 }
 
 void output_ua_variant_value(const UA_Variant *var) {

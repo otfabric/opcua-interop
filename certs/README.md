@@ -20,6 +20,38 @@ certs/
     └── untrusted/        # Intentionally untrusted self-signed client certificate
 ```
 
+`test-pki/` is git-ignored: generate it with `make certs`.
+
+### ECC certificates
+
+`open62541-server`, `open62541-client`, `consumer` and `go-server` additionally
+hold one ECC application certificate per curve (the `milo-*` identities do not:
+Eclipse Milo 1.1.8 has no ECC security policy):
+
+```
+<identity>/
+├── cert.crt, cert.key, cert.pfx     # RSA 2048 (unchanged)
+├── ecc-nistp256/cert.crt|cert.key          # EC prime256v1   → ECC_nistP256, ECC_nistP256_AesGcm, ECC_nistP256_ChaChaPoly
+├── ecc-nistp384/cert.crt|cert.key          # EC secp384r1    → ECC_nistP384
+├── ecc-brainpoolp256r1/cert.crt|cert.key   # brainpoolP256r1 → ECC_brainpoolP256r1
+├── ecc-brainpoolp384r1/cert.crt|cert.key   # brainpoolP384r1 → ECC_brainpoolP384r1
+├── ecc-curve25519/cert.crt|cert.key        # Ed25519         → ECC_curve25519
+└── ecc-curve448/cert.crt|cert.key          # Ed448           → ECC_curve448
+untrusted/ecc-nistp256/cert.crt|cert.key    # self-signed, for rejection tests
+```
+
+- Same subject and SAN (ApplicationUri, DNS, IP) as the identity's RSA
+  certificate; `cert.key` is PKCS#8 PEM.
+- Issued by the **same RSA test CA** (`ca/ca.crt`, signature
+  `sha256WithRSAEncryption`). Every trust directory that trusts the CA
+  therefore accepts the ECC certificates without change, and open62541 (OpenSSL
+  backend) validates the mixed chain; no separate ECC CA is needed.
+- KeyUsage: `digitalSignature, nonRepudiation, keyAgreement`.
+
+`certs/generate.sh --add-ecc` (re)generates only these directories in an
+existing PKI and leaves the CA and all RSA files byte-identical; a plain
+`certs/generate.sh` regenerates everything.
+
 ## Generation
 
 ```sh
@@ -28,7 +60,7 @@ make certs
 certs/generate.sh
 ```
 
-Requirements: `openssl` ≥ 1.1.
+Requirements: `openssl` ≥ 1.1.1 (brainpool, Ed25519 and Ed448 for the ECC certificates).
 
 The script generates:
 

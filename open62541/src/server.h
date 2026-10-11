@@ -20,6 +20,25 @@ typedef struct {
     char *keyFile;      /* server private key (DER) */
     char *readyFile;
     int   readyFileExplicit; /* 1 if --ready-file was given on the command line */
+
+    /* ECC application certificates: <eccDir>/ecc-<curve>/cert.crt|cert.key */
+    char *eccDir;
+
+    /* Reverse connect: client URLs the server dials (ReverseHello) */
+#define SERVER_MAX_REVERSE 8
+    char *reverseConnect[SERVER_MAX_REVERSE];
+    int   reverseConnectCount;
+    int   reverseIntervalMs;  /* retry interval, default 1000 */
+
+    /* Discovery */
+    int   lds;                /* act as Local Discovery Server (LDS-ME) */
+    int   ldsCleanupTimeoutS; /* 0 = stack default (3600 s) */
+    char *mdnsName;           /* mDNS server name; enables mDNS announce */
+#define SERVER_MAX_CAPS 8
+    char *mdnsCaps[SERVER_MAX_CAPS];
+    int   mdnsCapCount;
+    char *registerWith;       /* LDS URL to register with */
+    int   registerIntervalMs; /* re-register period, default 30000 */
 } ServerArgs;
 
 /*

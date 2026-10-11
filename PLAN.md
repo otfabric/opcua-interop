@@ -268,7 +268,7 @@ Adapter release **v0.6.0**; `adapter.version` = `0.6.0`:
 5. **Smoke** — `register-nodes` and a 24-notification subscribe at a 6 s channel
    lifetime run in every adapter↔adapter direction.
 
-**Current adapter client surface (15 operations):**
+**As of v0.6.0 adapter client surface (15 operations):**
 `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`,
 `subscribe`, `subscription-lifecycle`, `event-subscribe`, `history-read`,
 `republish`, `transfer-subscriptions`, `register-nodes`, `node-management`
@@ -280,16 +280,69 @@ invalidate a released HistoryRead continuation point.
 
 ---
 
+## Filters, reverse connect, ECC, discovery, data encodings (0.7.0) ✓
+
+Adapter release **v0.7.0** (supports go-opcua v1.6.0); `adapter.version` = `0.7.0`:
+
+1. **DataChangeFilter** — `subscribe --deadband-absolute | --deadband-percent`,
+   `--trigger`; fixture AnalogItems `Analog.Level` / `Analog.Setpoint` with
+   `EURange`. Both adapters, client and server.
+2. **Reverse connect** — server `--reverse-connect`, client `--reverse-listen`.
+   open62541 only.
+3. **ECC security policies** — open62541 rebuilt on the OpenSSL backend; eight
+   ECC policies; `--ecc-dir`; ECC certificates in the test PKI. open62541 only.
+4. **Discovery** — open62541 `--lds` / `--mdns-name` (mdnsd); `--register-with`,
+   `find-servers-on-network`, `register-server` in both adapters.
+5. **JSON / XML DataEncoding** — `codec` in both adapters (open62541
+   `UA_encodeJson` / `UA_encodeXml`; Milo `milo-encoding-json` /
+   `milo-encoding-xml`).
+6. **Capabilities** — `clientFeatures`, `serverFeatures`, `codec`, ECC
+   `securityProfiles`.
+7. **Smoke** — deadband and codec in every direction; RSA-over-OpenSSL, ECC,
+   reverse connect and LDS / mDNS on a dedicated Docker network.
+
+| Feature | open62541 | Milo | Why not |
+|---------|:---------:|:----:|---------|
+| DataChangeFilter client / server | ✓ | ✓ | |
+| Reverse connect | ✓ | — | no ReverseHello message type in Milo 1.1.8 transports |
+| ECC policies | ✓ | — | `SecurityPolicy` enum of Milo 1.1.8 ends at `Aes256_Sha256_RsaPss` |
+| LDS server / mDNS | ✓ | — | `DefaultDiscoveryServiceSet` → `Bad_ServiceUnsupported` |
+| Register with an LDS (server), `register-server`, `find-servers-on-network` | ✓ | ✓ | |
+| `codec` JSON | ✓ (compact) | ✓ (compact, verbose) | |
+| `codec` XML | ✓ (partial) | ✓ | open62541 XML: no DataValue / DiagnosticInfo / matrices |
+
+**Current adapter client surface (18 operations):**
+`endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`,
+`subscribe`, `subscription-lifecycle`, `event-subscribe`, `history-read`,
+`republish`, `transfer-subscriptions`, `register-nodes`, `node-management`,
+`find-servers-on-network`, `register-server`, `codec`
+
+Known limits recorded for consumers:
+
+- open62541 client, secure reverse connect: two ReverseHello rounds (GetEndpoints
+  on a None channel first), so it takes at least one server retry interval.
+- open62541 v1.5.9 with `UA_ENABLE_AMALGAMATION` + mDNS only builds the
+  amalgamation target; `UA_Server_setRegisterServerCallback` is declared but
+  not implemented.
+- The Milo reference server samples periodically even when SamplingInterval 0
+  is requested, so `subscription-lifecycle --scenario publishing-mode` against
+  it can coalesce back-to-back writes (unchanged from earlier releases).
+- JSON DataValue: open62541 flattens the Variant members into the DataValue
+  object, Milo nests them under `Value`; neither decodes the other's form.
+
+---
+
 ## Current status ← here
 
 | Item | Status |
 |------|--------|
-| Latest released image tag | **v0.6.0** |
+| Latest released image tag | **v0.7.0** |
 | Publication model | Immutable tags: every adapter-surface change gets a new release (see `PUBLISH.md`) |
-| Capabilities `adapter.version` | **0.6.0** |
-| Upstream stacks | open62541 **v1.5.9**, Eclipse Milo **1.1.8** |
-| Client operations | 15 (see above) |
-| Consumer pin | go-opcua re-pins to the published `v0.6.0` digests after release |
+| Capabilities `adapter.version` | **0.7.0** |
+| Upstream stacks | open62541 **v1.5.9** (OpenSSL, mdnsd), Eclipse Milo **1.1.8** |
+| Client operations | 18 (see above) |
+| Optional features | declared in `print-capabilities` (`clientFeatures`, `serverFeatures`, `codec`) |
+| Consumer pin | go-opcua re-pins to the published `v0.7.0` digests after release |
 
 ---
 
@@ -306,7 +359,8 @@ invalidate a released HistoryRead continuation point.
 | v0.5.0-dev | Phase 18 (WP1B) development capabilities label | **superseded** |
 | v0.5.0 | Phase 18 WP1B + events/historian/find-servers/translate/continue | **released** |
 | v0.6.0 | open62541 v1.5.9 / Milo 1.1.8; `register-nodes`, `node-management`, `--channel-lifetime-ms`; capabilities 0.6.0 | **released** |
-| Later | Alarms; reverse connect; NodeSet2 import; PubSub | — |
+| v0.7.0 | DataChangeFilter deadbands, reverse connect, ECC policies, LDS / mDNS, `codec` (JSON / XML); feature capabilities; capabilities 0.7.0 | **released** |
+| Later | Alarms; NodeSet2 import; PubSub | — |
 
 ---
 

@@ -281,6 +281,305 @@ check_channel_renewal() {
     fi
 }
 
+# DataChangeFilter: an absolute deadband of 10 on the Analog.Level ramp (step 2)
+# must be accepted and thin the notifications out; a percent deadband on a
+# node without EURange must be rejected (exit 4, visible in the result).
+check_deadband() {
+    local client_image="$1"
+    local endpoint="$2"
+    local label="$3"
+
+    local node="nsu=urn:otfabric:opcua-interop:model;s=Analog.Level"
+    local output
+    if output=$(run_client_op "${client_image}" subscribe \
+            --endpoint "${endpoint}" --node "${node}" \
+            --publishing-interval-ms 200 --notifications 3 --timeout-ms 15000 \
+            --deadband-absolute 10); then
+        if echo "${output}" | jq -e '
+              .success == true
+              and .results[0].monitoredItemStatusCode.code == 0
+              and .results[0].filter.deadbandType == "Absolute"
+              and ([.results[0].notifications[].value] as $v
+                   | [range(1; $v|length) | (($v[.] - $v[.-1]) | if . < 0 then 11 else . end)]
+                   | all(. > 10))' >/dev/null 2>&1; then
+            ok "${label}: subscribe with absolute deadband"
+        else
+            fail "${label}: deadband — unexpected result: ${output}"
+        fi
+    else
+        fail "${label}: deadband subscribe exited non-zero"
+    fi
+
+    local ramp="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Ramp"
+    output=$(run_client_op "${client_image}" subscribe \
+            --endpoint "${endpoint}" --node "${ramp}" --notifications 1 \
+            --deadband-percent 10) || true
+    if echo "${output}" | jq -e '
+          .success == false
+          and .results[0].monitoredItemStatusCode.severity == "Bad"
+          and .results[0].filter.deadbandType == "Percent"' >/dev/null 2>&1; then
+        ok "${label}: percent deadband without EURange is rejected"
+    else
+        fail "${label}: percent deadband rejection — unexpected result: ${output}"
+    fi
+}
+
+# codec short form: read a node and encode its Variant as JSON and XML.
+check_codec_node() {
+    local client_image="$1"
+    local endpoint="$2"
+    local label="$3"
+
+    local node="nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32"
+    local output
+    if output=$(run_client_op "${client_image}" codec --endpoint "${endpoint}" --node "${node}"); then
+        if echo "${output}" | jq -e '
+              .success == true and .results[0].value == -123456789
+              and (.results[0].json | fromjson | .UaType == 6 and .Value == -123456789)
+              and (.results[0].xml | test("<([a-z]+:)?Int32>-123456789</"))
+              and .results[0].binary == "BusypPg="' >/dev/null 2>&1; then
+            ok "${label}: codec node (JSON + XML Variant)"
+        else
+            fail "${label}: codec node — unexpected result: ${output}"
+        fi
+    else
+        fail "${label}: codec node exited non-zero"
+    fi
+}
+
+# codec without a server: the encoder's document is decoded by the decoder
+# (possibly the other stack) and must yield the same OPC UA Binary encoding.
+check_codec_roundtrip() {
+    local enc_image="$1"
+    local dec_image="$2"
+    local label="$3"
+
+    local fmt type value
+    for spec in "json|Int64|-1234567890123456789" "json|LocalizedText[]|[\"en:Hello\",\"de:Hallo\"]" \
+                "xml|Double[]|1.5,2.5" "xml|String|interop"; do
+        fmt="${spec%%|*}"; value="${spec#*|}"; type="${value%%|*}"; value="${value#*|}"
+        local enc dec doc bin
+        enc=$(docker run --rm "${enc_image}" client codec encode --format "${fmt}" \
+                --type "${type}" --value "${value}" 2>/dev/null | grep -m1 '^{') || true
+        doc=$(echo "${enc}" | jq -r '.results[0].encoded.variant // empty')
+        bin=$(echo "${enc}" | jq -r '.results[0].binary.variant // empty')
+        if [[ -z "${doc}" || -z "${bin}" ]]; then
+            fail "${label}: codec encode ${fmt} ${type}: ${enc}"
+            continue
+        fi
+        dec=$(printf '%s' "${doc}" | docker run --rm -i "${dec_image}" client codec decode \
+                --format "${fmt}" --type Variant 2>/dev/null | grep -m1 '^{') || true
+        if echo "${dec}" | jq -e --arg bin "${bin}" \
+              '.success == true and .results[0].binary == $bin' >/dev/null 2>&1; then
+            ok "${label}: codec ${fmt} ${type} round trip (binary identical)"
+        else
+            fail "${label}: codec decode ${fmt} ${type}: ${dec}"
+        fi
+    done
+}
+
+# ── open62541 feature smoke: ECC, reverse connect, LDS / mDNS ─────────────────
+#
+# These need container-to-container addressing (the server dials the client,
+# servers register with an LDS, mDNS), so they run on a dedicated Docker
+# network with the test PKI mounted.
+
+FEAT_NET=""
+FEAT_TMP=""
+FEAT_CONTAINERS=()
+
+feature_cleanup() {
+    local c
+    for c in ${FEAT_CONTAINERS[@]+"${FEAT_CONTAINERS[@]}"}; do
+        docker rm -f "${c}" &>/dev/null || true
+    done
+    FEAT_CONTAINERS=()
+    if [[ -n "${FEAT_NET}" ]]; then docker network rm "${FEAT_NET}" &>/dev/null || true; FEAT_NET=""; fi
+    if [[ -n "${FEAT_TMP}" ]]; then rm -rf "${FEAT_TMP}"; FEAT_TMP=""; fi
+}
+
+# A world-readable copy of the test PKI (generated on demand; an existing CA
+# and its RSA identities are kept and only the ECC certificates are added).
+prepare_pki() {
+    local pki="${OPCUA_INTEROP_PKI_DIR:-${REPO_ROOT}/certs/test-pki}"
+    if [[ ! -f "${pki}/ca/ca.crt" ]]; then
+        log "Generating test PKI..."
+        "${REPO_ROOT}/certs/generate.sh" >/dev/null 2>&1
+    elif [[ ! -f "${pki}/open62541-server/ecc-nistp256/cert.crt" ]]; then
+        log "Adding ECC certificates to the test PKI..."
+        "${REPO_ROOT}/certs/generate.sh" --add-ecc >/dev/null 2>&1
+    fi
+    FEAT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/opcua-interop-smoke.XXXXXX")
+    cp -R "${pki}" "${FEAT_TMP}/pki"
+    chmod -R a+rwX "${FEAT_TMP}"
+}
+
+# feat_client <image> <container-name|-> <args...>: client on the feature network.
+feat_client() {
+    local image="$1" name="$2"
+    shift 2
+    local name_args=()
+    if [[ "${name}" != "-" ]]; then
+        docker rm -f "${name}" &>/dev/null || true
+        name_args=(--name "${name}")
+    fi
+    local raw rc=0
+    raw=$(docker run --rm ${name_args[@]+"${name_args[@]}"} --network "${FEAT_NET}" \
+            -v "${FEAT_TMP}/pki:/pki" "${image}" client "$@" 2>/dev/null) || rc=$?
+    printf '%s\n' "${raw}" | grep -m1 '^{' || printf '%s\n' "${raw}"
+    return ${rc}
+}
+
+feat_expect() {
+    local label="$1" filter="$2" output="$3"
+    if echo "${output}" | jq -e "${filter}" >/dev/null 2>&1; then
+        ok "${label}"
+    else
+        fail "${label}: ${output}"
+    fi
+}
+
+# run_open62541_features <open62541-image> [milo-image]
+run_open62541_features() {
+    local img="$1"
+    local img_milo="${2:-}"
+    local model="nsu=urn:otfabric:opcua-interop:model;s="
+
+    prepare_pki
+    FEAT_NET="smoke-net-$$"
+    docker network create "${FEAT_NET}" >/dev/null
+
+    local lds="smoke-lds-$$" member="smoke-member-$$" rclient="smoke-rclient-$$"
+    local lds_url="opc.tcp://${lds}:4840${ENDPOINT_PATH}"
+    FEAT_CONTAINERS+=("${lds}" "${member}" "${rclient}")
+
+    # One open62541 server: RSA + ECC endpoints, Local Discovery Server with
+    # mDNS, and a reverse connection towards the (not yet running) client.
+    log "Starting open62541 feature server (ECC, LDS, reverse connect)..."
+    docker run -d --name "${lds}" --network "${FEAT_NET}" \
+        -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+        "${img}" server --fixture /fixtures/baseline/fixture.json \
+        --advertised-host "${lds}" --endpoint-path "${ENDPOINT_PATH}" \
+        --certificate /pki/open62541-server/cert.crt --private-key /pki/open62541-server/cert.key \
+        --pki-dir /pki/open62541-server/pki --ecc-dir /pki/open62541-server \
+        --lds --reverse-connect "opc.tcp://${rclient}:4855" >/dev/null
+    wait_ready "${lds}"
+
+    # A second server registers with the LDS (Milo in cross mode).
+    local member_img="${img}" member_extra=(--mdns-name smoke-member)
+    local member_name="open62541"
+    if [[ -n "${img_milo}" ]]; then member_img="${img_milo}"; member_extra=(); member_name="milo"; fi
+    log "Starting ${member_name} server registering with the LDS..."
+    docker run -d --name "${member}" --network "${FEAT_NET}" \
+        -v "${REPO_ROOT}/fixtures:/fixtures:ro" \
+        "${member_img}" server --fixture /fixtures/baseline/fixture.json \
+        --advertised-host "${member}" --endpoint-path "${ENDPOINT_PATH}" \
+        --register-with "${lds_url}" --register-interval-ms 2000 \
+        ${member_extra[@]+"${member_extra[@]}"} >/dev/null
+    wait_ready "${member}"
+
+    local rsa=(--certificate /pki/open62541-client/cert.crt --private-key /pki/open62541-client/cert.key
+               --trust-list /pki/ca/ca.crt)
+    local out curve policy mode
+
+    # RSA over the OpenSSL backend (the pre-0.7.0 policies).
+    out=$(feat_client "${img}" - read --endpoint "${lds_url}" --node "${model}Scalar.Int32" \
+            --security-policy Basic256Sha256 --security-mode SignAndEncrypt "${rsa[@]}" \
+            --username test-user --password test-password) || true
+    feat_expect "o62541→o62541: Basic256Sha256/SignAndEncrypt + username" \
+        '.success == true and .results[0].value == -123456789' "${out}"
+    if [[ -n "${img_milo}" ]]; then
+        out=$(feat_client "${img_milo}" - read --endpoint "${lds_url}" --node "${model}Scalar.Int32" \
+                --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt \
+                --certificate /pki/milo-client/cert.crt --private-key /pki/milo-client/cert.key \
+                --trust-list /pki/ca/ca.crt) || true
+        feat_expect "milo→o62541: Aes256_Sha256_RsaPss/SignAndEncrypt" \
+            '.success == true and .results[0].value == -123456789' "${out}"
+    fi
+
+    # ECC policies, each with the certificate of its curve; username/password
+    # travels as an EccEncryptedSecret.
+    for spec in "ECC_nistP256 nistp256 SignAndEncrypt" "ECC_nistP384 nistp384 Sign" \
+                "ECC_brainpoolP256r1 brainpoolp256r1 SignAndEncrypt" \
+                "ECC_curve25519 curve25519 SignAndEncrypt" \
+                "ECC_nistP256_AesGcm nistp256 SignAndEncrypt"; do
+        read -r policy curve mode <<<"${spec}"
+        out=$(feat_client "${img}" - read --endpoint "${lds_url}" --node "${model}Scalar.Int32" \
+                --security-policy "${policy}" --security-mode "${mode}" \
+                --certificate "/pki/open62541-client/ecc-${curve}/cert.crt" \
+                --private-key "/pki/open62541-client/ecc-${curve}/cert.key" \
+                --trust-list /pki/ca/ca.crt \
+                --username test-user --password test-password) || true
+        feat_expect "o62541→o62541: ${policy}/${mode} + username" \
+            '.success == true and .results[0].value == -123456789' "${out}"
+    done
+    out=$(feat_client "${img}" - read --endpoint "${lds_url}" --node "${model}Scalar.Int32" \
+            --security-policy ECC_nistP256 --security-mode SignAndEncrypt \
+            --certificate /pki/untrusted/ecc-nistp256/cert.crt \
+            --private-key /pki/untrusted/ecc-nistp256/cert.key \
+            --trust-list /pki/ca/ca.crt) || true
+    feat_expect "o62541→o62541: untrusted ECC certificate is rejected" \
+        '.success == false and .serviceResult.severity == "Bad"' "${out}"
+
+    # Reverse connect: the client listens, the server dials in (ReverseHello).
+    out=$(feat_client "${img}" "${rclient}" read --endpoint "${lds_url}" \
+            --node "${model}Scalar.Int32" --reverse-listen 4855 --reverse-timeout-ms 30000 \
+            --reverse-server-uri urn:otfabric:opcua-interop:server) || true
+    feat_expect "o62541 reverse connect: None/None" \
+        '.success == true and .results[0].value == -123456789' "${out}"
+    out=$(feat_client "${img}" "${rclient}" subscribe --endpoint "${lds_url}" \
+            --node "${model}Dynamic.Counter" --notifications 2 \
+            --reverse-listen 4855 --reverse-timeout-ms 30000 \
+            --security-policy ECC_nistP256 --security-mode SignAndEncrypt \
+            --certificate /pki/open62541-client/ecc-nistp256/cert.crt \
+            --private-key /pki/open62541-client/ecc-nistp256/cert.key \
+            --trust-list /pki/ca/ca.crt) || true
+    feat_expect "o62541 reverse connect: ECC_nistP256/SignAndEncrypt subscription" \
+        '.success == true and (.results[0].notifications | length) == 2' "${out}"
+    out=$(feat_client "${img}" "${rclient}" endpoints --endpoint "${lds_url}" \
+            --reverse-listen 4855 --reverse-timeout-ms 30000) || true
+    feat_expect "o62541 reverse connect: GetEndpoints" \
+        '.success == true and (.results | length) > 1' "${out}"
+
+    # Discovery: the member registered itself (RegisterServer2), a client
+    # registers / unregisters a made-up server, mDNS records are served.
+    local clients=("${img}")
+    local names=("o62541")
+    if [[ -n "${img_milo}" ]]; then clients+=("${img_milo}"); names+=("milo"); fi
+    out=$(feat_client "${img}" - find-servers --endpoint "${lds_url}") || true
+    feat_expect "LDS FindServers lists the registered ${member_name} server" \
+        "[.results[].discoveryUrls[]] | index(\"opc.tcp://${member}:4840${ENDPOINT_PATH}\") != null" "${out}"
+    local i
+    for i in "${!clients[@]}"; do
+        local c="${clients[$i]}" n="${names[$i]}"
+        out=$(feat_client "${c}" - find-servers-on-network --endpoint "${lds_url}") || true
+        feat_expect "${n}→LDS: FindServersOnNetwork (LDS record + registered server)" \
+            ".success == true
+             and ([.results[] | select(.serverCapabilities | index(\"LDS\"))] | length) >= 1
+             and ([.results[] | select(.discoveryUrl | test(\"${member}\"))] | length) >= 1" "${out}"
+        out=$(feat_client "${c}" - register-server --endpoint "${lds_url}" \
+                --server-uri "urn:smoke:${n}" --server-name "smoke ${n}" \
+                --discovery-url "opc.tcp://smoke-${n}:4999" --mdns-name "smoke-${n}") || true
+        feat_expect "${n}→LDS: register-server (RegisterServer2)" \
+            '.success == true and .results[0].service == "RegisterServer2"' "${out}"
+        out=$(feat_client "${img}" - find-servers --endpoint "${lds_url}") || true
+        feat_expect "${n}→LDS: registration visible in FindServers" \
+            "[.results[].applicationUri] | index(\"urn:smoke:${n}\") != null" "${out}"
+        out=$(feat_client "${c}" - register-server --endpoint "${lds_url}" \
+                --server-uri "urn:smoke:${n}" --discovery-url "opc.tcp://smoke-${n}:4999" \
+                --mdns-name "smoke-${n}" --online false) || true
+        out=$(feat_client "${img}" - find-servers --endpoint "${lds_url}") || true
+        feat_expect "${n}→LDS: unregistered server is gone" \
+            "[.results[].applicationUri] | index(\"urn:smoke:${n}\") == null" "${out}"
+    done
+    out=$(feat_client "${img}" - register-server --endpoint "opc.tcp://${member}:4840${ENDPOINT_PATH}" \
+            --server-uri urn:smoke:x --discovery-url opc.tcp://x:1) || true
+    feat_expect "register-server against a non-LDS (${member_name}) reports the service fault" \
+        '.success == false and .results[0].fallback == true' "${out}"
+
+    feature_cleanup
+}
+
 # ── Mode: single adapter ──────────────────────────────────────────────────────
 
 run_single_smoke() {
@@ -290,7 +589,7 @@ run_single_smoke() {
 
     local cname
     cname=$(start_server "${adapter}" "${image}" "${port}")
-    trap "stop_server ${cname}" EXIT
+    trap "stop_server ${cname}; feature_cleanup" EXIT
 
     wait_ready "${cname}"
 
@@ -305,8 +604,14 @@ run_single_smoke() {
     check_subscribe   "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_register_nodes "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_channel_renewal "${image}" "${endpoint}" "${adapter}→${adapter}"
+    check_deadband "${image}" "${endpoint}" "${adapter}→${adapter}"
+    check_codec_node "${image}" "${endpoint}" "${adapter}→${adapter}"
+    check_codec_roundtrip "${image}" "${image}" "${adapter}→${adapter}"
 
     stop_server "${cname}"
+    if [[ "${adapter}" == "open62541" ]]; then
+        run_open62541_features "${image}"
+    fi
     trap - EXIT
 }
 
@@ -321,7 +626,7 @@ run_cross_smoke() {
     local cname_open62541 cname_milo
     cname_open62541=$(start_server "open62541" "${img_open62541}" "${port_open62541}")
     cname_milo=$(start_server "milo" "${img_milo}" "${port_milo}")
-    trap "stop_server ${cname_open62541}; stop_server ${cname_milo}" EXIT
+    trap "stop_server ${cname_open62541}; stop_server ${cname_milo}; feature_cleanup" EXIT
 
     wait_ready "${cname_open62541}"
     wait_ready "${cname_milo}"
@@ -338,6 +643,8 @@ run_cross_smoke() {
     check_subscribe   "${img_open62541}" "${ep_open62541}" "o62541→o62541"
     check_register_nodes "${img_open62541}" "${ep_open62541}" "o62541→o62541"
     check_channel_renewal "${img_open62541}" "${ep_open62541}" "o62541→o62541"
+    check_deadband "${img_open62541}" "${ep_open62541}" "o62541→o62541"
+    check_codec_node "${img_open62541}" "${ep_open62541}" "o62541→o62541"
 
     log "Cross-stack: open62541-client → milo-server"
     check_endpoints   "${img_open62541}" "${ep_milo}" "o62541→milo"
@@ -348,6 +655,8 @@ run_cross_smoke() {
     check_subscribe   "${img_open62541}" "${ep_milo}" "o62541→milo"
     check_register_nodes "${img_open62541}" "${ep_milo}" "o62541→milo"
     check_channel_renewal "${img_open62541}" "${ep_milo}" "o62541→milo"
+    check_deadband "${img_open62541}" "${ep_milo}" "o62541→milo"
+    check_codec_node "${img_open62541}" "${ep_milo}" "o62541→milo"
 
     log "Cross-stack: milo-client → open62541-server"
     check_endpoints   "${img_milo}" "${ep_open62541}" "milo→o62541"
@@ -358,6 +667,8 @@ run_cross_smoke() {
     check_subscribe   "${img_milo}" "${ep_open62541}" "milo→o62541"
     check_register_nodes "${img_milo}" "${ep_open62541}" "milo→o62541"
     check_channel_renewal "${img_milo}" "${ep_open62541}" "milo→o62541"
+    check_deadband "${img_milo}" "${ep_open62541}" "milo→o62541"
+    check_codec_node "${img_milo}" "${ep_open62541}" "milo→o62541"
 
     log "Cross-stack: milo-client → milo-server"
     check_endpoints   "${img_milo}" "${ep_milo}" "milo→milo"
@@ -368,9 +679,18 @@ run_cross_smoke() {
     check_subscribe   "${img_milo}" "${ep_milo}" "milo→milo"
     check_register_nodes "${img_milo}" "${ep_milo}" "milo→milo"
     check_channel_renewal "${img_milo}" "${ep_milo}" "milo→milo"
+    check_deadband "${img_milo}" "${ep_milo}" "milo→milo"
+    check_codec_node "${img_milo}" "${ep_milo}" "milo→milo"
+
+    log "Cross-stack: codec documents of one stack decoded by the other"
+    check_codec_roundtrip "${img_open62541}" "${img_milo}" "o62541→milo"
+    check_codec_roundtrip "${img_milo}" "${img_open62541}" "milo→o62541"
 
     stop_server "${cname_open62541}"
     stop_server "${cname_milo}"
+
+    log "Cross-stack: open62541 features with a Milo peer (registration, RSA client)"
+    run_open62541_features "${img_open62541}" "${img_milo}"
     trap - EXIT
 }
 

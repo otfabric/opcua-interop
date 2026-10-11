@@ -93,6 +93,17 @@ void output_timestamp(UA_DateTime dt, char *buf, size_t bufLen);
 /* OPC UA built-in type integer (1–25), or 0 for unknown. */
 int ua_type_to_builtin_id(const UA_DataType *type);
 
+/* Print one scalar of a built-in type in the canonical value encoding (§7). */
+void output_ua_scalar(const void *data, const UA_DataType *type);
+
+/* Print a DataValue as {"dataType","builtInType","value","statusCode",...}
+ * with only the fields that are present. */
+void output_ua_datavalue(const UA_DataValue *dv);
+
+/* Print a JSON string literal (with quotes and escaping). */
+void output_json_string(const char *s);
+void output_json_string_len(const unsigned char *data, size_t len);
+
 /* Print the JSON value of a UA_Variant to stdout (no key, no leading comma). */
 void output_ua_variant_value(const UA_Variant *var);
 

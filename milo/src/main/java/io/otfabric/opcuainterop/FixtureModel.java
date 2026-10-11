@@ -59,11 +59,19 @@ public class FixtureModel {
         public List<String> accessLevel = new ArrayList<>();
         @JsonProperty("initialValue")
         public Object       value;
+        /** Optional EURange property (AnalogItemType): {"low":..,"high":..}. */
+        public EuRangeDef   euRange;
 
         // Method fields
         public String            methodBehavior;
         public List<ArgumentDef> inputArguments  = new ArrayList<>();
         public List<ArgumentDef> outputArguments = new ArrayList<>();
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class EuRangeDef {
+        public double low;
+        public double high;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

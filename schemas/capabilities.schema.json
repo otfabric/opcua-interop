@@ -48,6 +48,37 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "clientFeatures": {
+      "type": "array",
+      "description": "Optional client-side features (docs/CLIENT_CONTRACT.md §13). Added in adapter 0.7.0.",
+      "items": {
+        "type": "string",
+        "enum": ["channel-lifetime", "deadband", "reverse-listen", "ecc-security", "ecc-user-token",
+                 "application-uri", "register-server2", "codec-json", "codec-xml", "codec-json-verbose"]
+      }
+    },
+    "serverFeatures": {
+      "type": "array",
+      "description": "Optional server-side features (docs/CLIENT_CONTRACT.md §13). Added in adapter 0.7.0.",
+      "items": {
+        "type": "string",
+        "enum": ["deadband", "percent-deadband", "reverse-connect", "ecc-security", "ecc-user-token",
+                 "lds", "mdns", "register-with", "node-management"]
+      }
+    },
+    "codec": {
+      "type": "object",
+      "description": "What the `client codec` command can do. Added in adapter 0.7.0.",
+      "required": ["formats", "jsonVersion", "jsonModes"],
+      "additionalProperties": false,
+      "properties": {
+        "formats":     { "type": "array", "items": { "type": "string", "enum": ["json", "xml"] } },
+        "jsonVersion": { "type": "string" },
+        "jsonModes":   { "type": "array", "items": { "type": "string", "enum": ["compact", "verbose"] } },
+        "xmlEncodeUnsupported": { "type": "array", "items": { "type": "string" } },
+        "xmlDecodeUnsupported": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "serverServices": {
       "type": "array",
       "items": { "type": "string" }

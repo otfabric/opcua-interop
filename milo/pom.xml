@@ -47,6 +47,18 @@
       <version>${milo.version}</version>
     </dependency>
 
+    <!-- Stack-level JSON / XML DataEncoding (client codec command) -->
+    <dependency>
+      <groupId>org.eclipse.milo</groupId>
+      <artifactId>milo-encoding-json</artifactId>
+      <version>${milo.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.milo</groupId>
+      <artifactId>milo-encoding-xml</artifactId>
+      <version>${milo.version}</version>
+    </dependency>
+
     <!-- JSON (fixture parsing and client output) -->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>

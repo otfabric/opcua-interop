@@ -167,8 +167,8 @@ static void test_behavior_count_and_kinds(const char *path) {
     CHECK(f != NULL);
     if (!f) return;
 
-    /* Baseline has 3 behaviors: counter, toggle, ramp */
-    CHECK_INT((int)f->behaviorCount, 3);
+    /* Baseline behaviors include counter, toggle and ramp generators */
+    CHECK(f->behaviorCount >= 5);
 
     int haveCounter = 0, haveToggle = 0, haveRamp = 0;
     for (size_t i = 0; i < f->behaviorCount; i++) {

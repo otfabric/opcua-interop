@@ -33,6 +33,13 @@ this contract. Changes that break it require a major schema version bump.
 | `transfer-subscriptions` | TransferSubscriptions for one or more subscription ids |
 | `register-nodes` | RegisterNodes, Read through the registered aliases, UnregisterNodes |
 | `node-management` | AddNodes (Int32 Variable), Read, DeleteNodes, Read-after-delete |
+| `find-servers-on-network` | FindServersOnNetwork against a Local Discovery Server (mDNS records) |
+| `register-server` | RegisterServer2 / RegisterServer of an arbitrary server description with an LDS |
+| `codec` | Encode / decode built-in values in the OPC UA JSON and XML DataEncodings (no session needed for literals) |
+
+Which of these (and which optional features) an image provides is declared by
+`print-capabilities` (§13). A feature the underlying stack does not implement is
+refused with exit 2 / `error.category = "input"` — never silently ignored.
 
 ### Global flags
 
@@ -50,9 +57,42 @@ this contract. Changes that break it require a major schema version bump.
 | `--username <name>` | Username for UserName identity token | — |
 | `--password <secret>` | Password for UserName identity token | — |
 | `--channel-lifetime-ms <n>` | Requested SecureChannel lifetime in ms; small values force SecurityToken renewals during the command | stack default |
+| `--application-uri <uri>` | Client ApplicationUri sent in CreateSession (open62541 only) | URI SAN of `--certificate`, else stack default |
+| `--reverse-listen <port>` | Do not dial: listen on `<port>` and wait for the server's ReverseHello (open62541 only, see below) | — |
+| `--reverse-timeout-ms <n>` | How long to wait for the reverse connection | 30000 |
+| `--reverse-server-uri <uri>` | Fail (exit 3, `BadServerUriInvalid`) unless the reverse-connected server's `ServerArray[0]` equals `<uri>` | — |
 
 Security policy names: `None`, `Basic128Rsa15`, `Basic256`, `Basic256Sha256`,
-`Aes128_Sha256_RsaOaep`, `Aes256_Sha256_RsaPss`.
+`Aes128_Sha256_RsaOaep`, `Aes256_Sha256_RsaPss`, and — open62541 only — the ECC
+policies `ECC_nistP256`, `ECC_nistP384`, `ECC_brainpoolP256r1`,
+`ECC_brainpoolP384r1`, `ECC_curve25519`, `ECC_curve448`, `ECC_nistP256_AesGcm`,
+`ECC_nistP256_ChaChaPoly`. An unknown or unsupported policy name is an input
+error (exit 2); it never falls back to `None`.
+
+**ECC policies.** Pass the application certificate of the policy's curve with
+the usual `--certificate` / `--private-key` flags (test PKI:
+`<identity>/ecc-<curve>/cert.crt|cert.key`, see `certs/README.md`):
+
+| Policy | Certificate directory |
+|--------|-----------------------|
+| `ECC_nistP256`, `ECC_nistP256_AesGcm`, `ECC_nistP256_ChaChaPoly` | `ecc-nistp256` |
+| `ECC_nistP384` | `ecc-nistp384` |
+| `ECC_brainpoolP256r1` / `ECC_brainpoolP384r1` | `ecc-brainpoolp256r1` / `ecc-brainpoolp384r1` |
+| `ECC_curve25519` / `ECC_curve448` | `ecc-curve25519` (Ed25519) / `ecc-curve448` (Ed448) |
+
+`--username` / `--password` on an ECC endpoint are sent as an
+`EccEncryptedSecret`. A certificate / key that cannot be used with the policy
+yields exit 6 (`error.category = "internal"`).
+
+**Reverse connect (`--reverse-listen`, Part 6 §7.1.3).** Works with every
+session command and with `endpoints` / `find-servers`. `--endpoint` stays
+required but is not dialled. The client listens on all interfaces; the server
+must be started with `--reverse-connect opc.tcp://<client-host>:<port>` (§11).
+With a non-None security policy open62541 uses the first reverse connection for
+GetEndpoints (SecurityPolicy None), closes it, and opens the secured channel on
+the server's next attempt, so the command needs two ReverseHello attempts (the
+adapter server retries every second by default). No connection within
+`--reverse-timeout-ms` → exit 7, `BadTimeout`, `error.category = "timeout"`.
 
 Security mode values: `None`, `Sign`, `SignAndEncrypt`.
 
@@ -124,6 +164,16 @@ Each relative path element uses `HierarchicalReferences` with `IncludeSubtypes=t
 | `--queue-size <n>` | Monitored item queue size | 1 |
 | `--discard-oldest <true\|false>` | Queue overflow policy | `true` |
 | `--timestamps <Source\|Server\|Both\|Neither>` | `TimestampsToReturn` for CreateMonitoredItems | `Both` |
+| `--deadband-absolute <x>` | DataChangeFilter with `DeadbandType=Absolute`, `DeadbandValue=x` | no filter |
+| `--deadband-percent <x>` | DataChangeFilter with `DeadbandType=Percent`, `DeadbandValue=x` (percent of the node's EURange) | no filter |
+| `--trigger <Status\|StatusValue\|StatusValueTimestamp>` | DataChangeFilter trigger | `StatusValue` |
+
+Any of the last three flags makes the monitored item carry a `DataChangeFilter`
+(`--trigger` alone uses `DeadbandType=None`). The two deadband flags are
+mutually exclusive (exit 2). A server that rejects the filter
+(`BadFilterNotAllowed`, `BadMonitoredItemFilterUnsupported`,
+`BadDeadbandFilterInvalid`) is visible in `monitoredItemStatusCode`; the command
+then exits 4 with `success: false` and no notifications.
 
 ### `subscription-lifecycle` flags
 
@@ -132,6 +182,13 @@ Each relative path element uses `HierarchicalReferences` with `IncludeSubtypes=t
 | `--node <nodeId>` | Writable Int32 node for scenarios that write values | required |
 | `--scenario <name>` | Scenario to run: `revise`, `publishing-mode`, `monitoring-mode`, `delete` | required |
 | `--timeout-ms <n>` | Absolute command timeout in ms | 15000 |
+
+The `publishing-mode` and `monitoring-mode` scenarios create their monitored
+item with **SamplingInterval 0** (report every change; was 100 ms before
+v0.7.0), so the queue-window assertion does not depend on how a server throttles
+back-to-back writes inside one sampling interval. A server that revises 0 to a
+periodic sampling rate (the Milo reference server does) can still coalesce the
+five writes; the scenario then reports `success: false` with the values it saw.
 
 ### `event-subscribe` flags
 
@@ -218,6 +275,70 @@ DeleteNodes (`DeleteTargetReferences=true`) → Read again. `success` when the a
 read-back (value equals `--value`) and delete are Good **and** the read after
 delete is Bad. A server without NodeManagement yields exit 4 with the service
 fault (typically `BadServiceUnsupported`) in `serviceResult`.
+
+### `find-servers-on-network` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--endpoint <url>` | Discovery URL of the LDS | required |
+| `--starting-record-id <n>` | `StartingRecordId` | 0 |
+| `--max-records <n>` | `MaxRecordsToReturn` (0 = no limit) | 0 |
+| `--capability <cap>` | `ServerCapabilityFilter` entry (repeatable) | none |
+
+Runs on a SecureChannel without a Session. A server without an mDNS-enabled LDS
+answers with a service fault (`BadNotImplemented` / `BadServiceUnsupported`) →
+exit 4.
+
+### `register-server` flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--endpoint <url>` | Discovery URL of the LDS | required |
+| `--server-uri <uri>` | `RegisteredServer.ServerUri` | required |
+| `--discovery-url <url>` | `RegisteredServer.DiscoveryUrls` entry (repeatable) | required (≥1) |
+| `--server-name <text>` | `ServerNames[0].Text` | the server URI |
+| `--server-name-locale <l>` | `ServerNames[0].Locale` | `en` |
+| `--product-uri <uri>` | `ProductUri` | empty |
+| `--server-type <t>` | `Server`, `Client`, `ClientAndServer`, `DiscoveryServer` | `Server` |
+| `--gateway-server-uri <uri>` | `GatewayServerUri` | — |
+| `--semaphore-file <path>` | `SemaphoreFilePath` | — |
+| `--online <true\|false>` | `IsOnline`; `false` unregisters | `true` |
+| `--service <auto\|RegisterServer2\|RegisterServer>` | Service to call. `auto`: RegisterServer2, then RegisterServer when the LDS answers `BadServiceUnsupported` / `BadNotImplemented` / `BadNotSupported` | `auto` |
+| `--mdns-name <name>` | `MdnsDiscoveryConfiguration.MdnsServerName` (RegisterServer2) | the server name |
+| `--capability <cap>` | `MdnsDiscoveryConfiguration.ServerCapabilities` entry (repeatable) | none |
+
+Runs on a SecureChannel without a Session (the open62541 adapter honours the
+global security flags for the channel; the Milo adapter always uses
+None/None). Unregister with the same `--server-uri` and `--mdns-name` that were
+registered.
+
+### `codec` flags
+
+```
+codec encode --format json|xml --type <Type|Type[]> --value <literal> [--dimensions d1,d2,..]
+             [--status <uint32>] [--source-timestamp <rfc3339>] [--server-timestamp <rfc3339>]
+             [--source-picoseconds <n>] [--server-picoseconds <n>]
+codec encode --format json|xml --endpoint <url> --node <nodeId>
+codec decode --format json|xml --type <BuiltInType|Variant|DataValue>
+             [--document <text> | --input <file>]          (default: stdin)
+
+codec --endpoint <url> --node <nodeId> [--node ...]        (short form: both formats per node)
+codec --decode json|xml --type <BuiltInType|Variant|DataValue>   (short form of decode)
+```
+
+| Flag | Description |
+|------|-------------|
+| `--format json\|xml` | DataEncoding (`--decode json\|xml` is accepted as a synonym in the short form) |
+| `--type` / `--value` / `--dimensions` | Locally constructed value, literal grammar of §12. `--dimensions` turns a `Type[]` into a matrix |
+| `--status`, `--source-timestamp`, `--server-timestamp`, `--source-picoseconds`, `--server-picoseconds` | Optional members of the DataValue built around a literal (decimal or `0x` status) |
+| `--node` + `--endpoint` | Read the Value attribute (TimestampsToReturn=Both) and encode what the server returned. Global security / identity flags apply |
+| `--json-mode compact\|verbose` | JSON flavour. open62541: `compact` only (anything else is exit 2). Milo: both |
+| `--namespace-uri <uri>` | Milo only, repeatable: namespace table (index 1, 2, …) for literals. The 1.05 JSON encoding writes namespace **URIs**, so Milo cannot encode a NodeId / QualifiedName / ExpandedNodeId with a non-zero namespace index it has no URI for (`Bad_EncodingError`). For `--node` the server's NamespaceArray is used |
+| `--document <text>` / `--input <file>` | Document to decode; otherwise it is read from stdin (run the container with `-i`). Trailing whitespace is ignored |
+
+Both stacks implement the **OPC UA 1.05 JSON encoding** (`UaType` / `Value` /
+`Dimensions`, NodeIds as strings, StatusCode as `{"Code":…}`), not the legacy
+1.04 `Type` / `Body` form. Arrays are decoded with `--type Variant`.
 
 ### Channel renewal (`--channel-lifetime-ms`)
 
@@ -440,6 +561,25 @@ means the method returned no output arguments.
 ]
 ```
 
+When (and only when) a DataChangeFilter was requested with `--deadband-absolute`,
+`--deadband-percent` or `--trigger`, the result item additionally carries,
+between `monitoredItemStatusCode` and `notifications`:
+
+```json
+    "monitoredItemId":         1,
+    "revisedSamplingInterval": 100.0,
+    "revisedQueueSize":        1,
+    "filter":       { "trigger": "StatusValue", "deadbandType": "Absolute", "deadbandValue": 10.0 },
+    "filterResult": null,
+```
+
+`filter` echoes the request (`deadbandType` is `None`, `Absolute` or `Percent`).
+`filterResult` is `null` when the server returned no filter result (the normal
+case for a DataChangeFilter), otherwise `{"typeId": "<NodeId>"}`. When the
+monitored item is rejected, `success` is `false`, `serviceResult` and
+`monitoredItemStatusCode` carry the status, `error.category` is `"service"`,
+`notifications` is empty and the exit code is 4.
+
 `subscriptionId` is the server-assigned subscription identifier (uint32, always present).  
 `revisedPublishingInterval` is the server-revised publishing interval in milliseconds.  
 `revisedLifetimeCount` and `revisedMaxKeepAliveCount` are the server-revised subscription counts.
@@ -659,6 +799,168 @@ alias the server returned (servers may return the original NodeId).
 
 Fields after `addStatusCode` are present only when the add succeeded.
 
+### `find-servers-on-network`
+
+```json
+"results": [
+  {
+    "recordId":             1,
+    "serverName":           "smoke-member-a1b2c3",
+    "discoveryUrl":         "opc.tcp://member:4840/opcua-interop",
+    "serverCapabilities":   ["NA"],
+    "lastCounterResetTime": "2026-10-11T15:26:38.230Z"
+  }
+]
+```
+
+One item per `ServerOnNetwork` record. `lastCounterResetTime` is the response's
+value repeated on every record (omitted when the server sent none).
+
+### `register-server`
+
+```json
+"results": [
+  {
+    "service":                   "RegisterServer2",
+    "serverUri":                 "urn:example:server",
+    "isOnline":                  true,
+    "statusCode":                { "name": "Good", "code": 0, "severity": "Good" },
+    "fallback":                  false,
+    "registerServer2StatusCode": { "name": "Good", "code": 0, "severity": "Good" },
+    "configurationResults":      [ { "name": "Good", "code": 0, "severity": "Good" } ]
+  }
+]
+```
+
+`service` is the service whose result counts (`statusCode`, also the envelope's
+`serviceResult`). `fallback` is `true` when RegisterServer2 was answered with
+"unsupported" and RegisterServer was called instead. `registerServer2StatusCode`
+is present whenever RegisterServer2 was attempted. `configurationResults` are
+the RegisterServer2 per-configuration results (empty for RegisterServer).
+`success` when `statusCode` and every configuration result are Good; otherwise
+exit 4.
+
+### `codec`
+
+Operation name `"codec"`. Documents are embedded as JSON **strings**, byte-exact
+as the stack produced them. `binary` values are the OPC UA Binary encoding of
+the same value in Base64 — compare these for bit-exactness.
+
+`codec encode`:
+
+```json
+"results": [
+  {
+    "action":      "encode",
+    "format":      "json",
+    "jsonMode":    "compact",
+    "source":      "literal",
+    "dataType":    "Int32",
+    "builtInType": 6,
+    "valueRank":   2,
+    "arrayDimensions": [2, 3],
+    "value":       [1, 2, 3, 4, 5, 6],
+    "dataValue":   { "dataType": "Int32", "builtInType": 6, "arrayDimensions": [2, 3], "value": [1, 2, 3, 4, 5, 6] },
+    "encoded": {
+      "variant":   "{\"UaType\":6,\"Value\":[1,2,3,4,5,6],\"Dimensions\":[2,3]}",
+      "dataValue": "{\"UaType\":6,\"Value\":[1,2,3,4,5,6],\"Dimensions\":[2,3]}"
+    },
+    "statusCodes": {
+      "variant":   { "name": "Good", "code": 0, "severity": "Good" },
+      "dataValue": { "name": "Good", "code": 0, "severity": "Good" }
+    },
+    "binary": {
+      "variant":   "xgYAAAABAAAAAgAAAAMAAAAEAAAABQAAAAYAAAACAAAAAgAAAAMAAAA=",
+      "dataValue": "AcYGAAAAAQAAAAIAAAADAAAABAAAAAUAAAAGAAAAAgAAAAIAAAADAAAA"
+    }
+  }
+]
+```
+
+- `jsonMode` only for `format: "json"`. `source` is `"literal"` or `"node"`
+  (then `nodeId` follows it).
+- `valueRank` is `-1` (scalar), `1` (array) or the number of dimensions;
+  `arrayDimensions` only for matrices. `value` is the canonical encoding (§7),
+  matrices flattened in row-major order. An empty Variant has `dataType: "Null"`,
+  `builtInType: 0`, `value: null`.
+- `dataValue` is the canonical DataValue object (§7).
+- `encoded.variant` / `encoded.dataValue` are the documents for the Variant and
+  the DataValue; for scalars `encoded.value` (and `statusCodes.value`,
+  `binary.value`) additionally hold the bare built-in value (`42`,
+  `<Int32>42</Int32>`). A document the stack cannot produce is `null` and its
+  entry in `statusCodes` says why.
+- `success` / `serviceResult` / exit code follow the **Variant** document
+  (exit 4 when it could not be encoded).
+
+`codec decode`:
+
+```json
+"results": [
+  {
+    "action":      "decode",
+    "format":      "json",
+    "jsonMode":    "compact",
+    "type":        "Variant",
+    "statusCode":  { "name": "Good", "code": 0, "severity": "Good" },
+    "dataType":    "String",
+    "builtInType": 12,
+    "valueRank":   -1,
+    "value":       "hi",
+    "binary":      "DAIAAABoaQ==",
+    "reencoded":   "{\"UaType\":12,\"Value\":\"hi\"}"
+  }
+]
+```
+
+`type` echoes `--type`. `binary` is the Binary encoding of the decoded value
+**as that type** (a bare `Int32` is 4 bytes, a `Variant` includes its encoding
+byte). `reencoded` is the stack's own encoding of what it decoded. `--type
+DataValue` adds the canonical `dataValue` object. On a decode failure only
+`action`, `format`, `[jsonMode]`, `type` and `statusCode` are present, `success`
+is `false`, `serviceResult` is the decoder's status (`BadDecodingError`, …) and
+the exit code is 4.
+
+Short form `codec --endpoint <url> --node <id> [--node …]` — one item per node:
+
+```json
+"results": [
+  {
+    "nodeId":          "ns=2;s=Scalar.Int32",
+    "statusCode":      { "name": "Good", "code": 0, "severity": "Good" },
+    "dataType":        "Int32",
+    "builtInType":     6,
+    "valueRank":       -1,
+    "value":           -123456789,
+    "json":            "{\"UaType\":6,\"Value\":-123456789}",
+    "xml":             "<Variant><Value><Int32>-123456789</Int32></Value></Variant>",
+    "dataValueJson":   "{\"UaType\":6,\"Value\":-123456789,\"SourceTimestamp\":\"2026-10-11T14:53:24.774898Z\"}",
+    "dataValueXml":    null,
+    "binary":          "BusypPg=",
+    "dataValueBinary": "DQbrMqT4dMdXRJBZ3QGWASSMkVndAQ=="
+  }
+]
+```
+
+`json` / `xml` are the Variant documents, `dataValueJson` / `dataValueXml` the
+DataValue documents (`null` when the stack cannot produce one), `binary` /
+`dataValueBinary` the Binary encodings. A node whose read status is Bad only has
+`nodeId`, `statusCode` and `json` / `xml` set to `null`. `success` when every node was read and JSON-encoded.
+
+**Stack limits (reported, not worked around):**
+
+| | open62541 v1.5.9 | Eclipse Milo 1.1.8 |
+|---|---|---|
+| JSON flavour | 1.05, one mode (`compact`); `useReversible` has no effect | 1.05, `compact` and `verbose` (`verbose` adds `Status.Symbol`) |
+| JSON DataValue | Variant members flattened: `{"UaType":6,"Value":7,…}` | Variant nested: `{"Value":{"UaType":6,"Value":7},…}`; does not decode the flattened form |
+| JSON NodeId / QualifiedName, ns ≠ 0 | namespace index (`"ns=2;s=x"`, `"2:Name"`) | namespace URI (`"nsu=…;s=x"`); `Bad_EncodingError` without `--namespace-uri` (a bare NodeId is emitted as the malformed `"s=ns=2;s=x"`) |
+| JSON StatusCode | `{"Code":n,"Symbol":"…"}` | `{"Code":n}` (`Symbol` only in `verbose`) |
+| JSON ExtensionObject | known types structurally (`{"UaTypeId":…,<fields>}`), cannot decode that in-place form back; unknown types as `UaEncoding`/`UaBody` | always `UaTypeId` / `UaEncoding` / `UaBody` |
+| XML element names | no namespace (`<Variant><Value><Int32>`) | `uax:` prefix with `xmlns:uax` / `xmlns:xsi` on the root |
+| XML encode | no DataValue, DiagnosticInfo, matrices, structures (`BadNotImplemented`) | all built-in types, matrices as `<Matrix>` |
+| XML decode | no DataValue, DiagnosticInfo, XmlElement (`BadNotImplemented`) | all built-in types |
+| XML Guid | `<Guid><String>…</String></Guid>` | `<Guid>…</Guid>` |
+| Status names | `BadDecodingError` | `Bad_DecodingError` (Milo's symbol table; compare `code`) |
+
 ---
 
 ## 5. Exit codes
@@ -722,6 +1024,15 @@ Output always uses the resolved numeric namespace index form.
 | StatusCode | `{"name":"Good","code":0,"severity":"Good"}` | |
 | array | JSON array | |
 | `null` / empty | `null` | |
+| ExpandedNodeId | string `[svr=<n>;][nsu=<uri>;\|ns=<n>;]<i\|s\|g\|b>=<id>` | `"svr=2;nsu=urn:x;s=Foo"`, `"ns=4;i=1234"` |
+| ExtensionObject | `{"typeId":"i=886","encoding":"binary","body":"<Base64>"}` | `encoding` is `binary` or `xml`; open62541 adds `"dataTypeName"` for types it decoded. `null` when empty |
+| Variant (inside an array) | `{"dataType":"Int32","builtInType":6,"value":1}` | |
+| DataValue | `{"dataType":…,"builtInType":…,["arrayDimensions":…,]"value":…,"statusCode":{…},"sourceTimestamp":…,"sourcePicoseconds":n,"serverTimestamp":…,"serverPicoseconds":n}` | only the members that are present; Milo omits a Good `statusCode` |
+| DiagnosticInfo | `{"symbolicId":n,"namespaceUri":n,"localizedText":n,"locale":n,"additionalInfo":"…","innerStatusCode":{…},"innerDiagnosticInfo":{…}}` | only the members that are present |
+
+The last five rows are produced by `codec` (and, in the open62541 adapter, by
+every command that prints a Variant of such a type; before v0.7.0 these were
+`null` with `builtInType: 0`). `builtInType` for them is 18, 22, 24, 23 and 25.
 
 **Float/Double special values** — NaN and ±Infinity are not valid JSON numbers.
 Emit `null`. Consumers must treat `null` as a non-finite value in a float context.
@@ -764,6 +1075,9 @@ When a non-None policy is requested, the client must select the endpoint that ma
 both the requested policy URI and mode. If no matching endpoint exists, exit 3.
 
 No arbitrary fallback to the first available endpoint.
+
+With `--reverse-listen` the endpoint list is read on the reverse connection
+itself; the same matching rules apply.
 
 ---
 
@@ -808,6 +1122,28 @@ supplied. The server must exit with code 6.
 | `--pki-dir <path>` | PKI directory for certificate stores | `/run/opcua-interop/pki` |
 | `--certificate <path>` | Server application certificate (PEM or DER file) | — |
 | `--private-key <path>` | Server private key (PEM or DER file) | — |
+| `--ecc-dir <dir>` | open62541: directory with ECC application certificates `ecc-<curve>/cert.crt` + `cert.key` (an identity directory of the test PKI). Each ECC `securityProfile` of the fixture whose certificate exists gets an endpoint. Milo: accepted and ignored with a warning | — (no ECC endpoints) |
+| `--reverse-connect <url>` | open62541: dial `opc.tcp://<client-host>:<port>` and send ReverseHello; repeatable. Retried until the client is there and again after every disconnect. Milo: refused (exit 2) | — |
+| `--reverse-connect-interval-ms <n>` | Retry interval of `--reverse-connect` | 1000 |
+| `--lds` | open62541: act as Local Discovery Server — ApplicationType `DiscoveryServer`, RegisterServer / RegisterServer2 accepted, FindServers lists registered servers, mDNS on, FindServersOnNetwork served. Milo: refused (exit 2) | off |
+| `--lds-cleanup-timeout <s>` | Seconds after which a registration that was not renewed is dropped (> 10) | 3600 |
+| `--mdns-name <name>` | open62541: announce the server via mDNS under `<name>` (also the `MdnsServerName` sent in RegisterServer2). Milo: refused (exit 2) | off (`--lds`: `opcua-interop-lds`) |
+| `--mdns-capability <cap>` | mDNS / RegisterServer2 server capability (repeatable) | `NA` (`--lds`: `LDS`) |
+| `--register-with <lds-url>` | Register with an LDS: RegisterServer2, falling back to RegisterServer; repeated periodically; unregistered (`IsOnline=false`) on SIGTERM | — |
+| `--register-interval-ms <n>` | Re-registration period | 30000 |
+
+Notes on the discovery flags:
+
+- The registered `DiscoveryUrls` (and the open62541 server's own FindServers
+  entry and ReverseHello `EndpointUrl`) are the advertised endpoint URL
+  (`opc.tcp://<advertised-host>:<advertised-port><endpoint-path>`).
+- mDNS records carry the container **hostname** (`opc.tcp://<hostname>:4840`,
+  server name `<mdns-name>-<hostname>`); a server registered through
+  RegisterServer2 appears in FindServersOnNetwork with its registered discovery
+  URL. mDNS needs multicast between the containers (same Docker network).
+- A server that is not an LDS answers RegisterServer(2) with
+  `BadServiceUnsupported` and FindServersOnNetwork with `BadNotImplemented`
+  (open62541) / `Bad_ServiceUnsupported` (Milo).
 
 When `--certificate` and `--private-key` are supplied and the fixture contains at
 least one non-None `securityProfile`, the server registers those secure endpoints in
@@ -824,3 +1160,81 @@ The `--pki-dir` directory layout must follow the OPC UA PKI store convention:
 
 Clients presenting a certificate not signed by a CA in `trusted/certs` and not
 individually listed there are rejected with `BadCertificateUntrusted`.
+
+---
+
+## 12. Value literals (`--type` / `--value`)
+
+Used by `write`, `call --input <Type>:<literal>` and `codec encode`. `--type` is
+a built-in type name or `<Type>[]` for a one-dimensional array.
+
+| Type | Literal | Example |
+|------|---------|---------|
+| Boolean | `true` \| `false` \| `1` \| `0` | `true` |
+| SByte … UInt64 | decimal integer | `-123456789` |
+| Float, Double | decimal; `NaN`, `Infinity`, `-Infinity` | `12.5` |
+| String | the text | `hello` |
+| DateTime | RFC 3339 UTC, up to 7 fractional digits | `2024-01-01T12:34:56.1234567Z` |
+| Guid | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` | |
+| ByteString | Base64 | `b3BjdWE=` |
+| XmlElement | the XML text | `<a>b</a>` |
+| NodeId | `i=85`, `ns=1;s=x`, `ns=1;g=<guid>`, `ns=1;b=<base64>` (no `nsu=`) | `ns=2;s=Demo` |
+| ExpandedNodeId | `[svr=<n>;][nsu=<uri>;\|ns=<n>;]<i\|s\|g\|b>=<id>` | `svr=2;nsu=urn:x;s=Foo` |
+| StatusCode | decimal or `0x` hex uint32 | `0x80340000` |
+| QualifiedName | `<ns>:<name>` | `2:Name` |
+| LocalizedText | `<locale>:<text>` (`:<text>` for no locale) | `en:Hello` |
+| ExtensionObject | `<typeId NodeId>\|<Base64 binary body>` | `i=886\|AAAAAAAAAAAAAAAAAABZQA==` |
+| DataValue | `<Type>:<literal>` (value only) | `Int32:7` |
+| Variant | `<Type>:<literal>`; as a scalar it *is* the inner value | `String:x` |
+| DiagnosticInfo | `key=value;…` with `symbolicId`, `namespaceUri`, `localizedText`, `locale`, `additionalInfo`, `innerStatusCode` | `symbolicId=1;innerStatusCode=0x80010000` |
+
+Arrays: comma-separated (`1,2,3`) or a JSON array when elements contain commas
+(`["a,b","c"]`); an empty literal is an empty array. `Variant[]` elements are
+`<Type>:<literal>`. Matrices (`codec` only): `--type Int32[] --value 1,2,3,4,5,6
+--dimensions 2,3`.
+
+`write` and `call` keep their pre-v0.7.0 leniency (an unknown type or malformed
+literal is sent as an empty / String Variant and the server answers);
+`codec encode` rejects it with exit 2.
+
+---
+
+## 13. `print-capabilities`
+
+Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
+
+| Field | Meaning |
+|-------|---------|
+| `adapter.version` | `0.7.0` |
+| `clientOperations` | the `client` subcommands the image has |
+| `clientFeatures` | optional client-side features (strings below) |
+| `serverFeatures` | optional server-side features (strings below) |
+| `securityProfiles` | `{policy, mode}` pairs usable on both the client and the server side |
+| `codec` | `{formats, jsonVersion, jsonModes, xmlEncodeUnsupported, xmlDecodeUnsupported}` |
+
+| Feature string | In | open62541 | Milo | Meaning |
+|----------------|----|:---------:|:----:|---------|
+| `channel-lifetime` | client | ✓ | ✓ | `--channel-lifetime-ms` |
+| `deadband` | client | ✓ | ✓ | `subscribe --deadband-absolute/--deadband-percent/--trigger` |
+| `reverse-listen` | client | ✓ | — | `--reverse-listen` |
+| `ecc-security` | client, server | ✓ | — | ECC SecurityPolicies (`securityProfiles` lists them) |
+| `ecc-user-token` | client, server | ✓ | — | UserName token over an ECC endpoint (EccEncryptedSecret) |
+| `application-uri` | client | ✓ | — | `--application-uri`, ApplicationUri from the certificate |
+| `register-server2` | client | ✓ | ✓ | `register-server` can call RegisterServer2 |
+| `codec-json`, `codec-xml` | client | ✓ | ✓ | `codec` formats |
+| `codec-json-verbose` | client | — | ✓ | `codec --json-mode verbose` |
+| `deadband` | server | ✓ | ✓ | DataChangeFilter absolute deadband / trigger honoured |
+| `percent-deadband` | server | ✓ | ✓ | percent deadband on AnalogItems with EURange (`Analog.*`) |
+| `reverse-connect` | server | ✓ | — | `--reverse-connect` |
+| `lds` | server | ✓ | — | `--lds` |
+| `mdns` | server | ✓ | — | `--mdns-name`, FindServersOnNetwork |
+| `register-with` | server | ✓ | ✓ | `--register-with` |
+| `node-management` | server | ✓ | — | AddNodes / DeleteNodes served |
+
+Eclipse Milo 1.1.8 has no ReverseHello in its transports
+(`opc-ua-stack/stack-core/.../channel/messages/MessageType.java` knows only
+Hello / Acknowledge / Error), no ECC `SecurityPolicy`
+(`opc-ua-stack/stack-core/.../security/SecurityPolicy.java` ends at
+`Aes256_Sha256_RsaPss`) and its server answers RegisterServer, RegisterServer2
+and FindServersOnNetwork with `Bad_ServiceUnsupported`
+(`opc-ua-sdk/sdk-server/.../servicesets/impl/DefaultDiscoveryServiceSet.java`).

@@ -24,7 +24,9 @@ import org.eclipse.milo.opcua.stack.core.types.builtin.DateTime;
 import org.eclipse.milo.opcua.stack.core.types.builtin.LocalizedText;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.MessageSecurityMode;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.UserTokenType;
+import org.eclipse.milo.opcua.stack.core.types.enumerated.ApplicationType;
 import org.eclipse.milo.opcua.stack.core.types.structured.BuildInfo;
+import org.eclipse.milo.opcua.stack.core.types.structured.RegisteredServer;
 import org.eclipse.milo.opcua.stack.core.types.structured.UserTokenPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,9 +77,39 @@ public class ServerCommand {
         String certFile       = null;
         String keyFile        = null;
         boolean readyFileExplicit = false;
+        String registerWith   = null;
+        long   registerIntervalMs = 30_000;
+
+        // Features the Milo 1.1.8 stack cannot provide are refused, not ignored.
+        for (String a : args) {
+            String why = null;
+            switch (a) {
+                case "--reverse-connect":
+                case "--reverse-connect-interval-ms":
+                    why = "reverse connect (ReverseHello) is not implemented by Eclipse Milo 1.1.8"; break;
+                case "--lds":
+                case "--lds-cleanup-timeout":
+                    why = "Milo's SDK answers RegisterServer / RegisterServer2 / FindServersOnNetwork"
+                        + " with Bad_ServiceUnsupported"; break;
+                case "--mdns-name":
+                case "--mdns-capability":
+                    why = "Eclipse Milo 1.1.8 has no mDNS / LDS-ME support"; break;
+                default: break;
+            }
+            if (why != null) {
+                System.err.println("[milo] error: " + a + " is not supported: " + why);
+                System.exit(2);
+            }
+        }
 
         for (int i = 0; i < args.length - 1; i++) {
             switch (args[i]) {
+                case "--register-with":    registerWith = args[i + 1]; break;
+                case "--register-interval-ms":
+                    registerIntervalMs = Math.max(500, Long.parseLong(args[i + 1])); break;
+                case "--ecc-dir":
+                    System.err.println("[milo] warn: --ecc-dir ignored: Eclipse Milo 1.1.8 has no ECC"
+                        + " security policies"); break;
                 case "--fixture":          fixturePath    = args[i + 1]; break;
                 case "--bind-address":     bindAddress    = args[i + 1]; break;
                 case "--bind-port":        bindPort       = Integer.parseInt(args[i + 1]); break;
@@ -229,13 +261,15 @@ public class ServerCommand {
                 try {
                     SecurityPolicy        policy = toMiloSecurityPolicy(sp.securityPolicy);
                     MessageSecurityMode   mode   = toMiloSecurityMode(sp.securityMode);
+                    if (policy == SecurityPolicy.None || mode == MessageSecurityMode.None) continue;
                     endpointSet.add(secBuilder
                             .setSecurityPolicy(policy)
                             .setSecurityMode(mode)
                             .build());
                     LOG.info("Registered secure endpoint: policy={} mode={}", sp.securityPolicy, sp.securityMode);
                 } catch (IllegalArgumentException e) {
-                    LOG.warn("Skipping unknown security profile {}/{}: {}", sp.securityPolicy, sp.securityMode, e.getMessage());
+                    // e.g. the ECC_* profiles of the shared fixture: Milo has no ECC policies.
+                    LOG.info("Skipping security profile {}/{}: {}", sp.securityPolicy, sp.securityMode, e.getMessage());
                 }
             }
         }
@@ -266,7 +300,7 @@ public class ServerCommand {
                 fixture.server.productUri,
                 "OTFabric",
                 "opcua-interop-milo",
-                "0.6.0",
+                "0.7.0",
                 "1.1.8",
                 DateTime.now());
 
@@ -303,10 +337,50 @@ public class ServerCommand {
             System.exit(6);
         }
 
+        /* ── Registration with a Local Discovery Server ─────────────────── */
+        final String lds = registerWith;
+        final RegisteredServer registration = lds == null ? null : new RegisteredServer(
+                applicationUri, fixture.server.productUri,
+                new LocalizedText[] {LocalizedText.english(fixture.server.applicationName)},
+                ApplicationType.Server, null, new String[] {advertisedEndpoint}, null, true);
+        final java.util.concurrent.ScheduledExecutorService registrar = lds == null ? null
+                : java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                    Thread t = new Thread(r, "interop-register");
+                    t.setDaemon(true);
+                    return t;
+                });
+        if (lds != null) {
+            final String mdnsName = fixture.server.applicationName;
+            registrar.scheduleWithFixedDelay(() -> {
+                try (DiscoveryOps.Channel ch = DiscoveryOps.open(lds, 5000)) {
+                    DiscoveryOps.RegisterResult res = DiscoveryOps.register(
+                            ch, registration, mdnsName, new String[] {"NA"}, "auto", 5000);
+                    LOG.info("Registered with {} via {}: {}", lds, res.service, res.status);
+                } catch (Exception e) {
+                    LOG.warn("Registration with {} failed: {}", lds, e.toString());
+                }
+            }, 0, registerIntervalMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            LOG.info("Registering with {} every {} ms", lds, registerIntervalMs);
+        }
+
         final String finalReadyFile = readyFile;
         CountDownLatch latch = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOG.info("Shutdown signal received");
+            if (lds != null) {
+                registrar.shutdownNow();
+                RegisteredServer offline = new RegisteredServer(
+                        registration.getServerUri(), registration.getProductUri(),
+                        registration.getServerNames(), registration.getServerType(), null,
+                        registration.getDiscoveryUrls(), null, false);
+                try (DiscoveryOps.Channel ch = DiscoveryOps.open(lds, 2000)) {
+                    DiscoveryOps.RegisterResult res = DiscoveryOps.register(
+                            ch, offline, fixture.server.applicationName, new String[] {"NA"}, "auto", 2000);
+                    LOG.info("Unregistered from {} via {}: {}", lds, res.service, res.status);
+                } catch (Exception e) {
+                    LOG.warn("Unregistration from {} failed: {}", lds, e.toString());
+                }
+            }
             try {
                 server.shutdown().get();
             } catch (Exception e) {
@@ -460,7 +534,9 @@ public class ServerCommand {
             case "Basic256Sha256":     return SecurityPolicy.Basic256Sha256;
             case "Aes128_Sha256_RsaOaep": return SecurityPolicy.Aes128_Sha256_RsaOaep;
             case "Aes256_Sha256_RsaPss":  return SecurityPolicy.Aes256_Sha256_RsaPss;
-            default:                   return SecurityPolicy.None;
+            case "None":               return SecurityPolicy.None;
+            default:
+                throw new IllegalArgumentException("not implemented by Eclipse Milo 1.1.8");
         }
     }
 

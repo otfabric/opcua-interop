@@ -271,6 +271,23 @@ Fixture *fixture_load(const char *path, char *errBuf, size_t errLen) {
                  * We detach the item so it survives independent of root. */
                 cJSON *iv = cJSON_DetachItemFromObjectCaseSensitive(el, "initialValue");
                 nd->initialValue = iv; /* may be NULL */
+
+                cJSON *eu = cJSON_GetObjectItemCaseSensitive(el, "euRange");
+                if (eu && cJSON_IsObject(eu)) {
+                    cJSON *lo = cJSON_GetObjectItemCaseSensitive(eu, "low");
+                    cJSON *hi = cJSON_GetObjectItemCaseSensitive(eu, "high");
+                    if (!cJSON_IsNumber(lo) || !cJSON_IsNumber(hi)) {
+                        snprintf(errBuf, errLen,
+                                 "euRange of node '%s' needs numeric low and high",
+                                 nd->nodeId ? nd->nodeId : "(unknown)");
+                        cJSON_Delete(root);
+                        fixture_free(f);
+                        return NULL;
+                    }
+                    nd->hasEuRange  = 1;
+                    nd->euRangeLow  = lo->valuedouble;
+                    nd->euRangeHigh = hi->valuedouble;
+                }
             }
 
             if (nd->nodeClass == NODE_METHOD) {

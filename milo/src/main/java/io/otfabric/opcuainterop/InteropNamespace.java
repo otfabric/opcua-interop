@@ -91,6 +91,9 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
                 getNodeManager().addNode(node);
                 nodeByFixtureId.put(nd.nodeId, node);
                 connectToParent(node, nd);
+                if (nd.euRange != null && node instanceof UaVariableNode) {
+                    addEuRangeProperty((UaVariableNode) node, nd.euRange);
+                }
             } catch (Exception e) {
                 LOG.warn("Failed to create node {}: {}", nd.nodeId, e.getMessage(), e);
             }
@@ -151,6 +154,33 @@ public class InteropNamespace extends ManagedNamespaceWithLifecycle {
             node.setHistorizing(true);
         }
         return node;
+    }
+
+    /**
+     * EURange property (0:EURange, HasProperty). Together with an AnalogItemType
+     * type definition it is what Milo's SubscriptionManager looks up to accept
+     * percent-deadband DataChangeFilters.
+     */
+    private void addEuRangeProperty(UaVariableNode owner, FixtureModel.EuRangeDef eu) {
+        Set<AccessLevel> ro = EnumSet.of(AccessLevel.CurrentRead);
+        NodeId propId = new NodeId(getNamespaceIndex(), owner.getNodeId().getIdentifier() + ".EURange");
+        UaVariableNode prop = UaVariableNode.builder(getNodeContext())
+                .setNodeId(propId)
+                .setBrowseName(new QualifiedName(0, "EURange"))
+                .setDisplayName(LocalizedText.english("EURange"))
+                .setDataType(Identifiers.Range)
+                .setTypeDefinition(Identifiers.PropertyType)
+                .setValueRank(-1)
+                .setAccessLevel(ro)
+                .setUserAccessLevel(ro)
+                .build();
+        prop.setValue(new DataValue(Variant.ofStruct(
+                new org.eclipse.milo.opcua.stack.core.types.structured.Range(eu.low, eu.high))));
+        getNodeManager().addNode(prop);
+        owner.addReference(new Reference(
+                owner.getNodeId(), Identifiers.HasProperty, prop.getNodeId().expanded(), true));
+        prop.addReference(new Reference(
+                prop.getNodeId(), Identifiers.HasProperty, owner.getNodeId().expanded(), false));
     }
 
     private UaMethodNode buildMethodNode(FixtureModel.NodeDef nd,

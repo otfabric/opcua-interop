@@ -11,20 +11,21 @@ set(CMAKE_C_EXTENSIONS OFF)
 if(NOT UA_AMALGAM_INCLUDE)
     message(FATAL_ERROR "UA_AMALGAM_INCLUDE must point to the directory containing open62541.h")
 endif()
-if(NOT UA_AMALGAM_SOURCE)
-    message(FATAL_ERROR "UA_AMALGAM_SOURCE must point to open62541.c")
+# Either a prebuilt static library of the amalgamation (UA_AMALGAM_LIBRARY, see
+# amalgam/CMakeLists.txt; used by the Dockerfile so the slow compile is cached)
+# or the amalgamation source itself (UA_AMALGAM_SOURCE).
+if(NOT UA_AMALGAM_LIBRARY AND NOT UA_AMALGAM_SOURCE)
+    message(FATAL_ERROR "set UA_AMALGAM_LIBRARY (libopen62541.a) or UA_AMALGAM_SOURCE (open62541.c)")
 endif()
 
 # ---------------------------------------------------------------------------
-# mbedTLS (required when open62541 is built with UA_ENABLE_ENCRYPTION=MBEDTLS)
+# OpenSSL (required when open62541 is built with UA_ENABLE_ENCRYPTION=OPENSSL;
+# the OpenSSL backend is the one that ships the ECC SecurityPolicies)
 # ---------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CJSON REQUIRED libcjson)
 
-find_library(MBEDTLS_LIB    NAMES mbedtls    REQUIRED)
-find_library(MBEDX509_LIB   NAMES mbedx509   REQUIRED)
-find_library(MBEDCRYPTO_LIB NAMES mbedcrypto REQUIRED)
-find_path(MBEDTLS_INCLUDE_DIR NAMES mbedtls/ssl.h REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Adapter sources
@@ -34,9 +35,14 @@ set(ADAPTER_SRCS
     src/fixture.c
     src/server.c
     src/client.c
+    src/codec.c
+    src/discovery.c
+    src/values.c
     src/output.c
-    "${UA_AMALGAM_SOURCE}"
 )
+if(NOT UA_AMALGAM_LIBRARY)
+    list(APPEND ADAPTER_SRCS "${UA_AMALGAM_SOURCE}")
+endif()
 
 add_executable(opcua-interop-open62541 ${ADAPTER_SRCS})
 
@@ -44,14 +50,17 @@ target_include_directories(opcua-interop-open62541 PRIVATE
     "${UA_AMALGAM_INCLUDE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     ${CJSON_INCLUDE_DIRS}
-    "${MBEDTLS_INCLUDE_DIR}"
+    ${OPENSSL_INCLUDE_DIR}
 )
+
+if(UA_AMALGAM_LIBRARY)
+    target_link_libraries(opcua-interop-open62541 PRIVATE "${UA_AMALGAM_LIBRARY}")
+endif()
 
 target_link_libraries(opcua-interop-open62541 PRIVATE
     ${CJSON_LIBRARIES}
-    "${MBEDTLS_LIB}"
-    "${MBEDX509_LIB}"
-    "${MBEDCRYPTO_LIB}"
+    OpenSSL::SSL
+    OpenSSL::Crypto
     pthread
     m
 )

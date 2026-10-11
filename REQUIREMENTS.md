@@ -110,6 +110,40 @@ count at Phase 9 close: 212 tests, 0 skips (consumer suite has grown since).
 - Capabilities `adapter.version` = `0.6.0`; fifteen `clientOperations`
 - Releases are immutable: a change to the adapter surface gets a new tag
 
+### v0.7.0 — filters, reverse connect, ECC, discovery, data encodings
+
+Supports go-opcua v1.6.0. Features are provided where the stack implements them
+and declared per adapter in `print-capabilities` (`clientFeatures`,
+`serverFeatures`, `codec`, `securityProfiles`); an unsupported feature flag is
+refused, never ignored.
+
+- **DataChangeFilter** (both adapters): `subscribe --deadband-absolute`,
+  `--deadband-percent`, `--trigger`; result reports `monitoredItemStatusCode`,
+  `filter`, `filterResult`, revised sampling interval / queue size. Baseline
+  fixture gains the AnalogItems `Analog.Level` (ramp) and `Analog.Setpoint`
+  (writable) with `EURange` 0..100 (fixture node property `euRange`)
+- **Reverse connect** (open62541): server `--reverse-connect <url>`, client
+  `--reverse-listen <port>` (`--reverse-timeout-ms`, `--reverse-server-uri`)
+- **ECC security policies** (open62541, OpenSSL backend): `ECC_nistP256`,
+  `ECC_nistP384`, `ECC_brainpoolP256r1`, `ECC_brainpoolP384r1`, `ECC_curve25519`,
+  `ECC_curve448`, `ECC_nistP256_AesGcm`, `ECC_nistP256_ChaChaPoly`; server
+  `--ecc-dir`; test PKI gains `ecc-<curve>/` certificates per identity
+  (`certs/generate.sh --add-ecc`); fixture `securityProfiles` lists the ECC entries
+- **Discovery**: open62541 server `--lds` (RegisterServer/2, FindServers,
+  FindServersOnNetwork, mDNS), `--mdns-name`; both adapters `--register-with`;
+  client `find-servers-on-network` and `register-server` (both adapters)
+- **JSON / XML DataEncoding**: client `codec` (encode literals of all 25
+  built-in types, arrays and matrices or a node's value; decode a document;
+  Binary encoding as Base64 for bit-exact comparison) in both adapters
+- `subscription-lifecycle` `publishing-mode` / `monitoring-mode` request
+  SamplingInterval 0
+- Value literals (`write`, `call`, `codec`) for all built-in types
+- Smoke covers every new feature in each adapter↔adapter direction that both
+  ends support
+- Capabilities `adapter.version` = `0.7.0`; eighteen `clientOperations`
+- Backward compatible: existing commands, flags, result shapes and the RSA PKI
+  are unchanged
+
 ### Later (planned) — remaining type surface
 
 - Remaining structured types / enumerations / edge-case fixture expansion as needed
@@ -163,6 +197,9 @@ Each container image must expose client subcommands:
 - `history-read` — HistoryRead with `ReadRawModifiedDetails` (raw); continuation points; optional `--scenario continue`
 - `republish` — RepublishRequest for a subscription sequence number
 - `transfer-subscriptions` — TransferSubscriptions for one or more subscription ids
+- `register-nodes`, `node-management`
+- `find-servers-on-network`, `register-server` — discovery against an LDS
+- `codec` — JSON / XML DataEncoding of built-in values
 
 Client output rules:
 
@@ -239,7 +276,6 @@ Consumer repositories own:
 - Complex companion specifications
 - Global Discovery Server
 - Certificate enrollment
-- Reverse connect
 - Redundancy
 - Full OPC Foundation CTT coverage
 - NodeOPCUA or other third stacks
