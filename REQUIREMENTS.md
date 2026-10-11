@@ -96,7 +96,11 @@ count at Phase 9 close: 212 tests, 0 skips (consumer suite has grown since).
   (TranslateBrowsePathsToNodeIDs with `--starting-node`, `--path`, optional `--namespace`)
 - `event-subscribe --of-type` / `--min-severity`; `history-read --scenario continue`
 - Reference-server BaseEvent emission and gate-compliant `History.Temperature` raw samples
-- Capabilities `adapter.version` = `0.5.0`; thirteen `clientOperations`
+- Capabilities `adapter.version` = `0.5.0`; fifteen `clientOperations`
+- Upstream pins: open62541 `v1.5.9`, Eclipse Milo `1.1.8`
+- New `register-nodes` command: RegisterNodes → Read via alias → UnregisterNodes
+- New `node-management` command: AddNodes (Int32 Variable) → Read → DeleteNodes → Read
+- Global `--channel-lifetime-ms` client flag to force SecurityToken renewals mid-command
 - Fix-forward by republishing the `v0.5.0` tag / GHCR images when requirements change (no `v0.5.1` / RC tags)
 
 ### Later (planned) — remaining type surface

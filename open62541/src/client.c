@@ -9,6 +9,13 @@
 
 #include <open62541.h>
 
+/* Synchronous generic service call. Defined (non-static) in the amalgamation
+ * but not declared in open62541.h for the 1.5 series; declare it here so the
+ * call sites are not implicit declarations. */
+void __UA_Client_Service(UA_Client *client, const void *request,
+                         const UA_DataType *requestType, void *response,
+                         const UA_DataType *responseType);
+
 /* BadNamespaceUriInvalid (0x80530000) is defined in the OPC UA spec Part 4
  * but not exposed by every open62541 version. Define it locally if absent. */
 #ifndef UA_STATUSCODE_BADNAMESPACEURIINVALID
@@ -96,9 +103,10 @@ typedef struct {
     int          trustCount;
     const char  *username;      /* NULL = anonymous */
     const char  *password;      /* NULL = treat as empty string */
+    int          channelLifetimeMs; /* 0 = stack default; >0 requested SecureChannel lifetime */
 } ClientSecurity;
 
-static ClientSecurity g_sec = { "None", "None", NULL, NULL, NULL, 0, NULL, NULL };
+static ClientSecurity g_sec = { "None", "None", NULL, NULL, NULL, 0, NULL, NULL, 0 };
 
 static UA_MessageSecurityMode security_mode_enum(const char *s) {
     if (!s || strcmp(s, "None") == 0)        return UA_MESSAGESECURITYMODE_NONE;
@@ -522,6 +530,10 @@ static UA_Client *make_client(const char *url,
     if (request_ms > 0)
         cfg->timeout = (UA_UInt32)request_ms;
     cfg->connectivityCheckInterval = 0;
+    /* Short requested lifetimes force SecurityToken renewals during the
+     * command (the client renews at 75% of the revised lifetime). */
+    if (g_sec.channelLifetimeMs > 0)
+        cfg->secureChannelLifeTime = (UA_UInt32)g_sec.channelLifetimeMs;
 
     /* Set user identity token */
     if (g_sec.username) {
@@ -3387,6 +3399,261 @@ static int cmd_transfer_subscriptions(int argc, char **argv) {
 }
 
 /* -------------------------------------------------------------------------
+ * register-nodes subcommand
+ *
+ * RegisterNodes -> Read Value through each registered alias -> UnregisterNodes.
+ * ---------------------------------------------------------------------- */
+
+static void print_sc_obj(const char *key, UA_StatusCode sc) {
+    printf("\"%s\":{\"name\":\"%s\",\"code\":%" PRIu32 ",\"severity\":\"%s\"}",
+           key, output_status_code_name(sc), (uint32_t)sc, output_severity(sc));
+}
+
+static int cmd_register_nodes(int argc, char **argv) {
+    const char *endpoint = find_arg(argc, argv, "--endpoint");
+    int n = count_flag(argc, argv, "--node");
+    if (!endpoint || n == 0) {
+        output_begin("open62541", "register-nodes");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input", "usage: register-nodes --endpoint <url> --node <nodeId> [--node ...]");
+        output_end();
+        return 2;
+    }
+    if (n > MAX_NODES) n = MAX_NODES;
+    int req_ms = parse_int_flag(argc, argv, "--request-timeout", 5) * 1000;
+
+    const char *nodes[MAX_NODES];
+    int k = 0;
+    for (int i = 0; i < argc - 1 && k < n; i++)
+        if (strcmp(argv[i], "--node") == 0) nodes[k++] = argv[i + 1];
+
+    UA_NodeId ids[MAX_NODES];
+    int exit_code = 3;
+    UA_Client *client = resolve_node_ids(nodes, n, ids, "register-nodes",
+                                         endpoint, req_ms, &exit_code);
+    if (!client) return exit_code;
+
+    UA_RegisterNodesRequest rreq;
+    UA_RegisterNodesRequest_init(&rreq);
+    rreq.nodesToRegister = ids;
+    rreq.nodesToRegisterSize = (size_t)n;
+    UA_RegisterNodesResponse rresp;
+    UA_RegisterNodesResponse_init(&rresp);
+    __UA_Client_Service(client, &rreq, &UA_TYPES[UA_TYPES_REGISTERNODESREQUEST],
+                        &rresp, &UA_TYPES[UA_TYPES_REGISTERNODESRESPONSE]);
+    UA_StatusCode reg_sc = rresp.responseHeader.serviceResult;
+    if (UA_StatusCode_isGood(reg_sc) && rresp.registeredNodeIdsSize != (size_t)n)
+        reg_sc = UA_STATUSCODE_BADUNEXPECTEDERROR;
+
+    if (!UA_StatusCode_isGood(reg_sc)) {
+        output_begin("open62541", "register-nodes");
+        output_success(0);
+        output_service_result(reg_sc);
+        output_error("service", "RegisterNodes failed");
+        output_end();
+        UA_RegisterNodesResponse_clear(&rresp);
+        for (int i = 0; i < n; i++) UA_NodeId_clear(&ids[i]);
+        UA_Client_disconnect(client);
+        UA_Client_delete(client);
+        return reg_sc == UA_STATUSCODE_BADTIMEOUT ? 7 : 4;
+    }
+
+    /* Read through the registered aliases. */
+    UA_ReadRequest req;
+    UA_ReadRequest_init(&req);
+    req.timestampsToReturn = UA_TIMESTAMPSTORETURN_SOURCE;
+    req.nodesToRead = (UA_ReadValueId *)UA_Array_new((size_t)n, &UA_TYPES[UA_TYPES_READVALUEID]);
+    req.nodesToReadSize = (size_t)n;
+    for (int i = 0; i < n; i++) {
+        UA_ReadValueId_init(&req.nodesToRead[i]);
+        UA_NodeId_copy(&rresp.registeredNodeIds[i], &req.nodesToRead[i].nodeId);
+        req.nodesToRead[i].attributeId = UA_ATTRIBUTEID_VALUE;
+    }
+    UA_ReadResponse resp = UA_Client_Service_read(client, req);
+    UA_ReadRequest_clear(&req);
+    UA_StatusCode read_sc = resp.responseHeader.serviceResult;
+    if (UA_StatusCode_isGood(read_sc) && resp.resultsSize != (size_t)n)
+        read_sc = UA_STATUSCODE_BADUNEXPECTEDERROR;
+
+    UA_UnregisterNodesRequest ureq;
+    UA_UnregisterNodesRequest_init(&ureq);
+    ureq.nodesToUnregister = rresp.registeredNodeIds;
+    ureq.nodesToUnregisterSize = rresp.registeredNodeIdsSize;
+    UA_UnregisterNodesResponse uresp;
+    UA_UnregisterNodesResponse_init(&uresp);
+    __UA_Client_Service(client, &ureq, &UA_TYPES[UA_TYPES_UNREGISTERNODESREQUEST],
+                        &uresp, &UA_TYPES[UA_TYPES_UNREGISTERNODESRESPONSE]);
+    UA_StatusCode unreg_sc = uresp.responseHeader.serviceResult;
+    UA_UnregisterNodesResponse_clear(&uresp);
+
+    int ok = UA_StatusCode_isGood(read_sc) && UA_StatusCode_isGood(unreg_sc);
+    UA_StatusCode emit_sc = !UA_StatusCode_isGood(read_sc) ? read_sc : unreg_sc;
+    if (UA_StatusCode_isGood(read_sc)) {
+        for (int i = 0; i < n; i++) {
+            if (!UA_StatusCode_isGood(resp.results[i].status)) {
+                ok = 0;
+                if (UA_StatusCode_isGood(emit_sc)) emit_sc = resp.results[i].status;
+            }
+        }
+    }
+
+    output_begin("open62541", "register-nodes");
+    output_success(ok);
+    output_service_result(emit_sc);
+    output_open_results();
+    for (int i = 0; i < n; i++) {
+        if (i > 0) printf(",");
+        printf("{\"nodeId\":");
+        output_nodeid(&ids[i]);
+        printf(",\"registeredNodeId\":");
+        output_nodeid(&rresp.registeredNodeIds[i]);
+        printf(",");
+        if (UA_StatusCode_isGood(read_sc)) {
+            UA_DataValue *dv = &resp.results[i];
+            print_sc_obj("statusCode", dv->status);
+            if (dv->hasValue && dv->value.type) {
+                printf(",\"dataType\":\"%s\",\"builtInType\":%d",
+                       type_name(dv->value.type), ua_type_to_builtin_id(dv->value.type));
+                output_ua_variant_field("value", &dv->value);
+            }
+        } else {
+            print_sc_obj("statusCode", read_sc);
+        }
+        printf(",");
+        print_sc_obj("unregisterStatusCode", unreg_sc);
+        printf("}");
+    }
+    output_close_results();
+    output_null_error();
+    output_end();
+
+    UA_ReadResponse_clear(&resp);
+    UA_RegisterNodesResponse_clear(&rresp);
+    for (int i = 0; i < n; i++) UA_NodeId_clear(&ids[i]);
+    UA_Client_disconnect(client);
+    UA_Client_delete(client);
+    if (emit_sc == UA_STATUSCODE_BADTIMEOUT) return 7;
+    return ok ? 0 : 4;
+}
+
+/* -------------------------------------------------------------------------
+ * node-management subcommand
+ *
+ * AddNodes (Int32 Variable under --parent) -> Read -> DeleteNodes -> Read.
+ * ---------------------------------------------------------------------- */
+
+static int cmd_node_management(int argc, char **argv) {
+    const char *endpoint = find_arg(argc, argv, "--endpoint");
+    const char *parent   = find_arg(argc, argv, "--parent");
+    const char *node     = find_arg(argc, argv, "--node");
+    const char *bname    = find_arg(argc, argv, "--browse-name");
+    const char *valStr   = find_arg(argc, argv, "--value");
+    if (!endpoint || !parent || !node) {
+        output_begin("open62541", "node-management");
+        output_success(0);
+        output_service_result(UA_STATUSCODE_BADINVALIDARGUMENT);
+        output_error("input",
+            "usage: node-management --endpoint <url> --parent <nodeId> --node <newNodeId>"
+            " [--browse-name <name>] [--value <int32>]");
+        output_end();
+        return 2;
+    }
+    if (!bname) bname = "InteropAdded";
+    UA_Int32 value = valStr ? (UA_Int32)atoi(valStr) : 42;
+    int req_ms = parse_int_flag(argc, argv, "--request-timeout", 5) * 1000;
+
+    const char *nodes[2] = { parent, node };
+    UA_NodeId ids[2];
+    int exit_code = 3;
+    UA_Client *client = resolve_node_ids(nodes, 2, ids, "node-management",
+                                         endpoint, req_ms, &exit_code);
+    if (!client) return exit_code;
+
+    UA_VariableAttributes attr = UA_VariableAttributes_default;
+    attr.displayName = UA_LOCALIZEDTEXT_ALLOC("en", bname);
+    attr.dataType = UA_TYPES[UA_TYPES_INT32].typeId;
+    attr.valueRank = UA_VALUERANK_SCALAR;
+    attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    attr.userAccessLevel = attr.accessLevel;
+    UA_Variant_setScalarCopy(&attr.value, &value, &UA_TYPES[UA_TYPES_INT32]);
+
+    UA_NodeId added = UA_NODEID_NULL;
+    UA_StatusCode add_sc = UA_Client_addVariableNode(
+        client, ids[1], ids[0],
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME_ALLOC(ids[1].namespaceIndex, bname),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
+        attr, &added);
+    UA_VariableAttributes_clear(&attr);
+
+    UA_StatusCode read_sc = UA_STATUSCODE_BADNOTHINGTODO;
+    UA_StatusCode del_sc  = UA_STATUSCODE_BADNOTHINGTODO;
+    UA_StatusCode read2_sc = UA_STATUSCODE_BADNOTHINGTODO;
+    UA_Variant readVal; UA_Variant_init(&readVal);
+    int valueMatches = 0;
+
+    if (UA_StatusCode_isGood(add_sc)) {
+        read_sc = UA_Client_readValueAttribute(client, added, &readVal);
+        if (UA_StatusCode_isGood(read_sc) &&
+            UA_Variant_hasScalarType(&readVal, &UA_TYPES[UA_TYPES_INT32]))
+            valueMatches = (*(UA_Int32 *)readVal.data == value);
+
+        del_sc = UA_Client_deleteNode(client, added, UA_TRUE);
+
+        UA_Variant gone; UA_Variant_init(&gone);
+        read2_sc = UA_Client_readValueAttribute(client, added, &gone);
+        UA_Variant_clear(&gone);
+    }
+
+    int ok = UA_StatusCode_isGood(add_sc) && UA_StatusCode_isGood(read_sc) &&
+             valueMatches && UA_StatusCode_isGood(del_sc) && UA_StatusCode_isBad(read2_sc);
+    UA_StatusCode emit_sc = UA_STATUSCODE_GOOD;
+    if (!UA_StatusCode_isGood(add_sc)) emit_sc = add_sc;
+    else if (!UA_StatusCode_isGood(read_sc)) emit_sc = read_sc;
+    else if (!UA_StatusCode_isGood(del_sc)) emit_sc = del_sc;
+
+    output_begin("open62541", "node-management");
+    output_success(ok);
+    output_service_result(emit_sc);
+    output_open_results();
+    printf("{\"parentNodeId\":");
+    output_nodeid(&ids[0]);
+    printf(",\"requestedNodeId\":");
+    output_nodeid(&ids[1]);
+    printf(",");
+    print_sc_obj("addStatusCode", add_sc);
+    if (UA_StatusCode_isGood(add_sc)) {
+        printf(",\"addedNodeId\":");
+        output_nodeid(&added);
+        printf(",");
+        print_sc_obj("readStatusCode", read_sc);
+        if (UA_StatusCode_isGood(read_sc) && readVal.type) {
+            printf(",\"dataType\":\"%s\",\"builtInType\":%d",
+                   type_name(readVal.type), ua_type_to_builtin_id(readVal.type));
+            output_ua_variant_field("value", &readVal);
+        }
+        printf(",");
+        print_sc_obj("deleteStatusCode", del_sc);
+        printf(",");
+        print_sc_obj("readAfterDeleteStatusCode", read2_sc);
+    }
+    printf("}");
+    output_close_results();
+    output_null_error();
+    output_end();
+
+    UA_Variant_clear(&readVal);
+    UA_NodeId_clear(&added);
+    UA_NodeId_clear(&ids[0]);
+    UA_NodeId_clear(&ids[1]);
+    UA_Client_disconnect(client);
+    UA_Client_delete(client);
+    if (emit_sc == UA_STATUSCODE_BADTIMEOUT) return 7;
+    return ok ? 0 : 4;
+}
+
+/* -------------------------------------------------------------------------
  * Dispatch
  * ---------------------------------------------------------------------- */
 
@@ -3395,7 +3662,7 @@ int client_run(int argc, char **argv) {
         fprintf(stderr,
             "usage: client <endpoints|find-servers|read|write|browse|translate|"
             "call|subscribe|subscription-lifecycle|event-subscribe|history-read|"
-            "republish|transfer-subscriptions> ...\n");
+            "republish|transfer-subscriptions|register-nodes|node-management> ...\n");
         return 2;
     }
 
@@ -3415,6 +3682,8 @@ int client_run(int argc, char **argv) {
             g_sec.username = v;
         if ((v = find_arg(argc, argv, "--password")) != NULL)
             g_sec.password = v;
+        if ((v = find_arg(argc, argv, "--channel-lifetime-ms")) != NULL)
+            g_sec.channelLifetimeMs = atoi(v);
 
         /* Collect all --trust-list values */
         int tc = count_flag(argc, argv, "--trust-list");
@@ -3450,6 +3719,8 @@ int client_run(int argc, char **argv) {
     if (strcmp(sub, "history-read")           == 0) return cmd_history_read(argc - 1, argv + 1);
     if (strcmp(sub, "republish")              == 0) return cmd_republish(argc - 1, argv + 1);
     if (strcmp(sub, "transfer-subscriptions") == 0) return cmd_transfer_subscriptions(argc - 1, argv + 1);
+    if (strcmp(sub, "register-nodes")         == 0) return cmd_register_nodes(argc - 1, argv + 1);
+    if (strcmp(sub, "node-management")        == 0) return cmd_node_management(argc - 1, argv + 1);
     fprintf(stderr, "unknown client subcommand: %s\n", sub);
     return 2;
 }

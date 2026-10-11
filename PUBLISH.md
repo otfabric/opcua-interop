@@ -16,6 +16,9 @@ Do not introduce `v0.5.1` or RC tags.
 - Server: gate-compliant `History.Temperature` fixed raw samples + HistoryRead
 - Milo `serverServices` includes `HistoryRead`
 - Capabilities `adapter.version` = `0.5.0`
+- Upstream pins: open62541 `v1.5.9`, Eclipse Milo `1.1.8`
+- Client: `register-nodes`, `node-management`
+- Client: global `--channel-lifetime-ms` (SecureChannel renewal)
 
 ## Fix-forward republication
 

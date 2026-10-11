@@ -142,7 +142,7 @@ The fixture's `users` array controls which username/password credentials are acc
 
 ### Client commands
 
-Thirteen client operations (see `print-capabilities` → `clientOperations` and
+Fifteen client operations (see `print-capabilities` → `clientOperations` and
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
 
 ```sh
@@ -164,6 +164,17 @@ client history-read --endpoint ... --node '...' --start <rfc3339> --end <rfc3339
 client republish --endpoint ... --subscription-id <n> --sequence-number <n>
 client transfer-subscriptions --endpoint ... --subscription-id <n> \
                  [--send-initial-values false]
+client register-nodes --endpoint ... --node '...' [--node '...']
+client node-management --endpoint ... --parent '...' --node '...' \
+                 [--browse-name Name] [--value 42]
+```
+
+Every client command also accepts `--channel-lifetime-ms <n>` to request a short
+SecureChannel lifetime and force SecurityToken renewals mid-command:
+
+```sh
+client subscribe --endpoint ... --node '...' --notifications 24 --timeout-ms 40000 \
+                 --channel-lifetime-ms 6000
 ```
 
 `subscribe` JSON includes `subscriptionId` and revised CreateSubscription fields
@@ -265,8 +276,8 @@ Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`, `v0.5
 
 | Adapter | Language | Stack | Why included |
 |---|---|---|---|
-| open62541 | C | open62541 v1.5.5 | Native/embedded diversity, OPC UA Binary, certified example-server history |
-| Eclipse Milo | Java | Eclipse Milo v1.1.5 | JVM/enterprise diversity, independent serialization and security code paths |
+| open62541 | C | open62541 v1.5.9 | Native/embedded diversity, OPC UA Binary, certified example-server history |
+| Eclipse Milo | Java | Eclipse Milo v1.1.8 | JVM/enterprise diversity, independent serialization and security code paths |
 
 ## Security
 

@@ -20,7 +20,8 @@
       "enum": [
         "endpoints", "find-servers", "read", "write", "browse", "translate",
         "call", "subscribe", "subscription-lifecycle", "event-subscribe",
-        "history-read", "republish", "transfer-subscriptions"
+        "history-read", "republish", "transfer-subscriptions",
+        "register-nodes", "node-management"
       ]
     },
     "success": {
@@ -44,7 +45,9 @@
           { "$ref": "#/$defs/eventSubscribeResult" },
           { "$ref": "#/$defs/historyReadResult" },
           { "$ref": "#/$defs/republishResult" },
-          { "$ref": "#/$defs/transferSubscriptionsResult" }
+          { "$ref": "#/$defs/transferSubscriptionsResult" },
+          { "$ref": "#/$defs/registerNodesResult" },
+          { "$ref": "#/$defs/nodeManagementResult" }
         ]
       }
     },
@@ -335,6 +338,37 @@
           "type": "array",
           "items": { "type": "integer", "minimum": 0 }
         }
+      }
+    },
+    "registerNodesResult": {
+      "type": "object",
+      "required": ["nodeId", "registeredNodeId", "statusCode", "unregisterStatusCode"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId":               { "type": "string" },
+        "registeredNodeId":     { "type": "string" },
+        "statusCode":           { "$ref": "#/$defs/statusCode" },
+        "dataType":             { "type": "string" },
+        "builtInType":          { "type": "integer", "minimum": 1, "maximum": 25 },
+        "value":                {},
+        "unregisterStatusCode": { "$ref": "#/$defs/statusCode" }
+      }
+    },
+    "nodeManagementResult": {
+      "type": "object",
+      "required": ["parentNodeId", "requestedNodeId", "addStatusCode"],
+      "additionalProperties": false,
+      "properties": {
+        "parentNodeId":              { "type": "string" },
+        "requestedNodeId":           { "type": "string" },
+        "addStatusCode":             { "$ref": "#/$defs/statusCode" },
+        "addedNodeId":               { "type": "string" },
+        "readStatusCode":            { "$ref": "#/$defs/statusCode" },
+        "dataType":                  { "type": "string" },
+        "builtInType":               { "type": "integer", "minimum": 1, "maximum": 25 },
+        "value":                     {},
+        "deleteStatusCode":          { "$ref": "#/$defs/statusCode" },
+        "readAfterDeleteStatusCode": { "$ref": "#/$defs/statusCode" }
       }
     }
   }

@@ -267,7 +267,7 @@ public class ServerCommand {
                 "OTFabric",
                 "opcua-interop-milo",
                 "0.4.0",
-                "1.1.5",
+                "1.1.8",
                 DateTime.now());
 
         var serverConfigBuilder = OpcUaServerConfig.builder()

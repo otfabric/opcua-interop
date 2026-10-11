@@ -243,10 +243,14 @@ Adds four new client commands to both adapters; `adapter.version` = `0.5.0`:
 3. **`republish`** — flags `--subscription-id`, `--sequence-number`.
 4. **`transfer-subscriptions`** — repeatable `--subscription-id`, `--send-initial-values`.
 
-**Current adapter client surface (13 operations):**
+**Current adapter client surface (15 operations):**
 `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`,
 `subscribe`, `subscription-lifecycle`, `event-subscribe`, `history-read`,
-`republish`, `transfer-subscriptions`
+`republish`, `transfer-subscriptions`, `register-nodes`, `node-management`
+
+Fix-forward additions: upstream pins open62541 `v1.5.9` / Milo `1.1.8`;
+`register-nodes`, `node-management`, and the global `--channel-lifetime-ms`
+flag (SecureChannel renewal under load).
 
 Fix-forward on `v0.5.0`: BaseEvent emission, gate-compliant raw historian, and
 narrow `event-subscribe` / `history-read --scenario continue` controls
@@ -261,7 +265,7 @@ narrow `event-subscribe` / `history-read --scenario continue` controls
 | Latest released image tag | **v0.5.0** |
 | Publication model | Fix-forward: republish **`v0.5.0`** when requirements change (no RC / `v0.5.1` tags) |
 | Capabilities `adapter.version` | **0.5.0** |
-| Client operations | 13 (see above) |
+| Client operations | 15 (see above) |
 | Peer Event / HistoryRead / Republish / Transfer CLI | go-opcua pinned to published `v0.5.0` digests |
 
 ---

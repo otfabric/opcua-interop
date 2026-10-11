@@ -49,7 +49,7 @@ static int cmd_print_capabilities(void) {
     printf("{\n");
     printf("  \"schemaVersion\": \"1.0\",\n");
     printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.5.0\"},\n");
-    printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.5\"},\n");
+    printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.9\"},\n");
     printf("  \"fixtureSchemaVersions\": [\"1.0\"],\n");
     printf("  \"roles\": [\"client\", \"server\"],\n");
     printf("  \"transports\": [\"opc.tcp\"],\n");
@@ -67,7 +67,9 @@ static int cmd_print_capabilities(void) {
     printf("    \"event-subscribe\",\n");
     printf("    \"history-read\",\n");
     printf("    \"republish\",\n");
-    printf("    \"transfer-subscriptions\"\n");
+    printf("    \"transfer-subscriptions\",\n");
+    printf("    \"register-nodes\",\n");
+    printf("    \"node-management\"\n");
     printf("  ],\n");
     printf("  \"serverServices\": [\n");
     printf("    \"GetEndpoints\",\n");
