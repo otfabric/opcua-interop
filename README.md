@@ -286,9 +286,10 @@ Each identity directory contains:
   self-signed ECC counterpart. `certs/generate.sh --add-ecc` adds them to an existing PKI
   without touching the CA or the RSA files.
 
-**WARNING:** These certificates are for isolated test environments only. Private keys
-are checked in intentionally. Never use them in production or expose them to untrusted
-networks.
+**WARNING:** These certificates are for isolated test environments only. They are not
+checked in: `certs/test-pki/` is git-ignored and generated locally with `make certs`.
+The private keys are unprotected, so never use them in production or expose them to
+untrusted networks.
 
 ## Consumer integration model
 
