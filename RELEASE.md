@@ -76,6 +76,9 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 - CLIENT_CONTRACT §14.6, open62541 information-model methods, corrected from the go-opcua interop tests: AddDataSetReader cannot target an existing variable (the reader's writes fail with `BadNodeIdUnknown`); a ReaderGroup added to a running connection receives nothing until the connection is disabled and enabled again; RemoveDataSetReader fails with `BadInternalError` while its ReaderGroup is enabled.
 
+---
+
+## v0.8.0
 
 
 **Date:** 2026-10-23
