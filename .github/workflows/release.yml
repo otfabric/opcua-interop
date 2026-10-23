@@ -1,40 +1,89 @@
 name: Release
-run-name: "Release ${{ github.ref_name }}"
+run-name: "Release (${{ inputs.bump }}) from ${{ github.ref_name }}"
 
-# Publishes a release from a pushed tag vX.Y.Z (see RELEASE.md, "How a release
-# is made"): checks the tag against the adapter versions and RELEASE.md, builds
-# both images natively per architecture, runs the full test gate on exactly
-# the images it pushes, joins them into multi-arch tags and creates the GitHub
-# release with the RELEASE.md section, the image digests, manifest.json and
-# checksums.txt.
+# Publishes the next release (see RELEASE.md, "How a release is made"). Run it
+# from the Actions tab on main with the version bump. It derives the next tag
+# from the latest vX.Y.Z tag, checks it against the adapter versions and
+# RELEASE.md, builds both images natively per architecture, runs the full test
+# gate on exactly the images it pushes, joins them into multi-arch tags, and
+# only then creates the git tag and the GitHub release (the RELEASE.md section,
+# the image digests, manifest.json and checksums.txt). A failed run leaves no
+# tag behind.
 
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump type
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ github.repository }}
   cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io/otfabric
-  VERSION: ${{ github.ref_name }}
 
 jobs:
-  # ── 1. Fail fast: tag, adapter versions, release notes, fixtures ──────────
-  check:
-    name: Check tag, versions and notes
+  # ── 1. Next version; fail fast on versions, release notes, fixtures ──────
+  version:
+    name: Next version and checks
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+      previous_tag: ${{ steps.next.outputs.previous_tag }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
-      - name: Tag, adapter versions and RELEASE.md section
-        run: scripts/check-release.sh "${VERSION}"
+      - name: Release from the default branch only
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CURRENT_REF: ${{ github.ref_name }}
+        run: |
+          if [ "${CURRENT_REF}" != "${DEFAULT_BRANCH}" ]; then
+            echo "::error::Releases are only allowed from ${DEFAULT_BRANCH}, not ${CURRENT_REF}."
+            exit 1
+          fi
+
+      - name: Determine the next version
+        id: next
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          previous_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)"
+          previous_tag="${previous_tag:-v0.0.0}"
+          IFS='.' read -r major minor patch <<< "${previous_tag#v}"
+          case "${BUMP}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "::error::invalid bump ${BUMP}"; exit 1 ;;
+          esac
+          tag="v${major}.${minor}.${patch}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "::error::Tag ${tag} already exists. Tags are immutable; choose another bump."
+            exit 1
+          fi
+          echo "previous_tag=${previous_tag}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${tag} (previous: ${previous_tag}, bump: ${BUMP})"
+
+      - name: Adapter versions and RELEASE.md section match ${{ steps.next.outputs.tag }}
+        run: scripts/check-release.sh "${{ steps.next.outputs.tag }}"
 
       - name: Install check-jsonschema
         run: pip install check-jsonschema
@@ -47,9 +96,11 @@ jobs:
   # ── 2. Build, test and push each architecture natively ────────────────────
   build:
     name: Build, test, push (${{ matrix.arch }})
-    needs: check
+    needs: version
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.tag }}
     permissions:
       contents: read
       packages: write
@@ -132,15 +183,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push the tested images as ${{ github.ref_name }}-${{ matrix.arch }}
+      - name: Push the tested images as ${{ env.VERSION }}-${{ matrix.arch }}
         run: make publish-arch VERSION="${VERSION}" ARCH=${{ matrix.arch }}
 
   # ── 3. Multi-arch tags and the GitHub release (nothing is built here) ─────
   release:
-    name: Multi-arch manifests and release
-    needs: build
+    name: Multi-arch manifests, tag and release
+    needs: [version, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.version.outputs.tag }}
     permissions:
       contents: write
       packages: write
@@ -157,7 +210,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create ${{ github.ref_name }}, its minor and major tags from the amd64 and arm64 images
+      - name: Create the version, minor and major image tags from the amd64 and arm64 images
         run: make publish-manifest VERSION="${VERSION}"
 
       - name: Digests of the multi-arch images
@@ -219,11 +272,21 @@ jobs:
           } > release-body.md
           cat manifest.json release-body.md
 
+      - name: Create and push the git tag
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${VERSION}" -m "Release ${VERSION}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${VERSION}"
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          name: opcua-interop ${{ github.ref_name }}
+          tag_name: ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: opcua-interop ${{ env.VERSION }}
           body_path: release-body.md
           files: |
             manifest.json
@@ -232,7 +295,7 @@ jobs:
       - name: Release summary
         run: |
           {
-            echo "## Released ${VERSION}"
+            echo "## Released ${VERSION} (${{ inputs.bump }} from ${{ needs.version.outputs.previous_tag }})"
             echo
             cat digests.txt | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"

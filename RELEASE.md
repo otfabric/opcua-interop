@@ -14,27 +14,30 @@
    - `milo/src/main/java/io/otfabric/opcuainterop/ServerCommand.java`
      (`BuildInfo` software version)
 3. Write the section `## vX.Y.Z` below, with its **Date**; `make release-notes
-   VERSION=vX.Y.Z` prints what the GitHub release will say.
-4. Tag and push the tag:
+   VERSION=vX.Y.Z` prints what the GitHub release will say. Commit and push
+   to `main`.
+4. Run the `Release` workflow on `main` (Actions → Release → Run workflow)
+   with the bump: `patch`, `minor` or `major`. From the command line:
 
    ```bash
-   git tag vX.Y.Z
+   gh workflow run release.yml --repo otfabric/opcua-interop --ref main -f bump=minor
    ```
 
-   ```bash
-   git push origin vX.Y.Z
-   ```
-
-   The `Release` workflow then
-   - checks the tag against the versions and this file (`scripts/check-release.sh`)
-     and validates the fixtures,
+   The workflow
+   - derives the next version from the latest `vX.Y.Z` tag and the bump, and
+     stops if that tag exists, if the adapters report another version, or if
+     this file has no dated section for it (`scripts/check-release.sh`); it
+     validates the fixtures,
    - builds both images natively on an amd64 and an arm64 runner, runs the
      adapter unit tests, the smoke tests (single-adapter, cross-stack, PubSub)
      and the shutdown checks on exactly those images, and pushes them as
      `<image>:vX.Y.Z-amd64` / `-arm64`,
    - joins them into the multi-arch `<image>:vX.Y.Z`, `:vX.Y` and `:vX`,
-   - creates the GitHub release with this file's section as notes, the image
-     digests, `manifest.json` (upstream pins and digests) and `checksums.txt`.
+   - creates the git tag `vX.Y.Z` on the released commit and the GitHub
+     release with this file's section as notes, the image digests,
+     `manifest.json` (upstream pins and digests) and `checksums.txt`.
+
+   The tag is created last: a failed run leaves no tag, fix and run again.
 5. Consumers pin the digests from the release (`manifest.json`). For go-opcua:
    update `defaultOpen62541Image` / `defaultMiloImage` in
    `interop/harness_test.go`, `.github/workflows/interop.yml`, `INTEROP.md` and
@@ -126,10 +129,12 @@ gains nodes.
 
 - `RELEASE.md` replaces `PUBLISH.md`: the release procedure and the notes of
   every release.
-- The `Release` workflow checks the tag against the adapter versions and this
-  file first, builds each architecture natively, runs the full test gate on
-  exactly the images it pushes, and publishes the release with these notes,
-  the image digests, `manifest.json` and `checksums.txt`.
+- The `Release` workflow is started by hand with a `patch` / `minor` / `major`
+  bump, like the other otfabric repositories. It derives the version, checks
+  it against the adapter versions and this file first, builds each
+  architecture natively, runs the full test gate on exactly the images it
+  pushes, and only then creates the tag and the release with these notes, the
+  image digests, `manifest.json` and `checksums.txt`.
 - `make check-release`, `make release-notes`, `make publish-arch`,
   `make publish-manifest`, `make digests`; `make release` is replaced by
   `make publish` (multi-arch under emulation, for a manual fallback).

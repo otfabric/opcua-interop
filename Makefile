@@ -186,7 +186,7 @@ certs: ## Generate test PKI
 
 # ── Release (see RELEASE.md) ─────────────────────────────────────────────────
 #
-# The Release workflow (tag push) runs check-release, builds and tests the
+# The Release workflow (run by hand with a patch/minor/major bump) runs check-release, builds and tests the
 # images natively per architecture, then publish-arch, publish-manifest and
 # digests. `publish` is a manual fallback that builds under emulation.
 
