@@ -65,7 +65,7 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ## v0.8.1
 
-**Date:** unreleased
+**Date:** 2026-10-24
 **Previous release:** v0.8.0
 
 ### Changed
