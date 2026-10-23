@@ -474,8 +474,8 @@ make release-notes VERSION=v0.8.0  # Print the release notes of a version
 
 | Version type | Location |
 |---|---|
-| Repository release | Git tag and image tag — **`v0.8.0`** (latest published: `v0.7.0`) |
-| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.8.0`** (must match the tag) |
+| Repository release | Git tag and image tag — **`v0.8.1`** (latest published: `v0.8.0`) |
+| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.8.1`** (must match the tag) |
 | Upstream stack version | Image label and `print-capabilities` → `stack.version` |
 | Fixture schema version | `schemaVersion` field in every fixture |
 

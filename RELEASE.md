@@ -63,7 +63,20 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
-## v0.8.0
+## v0.8.1
+
+**Date:** unreleased
+**Previous release:** v0.8.0
+
+### Changed
+
+- **Milo adapter dependencies:** jackson-databind 2.17.2 → 2.22.3, logback-classic 1.5.6 → 1.6.5, slf4j-api 2.0.18 → 2.0.20, junit-jupiter 6.1.2 → 6.1.3, maven-surefire-plugin 3.3.1 → 3.6.0.
+
+### Docs
+
+- CLIENT_CONTRACT §14.6, open62541 information-model methods, corrected from the go-opcua interop tests: AddDataSetReader cannot target an existing variable (the reader's writes fail with `BadNodeIdUnknown`); a ReaderGroup added to a running connection receives nothing until the connection is disabled and enabled again; RemoveDataSetReader fails with `BadInternalError` while its ReaderGroup is enabled.
+
+
 
 **Date:** 2026-10-23
 **Previous release:** v0.7.0

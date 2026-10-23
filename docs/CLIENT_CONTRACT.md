@@ -1210,7 +1210,7 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 
 | Field | Meaning |
 |-------|---------|
-| `adapter.version` | `0.8.0` |
+| `adapter.version` | `0.8.1` |
 | `clientOperations` | the `client` subcommands the image has |
 | `clientFeatures` | optional client-side features (strings below) |
 | `serverFeatures` | optional server-side features (strings below) |
@@ -1480,12 +1480,12 @@ NodeId, e.g. PubSubConnectionDataType i=15694):
 | AddConnection (i=17366) | PublishSubscribe i=14443 | PubSubConnectionDataType | NodeId | Creates the connection with its WriterGroups / DataSetWriters / ReaderGroups / DataSetReaders. The **connection is created Disabled** (State 0) regardless of `Enabled`: call Enable on its Status object. With `Enabled` true the groups are set Operational and therefore wait as Paused (1) until the connection is enabled; DataSetWriters / DataSetReaders stay Disabled (`Enabled` of the nested structures is not evaluated) — enable them through their Status objects. WriterGroup `TransportSettings` / `MessageSettings` / `SecurityGroupId` are kept (JSON needs BrokerWriterGroupTransportDataType); DataSetWriters only get Name, DataSetWriterId, KeyFrameCount, DataSetFieldContentMask and the PublishedDataSet named by `DataSetName`; ReaderGroups only get `Name` (no security, no transport settings, always UADP — MQTT / JSON subscriptions cannot be built this way); DataSetReaders get PublisherId, WriterGroupId, DataSetWriterId, the field Name / DataType / BuiltInType / ValueRank of the metadata, and TargetVariables. On error the connection is removed again |
 | RemoveConnection (i=17369) | i=14443 | NodeId | — | `BadNodeIdUnknown` if unknown |
 | AddWriterGroup (i=17427) | the connection object | WriterGroupDataType | NodeId | As in AddConnection; JSON needs BrokerWriterGroupTransportDataType (`BadConfigurationError`); the group is created disabled (call Enable) |
-| AddReaderGroup (i=17465) | the connection object | ReaderGroupDataType | NodeId | Only `Name` is used (created disabled) |
+| AddReaderGroup (i=17465) | the connection object | ReaderGroupDataType | NodeId | Only `Name` is used (created disabled). A ReaderGroup added to a running connection receives nothing until the connection is disabled and enabled again |
 | RemoveGroup (i=14225) | the connection object | NodeId | — | WriterGroup or ReaderGroup of that connection |
 | AddDataSetWriter (i=17969) | the WriterGroup object | DataSetWriterDataType | NodeId | PublishedDataSet by `DataSetName` (`BadParentNodeIdInvalid` if none) |
 | RemoveDataSetWriter (i=17992) | the WriterGroup object | NodeId | — | |
-| AddDataSetReader (i=21082) | the ReaderGroup object | DataSetReaderDataType | NodeId | TargetVariables: each `TargetNodeId` is *added* as a new Variable under a folder (BrowseName = metadata `Name`) in Objects; when the NodeId already exists (a fixture variable) the add fails silently and the existing node becomes the target |
-| RemoveDataSetReader (i=21085) | the ReaderGroup object | NodeId | — | |
+| AddDataSetReader (i=21082) | the ReaderGroup object | DataSetReaderDataType | NodeId | TargetVariables: each `TargetNodeId` is *added* as a new Variable under a folder (BrowseName = metadata `Name`) in Objects; when the NodeId already exists (a fixture variable) the add fails and every write of the reader fails with `BadNodeIdUnknown` — use a NodeId that does not exist yet |
+| RemoveDataSetReader (i=21085) | the ReaderGroup object | NodeId | — | Fails with `BadInternalError` while the ReaderGroup is enabled: disable the group first |
 | AddPublishedDataItems (i=14493, DataSetFolderType method referenced by PublishedDataSets) | PublishedDataSets i=17371 | String Name, String[] FieldNameAliases, DataSetFieldFlags[] (UInt16; 1 = PromotedField), PublishedVariableDataType[] | **3 outputs expected** (DataSetNodeId, ConfigurationVersion, AddResults); only DataSetNodeId is set | The three arrays must have the same length |
 | RemovePublishedDataSet (i=14499) | i=17371 | NodeId | — | |
 | AddDataSetFolder / RemoveDataSetFolder (i=16994 / i=16997) | i=17371 | String / NodeId | NodeId / — | |
