@@ -62,3 +62,13 @@ services:
       start_period: 10s
     environment:
       OPCUA_LOG_LEVEL: ${OPCUA_LOG_LEVEL:-info}
+
+  # MQTT broker for the PubSub (Part 14) tests: plain MQTT on 1883, anonymous.
+  # eclipse-mosquitto:2.0.22, pinned by its multi-arch index digest.
+  mosquitto:
+    image: eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c
+    command: ["mosquitto", "-c", "/mosquitto-interop.conf"]
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mqtt/mosquitto.conf:/mosquitto-interop.conf:ro

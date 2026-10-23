@@ -50,20 +50,21 @@
     },
     "clientFeatures": {
       "type": "array",
-      "description": "Optional client-side features (docs/CLIENT_CONTRACT.md §13). Added in adapter 0.7.0.",
+      "description": "Optional client-side features (docs/CLIENT_CONTRACT.md §13). Added in adapter 0.7.0; codec-pubsub in 0.8.0.",
       "items": {
         "type": "string",
         "enum": ["channel-lifetime", "deadband", "reverse-listen", "ecc-security", "ecc-user-token",
-                 "application-uri", "register-server2", "codec-json", "codec-xml", "codec-json-verbose"]
+                 "application-uri", "register-server2", "codec-json", "codec-xml", "codec-json-verbose",
+                 "codec-pubsub"]
       }
     },
     "serverFeatures": {
       "type": "array",
-      "description": "Optional server-side features (docs/CLIENT_CONTRACT.md §13). Added in adapter 0.7.0.",
+      "description": "Optional server-side features (docs/CLIENT_CONTRACT.md §13). Added in adapter 0.7.0; pubsub in 0.8.0.",
       "items": {
         "type": "string",
         "enum": ["deadband", "percent-deadband", "reverse-connect", "ecc-security", "ecc-user-token",
-                 "lds", "mdns", "register-with", "node-management"]
+                 "lds", "mdns", "register-with", "node-management", "pubsub"]
       }
     },
     "codec": {
@@ -77,6 +78,56 @@
         "jsonModes":   { "type": "array", "items": { "type": "string", "enum": ["compact", "verbose"] } },
         "xmlEncodeUnsupported": { "type": "array", "items": { "type": "string" } },
         "xmlDecodeUnsupported": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "pubsub": {
+      "type": "object",
+      "description": "OPC UA PubSub (Part 14) support (docs/CLIENT_CONTRACT.md §14). Added in adapter 0.8.0. An adapter without PubSub declares supported=false with empty lists.",
+      "required": ["supported", "transports", "encodings", "securityPolicies", "sks", "informationModel", "codecOps"],
+      "additionalProperties": false,
+      "properties": {
+        "supported":          { "type": "boolean" },
+        "reason":             { "type": "string", "description": "Why PubSub is not supported (supported=false only)." },
+        "serverFlag":         { "type": "string", "description": "The server flag that takes the PubSub configuration file." },
+        "roles":              { "type": "array", "items": { "type": "string", "enum": ["publisher", "subscriber"] } },
+        "transports":         { "type": "array", "items": { "type": "string", "enum": ["udp-uadp", "mqtt-uadp", "mqtt-json", "eth-uadp", "amqp-uadp", "amqp-json"] } },
+        "transportProfiles":  { "type": "array", "items": { "type": "string" } },
+        "udp": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "unicast":   { "type": "boolean" },
+            "multicast": { "type": "boolean" }
+          }
+        },
+        "encodings":          { "type": "array", "items": { "type": "string", "enum": ["uadp", "json"] } },
+        "fieldEncodings":     { "type": "array", "items": { "type": "string", "enum": ["Variant", "DataValue", "RawData"] } },
+        "dataSetMessageTypes": {
+          "type": "object",
+          "description": "Per encoding (uadp, json): the DataSetMessage types the adapter encodes and decodes.",
+          "additionalProperties": { "type": "array", "items": { "type": "string", "enum": ["KeyFrame", "DeltaFrame", "Event", "KeepAlive"] } }
+        },
+        "publishedDataSets":  { "type": "array", "items": { "type": "string", "enum": ["PublishedDataItems", "PublishedEvents"] } },
+        "subscribedDataSets": { "type": "array", "items": { "type": "string", "enum": ["TargetVariables", "SubscribedDataSetMirror"] } },
+        "securityPolicies":   { "type": "array", "items": { "type": "string" } },
+        "securityModes":      { "type": "array", "items": { "type": "string", "enum": ["None", "Sign", "SignAndEncrypt"] } },
+        "securityEncodings":  { "type": "array", "items": { "type": "string", "enum": ["uadp", "json"] } },
+        "keySources":         { "type": "array", "items": { "type": "string", "enum": ["static", "sks-pull", "sks-push", "sks-server"] } },
+        "sks": {
+          "type": "object",
+          "required": ["server", "pull", "push"],
+          "additionalProperties": false,
+          "properties": {
+            "server":  { "type": "boolean" },
+            "pull":    { "type": "boolean" },
+            "push":    { "type": "boolean" },
+            "methods": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "informationModel":        { "type": "boolean" },
+        "informationModelMethods": { "type": "array", "items": { "type": "string" } },
+        "codecOps":           { "type": "array", "items": { "type": "string", "enum": ["pubsub-uadp-encode", "pubsub-uadp-decode", "pubsub-json-encode", "pubsub-json-decode"] } },
+        "codecSecurity":      { "type": "boolean", "description": "Whether the codec ops sign / encrypt / verify / decrypt (false: SecurityHeader fields only)." }
       }
     },
     "serverServices": {

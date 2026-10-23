@@ -1,75 +1,149 @@
 name: Release
+run-name: "Release ${{ github.ref_name }}"
+
+# Publishes a release from a pushed tag vX.Y.Z (see RELEASE.md, "How a release
+# is made"): checks the tag against the adapter versions and RELEASE.md, builds
+# both images natively per architecture, runs the full test gate on exactly
+# the images it pushes, joins them into multi-arch tags and creates the GitHub
+# release with the RELEASE.md section, the image digests, manifest.json and
+# checksums.txt.
 
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/otfabric
+  VERSION: ${{ github.ref_name }}
 
 jobs:
-  # ── 1a. Parse version from git tag ────────────────────────────────────────
-  parse-version:
-    name: Parse version
-    runs-on: ubuntu-latest
-    outputs:
-      tag:   ${{ steps.v.outputs.tag }}
-      minor: ${{ steps.v.outputs.minor }}
-      major: ${{ steps.v.outputs.major }}
-    steps:
-      - name: Extract tag components
-        id: v
-        run: |
-          TAG="${GITHUB_REF_NAME}"       # e.g. v0.1.0
-          echo "tag=${TAG}"             >> "$GITHUB_OUTPUT"
-          echo "minor=${TAG%.*}"        >> "$GITHUB_OUTPUT"  # v0.1
-          echo "major=${TAG%%.*}"       >> "$GITHUB_OUTPUT"  # v0
-
-  # ── 1b. Validate fixtures (runs in parallel with parse-version) ────────────
-  validate:
-    name: Validate fixtures
-    runs-on: ubuntu-latest
+  # ── 1. Fail fast: tag, adapter versions, release notes, fixtures ──────────
+  check:
+    name: Check tag, versions and notes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+
+      - name: Tag, adapter versions and RELEASE.md section
+        run: scripts/check-release.sh "${VERSION}"
 
       - name: Install check-jsonschema
         run: pip install check-jsonschema
 
-      - name: Validate fixture schema
-        run: |
-          check-jsonschema \
-            --check-metaschema \
-            fixtures/schema/opcua-fixture.schema.json
-
       - name: Validate fixtures
-        run: scripts/validate-fixtures.sh
+        run: |
+          check-jsonschema --check-metaschema fixtures/schema/opcua-fixture.schema.json
+          scripts/validate-fixtures.sh
 
-  # ── 2. Build each adapter × arch on its native runner, push arch image ────
-  #
-  # The 4 matrix jobs run fully in parallel on native runners (no QEMU).
-  # Each pushes a single-platform image tagged <image>:<version>-<arch>.
-  # The manifest job below merges those into the final multi-arch manifest.
-  build-push:
-    name: Build & push ${{ matrix.adapter }} (${{ matrix.arch }})
-    needs: [parse-version, validate]
+  # ── 2. Build, test and push each architecture natively ────────────────────
+  build:
+    name: Build, test, push (${{ matrix.arch }})
+    needs: check
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
-          - adapter: open62541
-            arch: amd64
-            runner: ubuntu-latest
-          - adapter: open62541
-            arch: arm64
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
             runner: ubuntu-24.04-arm
-          - adapter: milo
-            arch: amd64
-            runner: ubuntu-latest
-          - adapter: milo
-            arch: arm64
-            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build open62541 (linux/${{ matrix.arch }})
+        uses: docker/build-push-action@v7
+        with:
+          context: open62541
+          file: open62541/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          tags: ${{ env.REGISTRY }}/opcua-interop-open62541:${{ env.VERSION }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+          cache-from: type=gha,scope=open62541-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=open62541-${{ matrix.arch }}
+
+      - name: Build Milo (linux/${{ matrix.arch }})
+        uses: docker/build-push-action@v7
+        with:
+          context: milo
+          file: milo/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          tags: ${{ env.REGISTRY }}/opcua-interop-milo:${{ env.VERSION }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+          cache-from: type=gha,scope=milo-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=milo-${{ matrix.arch }}
+
+      - name: Images report the release version
+        run: |
+          for a in open62541 milo; do
+            got=$(docker run --rm "${REGISTRY}/opcua-interop-${a}:${VERSION}" print-capabilities \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["adapter"]["version"])')
+            [ "v${got}" = "${VERSION}" ] || { echo "::error::${a} reports adapter.version ${got}, not ${VERSION#v}"; exit 1; }
+          done
+
+      - name: Unit tests
+        run: |
+          for a in open62541 milo; do
+            docker run --rm -v "${PWD}/fixtures:/fixtures:ro" "${REGISTRY}/opcua-interop-${a}:${VERSION}" test
+          done
+
+      - name: Smoke (single-adapter, cross-stack, PubSub)
+        run: |
+          scripts/smoke.sh open62541 "${REGISTRY}/opcua-interop-open62541:${VERSION}"
+          scripts/smoke.sh milo "${REGISTRY}/opcua-interop-milo:${VERSION}"
+          scripts/smoke.sh cross "${REGISTRY}/opcua-interop-open62541:${VERSION}" "${REGISTRY}/opcua-interop-milo:${VERSION}"
+          scripts/pubsub-smoke.sh "${REGISTRY}/opcua-interop-open62541:${VERSION}"
+
+      - name: Graceful shutdown
+        run: |
+          scripts/shutdown-test.sh open62541 "${REGISTRY}/opcua-interop-open62541:${VERSION}"
+          scripts/shutdown-test.sh milo "${REGISTRY}/opcua-interop-milo:${VERSION}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the tested images as ${{ github.ref_name }}-${{ matrix.arch }}
+        run: make publish-arch VERSION="${VERSION}" ARCH=${{ matrix.arch }}
+
+  # ── 3. Multi-arch tags and the GitHub release (nothing is built here) ─────
+  release:
+    name: Multi-arch manifests and release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v7
 
@@ -83,80 +157,82 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push ${{ matrix.adapter }} (linux/${{ matrix.arch }})
-        uses: docker/build-push-action@v7
-        with:
-          context: ${{ matrix.adapter }}
-          file: ${{ matrix.adapter }}/Dockerfile
-          platforms: linux/${{ matrix.arch }}
-          push: true
-          # Intermediate per-arch tag; the manifest job applies the final tags.
-          tags: ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:${{ needs.parse-version.outputs.tag }}-${{ matrix.arch }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ needs.parse-version.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create ${{ github.ref_name }}, its minor and major tags from the amd64 and arm64 images
+        run: make publish-manifest VERSION="${VERSION}"
 
-  # ── 3. Merge per-arch images into multi-arch manifests ────────────────────
-  create-manifests:
-    name: Create multi-arch manifests
-    needs: [parse-version, build-push]
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-    env:
-      TAG:   ${{ needs.parse-version.outputs.tag }}
-      MINOR: ${{ needs.parse-version.outputs.minor }}
-      MAJOR: ${{ needs.parse-version.outputs.major }}
-    steps:
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Create open62541 manifest
+      - name: Digests of the multi-arch images
+        id: digests
         run: |
-          IMG=ghcr.io/otfabric/opcua-interop-open62541
-          docker buildx imagetools create \
-            -t "${IMG}:${TAG}" \
-            -t "${IMG}:${MINOR}" \
-            -t "${IMG}:${MAJOR}" \
-            "${IMG}:${TAG}-amd64" \
-            "${IMG}:${TAG}-arm64"
+          make -s digests VERSION="${VERSION}" | tee digests.txt
+          while read -r adapter digest; do
+            [[ "${digest}" == sha256:* ]] || { echo "::error::no digest for ${adapter}"; exit 1; }
+            echo "${adapter}=${digest}" >> "$GITHUB_OUTPUT"
+          done < digests.txt
 
-      - name: Create Milo manifest
+      - name: Write manifest.json, checksums.txt and the release notes
+        env:
+          OPEN62541_DIGEST: ${{ steps.digests.outputs.open62541 }}
+          MILO_DIGEST: ${{ steps.digests.outputs.milo }}
         run: |
-          IMG=ghcr.io/otfabric/opcua-interop-milo
-          docker buildx imagetools create \
-            -t "${IMG}:${TAG}" \
-            -t "${IMG}:${MINOR}" \
-            -t "${IMG}:${MAJOR}" \
-            "${IMG}:${TAG}-amd64" \
-            "${IMG}:${TAG}-arm64"
+          set -euo pipefail
+          open62541_pin=$(sed -nE 's/^ARG OPEN62541_COMMIT=(.*)$/\1/p' open62541/Dockerfile | head -1)
+          milo_pin=$(sed -nE 's|.*<milo.version>(.*)</milo.version>.*|\1|p' milo/pom.xml | head -1)
+          mosquitto_pin=$(sed -nE 's/^MOSQUITTO_IMAGE \?= (.*)$/\1/p' Makefile | head -1)
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg commit "${GITHUB_SHA}" \
+            --arg open62541 "${open62541_pin}" \
+            --arg milo "${milo_pin}" \
+            --arg mosquitto "${mosquitto_pin}" \
+            --arg open62541_image "${REGISTRY}/opcua-interop-open62541@${OPEN62541_DIGEST}" \
+            --arg milo_image "${REGISTRY}/opcua-interop-milo@${MILO_DIGEST}" \
+            '{
+              version: $version,
+              commit: $commit,
+              platforms: ["linux/amd64", "linux/arm64"],
+              upstream: { open62541: $open62541, "eclipse-milo": $milo },
+              images: { open62541: $open62541_image, milo: $milo_image },
+              broker: { mosquitto: $mosquitto }
+            }' > manifest.json
+          sha256sum manifest.json > checksums.txt
 
-      - name: Inspect open62541 manifest
-        run: docker buildx imagetools inspect ghcr.io/otfabric/opcua-interop-open62541:${TAG}
+          {
+            scripts/release-notes.sh "${VERSION}"
+            echo
+            echo "## Images"
+            echo
+            echo "| Image | Digest |"
+            echo "|-------|--------|"
+            echo "| \`${REGISTRY}/opcua-interop-open62541:${VERSION}\` | \`${OPEN62541_DIGEST}\` |"
+            echo "| \`${REGISTRY}/opcua-interop-milo:${VERSION}\` | \`${MILO_DIGEST}\` |"
+            echo
+            echo "Platforms: linux/amd64, linux/arm64. Also tagged \`${VERSION%.*}\` and \`${VERSION%%.*}\`."
+            echo
+            echo "## Pinning in a consumer"
+            echo
+            echo '```text'
+            echo "${REGISTRY}/opcua-interop-open62541@${OPEN62541_DIGEST}"
+            echo "${REGISTRY}/opcua-interop-milo@${MILO_DIGEST}"
+            echo '```'
+            echo
+            echo "Upstream: open62541 ${open62541_pin}, Eclipse Milo ${milo_pin}; MQTT broker for the PubSub tests: \`${mosquitto_pin}\`. \`manifest.json\` records the same."
+          } > release-body.md
+          cat manifest.json release-body.md
 
-      - name: Inspect Milo manifest
-        run: docker buildx imagetools inspect ghcr.io/otfabric/opcua-interop-milo:${TAG}
-
-  # ── 4. Create GitHub Release ───────────────────────────────────────────────
-  github-release:
-    name: GitHub Release
-    needs: [parse-version, create-manifests]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Create GitHub Release
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          generate_release_notes: true
+          name: opcua-interop ${{ github.ref_name }}
+          body_path: release-body.md
+          files: |
+            manifest.json
+            checksums.txt
+
+      - name: Release summary
+        run: |
+          {
+            echo "## Released ${VERSION}"
+            echo
+            cat digests.txt | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"

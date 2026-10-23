@@ -75,7 +75,9 @@ jobs:
         id: smoke
         if: steps.build.outcome == 'success'
         continue-on-error: true
-        run: bash scripts/smoke.sh open62541 opcua-interop-open62541:candidate
+        run: |
+          bash scripts/smoke.sh open62541 opcua-interop-open62541:candidate
+          bash scripts/pubsub-smoke.sh opcua-interop-open62541:candidate
 
   candidate-milo:
     name: milo

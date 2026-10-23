@@ -22,6 +22,7 @@
  *   --lds                        act as Local Discovery Server (with mDNS)
  *   --mdns-name <name>           announce via mDNS under this name
  *   --register-with <lds-url>    register with a Local Discovery Server
+ *   --pubsub-config <file>       OPC UA PubSub configuration (JSON, see pubsub_server.c)
  *
  * Client exit codes:
  *   0  success
@@ -50,10 +51,51 @@
  * print-capabilities
  * ---------------------------------------------------------------------- */
 
+/* PubSub (Part 14). See docs/CLIENT_CONTRACT.md §14 for what each entry
+ * means and the open62541 v1.5.9 limits behind the lists. */
+static void print_pubsub_capabilities(void) {
+    printf("  \"pubsub\": {\n");
+    printf("    \"supported\": true,\n");
+    printf("    \"serverFlag\": \"--pubsub-config\",\n");
+    printf("    \"roles\": [\"publisher\", \"subscriber\"],\n");
+    printf("    \"transports\": [\"udp-uadp\", \"mqtt-uadp\", \"mqtt-json\"],\n");
+    printf("    \"transportProfiles\": [\n");
+    printf("      \"http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp\",\n");
+    printf("      \"http://opcfoundation.org/UA-Profile/Transport/pubsub-mqtt-uadp\",\n");
+    printf("      \"http://opcfoundation.org/UA-Profile/Transport/pubsub-mqtt-json\"\n");
+    printf("    ],\n");
+    printf("    \"udp\": {\"unicast\": true, \"multicast\": true},\n");
+    printf("    \"encodings\": [\"uadp\", \"json\"],\n");
+    printf("    \"fieldEncodings\": [\"Variant\", \"DataValue\", \"RawData\"],\n");
+    printf("    \"dataSetMessageTypes\": {\"uadp\": [\"KeyFrame\", \"DeltaFrame\", \"KeepAlive\"], \"json\": [\"KeyFrame\"]},\n");
+    printf("    \"publishedDataSets\": [\"PublishedDataItems\"],\n");
+    printf("    \"subscribedDataSets\": [\"TargetVariables\"],\n");
+    printf("    \"securityPolicies\": [\n");
+    printf("      \"http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR\",\n");
+    printf("      \"http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes256-CTR\"\n");
+    printf("    ],\n");
+    printf("    \"securityModes\": [\"None\", \"Sign\", \"SignAndEncrypt\"],\n");
+    printf("    \"securityEncodings\": [\"uadp\"],\n");
+    printf("    \"keySources\": [\"static\", \"sks-pull\", \"sks-push\", \"sks-server\"],\n");
+    printf("    \"sks\": {\"server\": true, \"pull\": true, \"push\": true,\n");
+    printf("            \"methods\": [\"GetSecurityKeys\", \"SetSecurityKeys\", \"AddSecurityGroup\", \"RemoveSecurityGroup\"]},\n");
+    printf("    \"informationModel\": true,\n");
+    printf("    \"informationModelMethods\": [\n");
+    printf("      \"AddConnection\", \"RemoveConnection\", \"AddWriterGroup\", \"AddReaderGroup\", \"RemoveGroup\",\n");
+    printf("      \"AddDataSetWriter\", \"RemoveDataSetWriter\", \"AddDataSetReader\", \"RemoveDataSetReader\",\n");
+    printf("      \"AddPublishedDataItems\", \"RemovePublishedDataSet\", \"AddDataSetFolder\", \"RemoveDataSetFolder\",\n");
+    printf("      \"ReserveIds\", \"Enable\", \"Disable\",\n");
+    printf("      \"GetSecurityKeys\", \"SetSecurityKeys\", \"AddSecurityGroup\", \"RemoveSecurityGroup\"\n");
+    printf("    ],\n");
+    printf("    \"codecOps\": [\"pubsub-uadp-encode\", \"pubsub-uadp-decode\", \"pubsub-json-encode\", \"pubsub-json-decode\"],\n");
+    printf("    \"codecSecurity\": false\n");
+    printf("  },\n");
+}
+
 static int cmd_print_capabilities(void) {
     printf("{\n");
     printf("  \"schemaVersion\": \"1.0\",\n");
-    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.7.0\"},\n");
+    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.8.0\"},\n");
     printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.9\"},\n");
     printf("  \"fixtureSchemaVersions\": [\"1.0\"],\n");
     printf("  \"roles\": [\"client\", \"server\"],\n");
@@ -88,7 +130,8 @@ static int cmd_print_capabilities(void) {
     printf("    \"application-uri\",\n");
     printf("    \"register-server2\",\n");
     printf("    \"codec-json\",\n");
-    printf("    \"codec-xml\"\n");
+    printf("    \"codec-xml\",\n");
+    printf("    \"codec-pubsub\"\n");
     printf("  ],\n");
     printf("  \"serverFeatures\": [\n");
     printf("    \"deadband\",\n");
@@ -99,7 +142,8 @@ static int cmd_print_capabilities(void) {
     printf("    \"lds\",\n");
     printf("    \"mdns\",\n");
     printf("    \"register-with\",\n");
-    printf("    \"node-management\"\n");
+    printf("    \"node-management\",\n");
+    printf("    \"pubsub\"\n");
     printf("  ],\n");
     printf("  \"codec\": {\n");
     printf("    \"formats\": [\"json\", \"xml\"],\n");
@@ -108,6 +152,7 @@ static int cmd_print_capabilities(void) {
     printf("    \"xmlEncodeUnsupported\": [\"DataValue\", \"DiagnosticInfo\", \"Matrix\"],\n");
     printf("    \"xmlDecodeUnsupported\": [\"DataValue\", \"DiagnosticInfo\", \"XmlElement\"]\n");
     printf("  },\n");
+    print_pubsub_capabilities();
     printf("  \"serverServices\": [\n");
     printf("    \"GetEndpoints\",\n");
     printf("    \"CreateSession\",\n");

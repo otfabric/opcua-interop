@@ -2,6 +2,7 @@
 
 #include "server.h"
 #include "fixture.h"
+#include "pubsub_server.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -90,6 +91,8 @@ int server_parse_args(int argc, char **argv, ServerArgs *out,
             free(out->registerWith);   out->registerWith   = strdup(argv[++i]);
         } else if (strcmp(argv[i], "--register-interval-ms") == 0 && i+1 < argc) {
             out->registerIntervalMs = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--pubsub-config") == 0 && i+1 < argc) {
+            free(out->pubsubConfig);   out->pubsubConfig   = strdup(argv[++i]);
         }
     }
     if (out->reverseIntervalMs <= 0)  out->reverseIntervalMs  = 1000;
@@ -1419,6 +1422,17 @@ int server_run(const ServerArgs *args) {
 # endif
 #endif
 
+#ifdef UA_ENABLE_PUBSUB
+    /* PubSub message security (PubSub-Aes128/256-CTR on OpenSSL); installed
+     * always, so the information model / SKS methods can use them too. */
+    {
+        UA_StatusCode psc = pubsub_server_prepare_config(&cfg_val);
+        if (psc != UA_STATUSCODE_GOOD)
+            fprintf(stderr, "[open62541] warn: PubSub security policies: %s\n",
+                    UA_StatusCode_name(psc));
+    }
+#endif
+
     UA_Server *server = UA_Server_newWithConfig(&cfg_val);
     if (!server) {
         fprintf(stderr, "[open62541] error: UA_Server_newWithConfig failed\n");
@@ -1707,6 +1721,43 @@ int server_run(const ServerArgs *args) {
             cfg->applicationDescription.discoveryUrlsSize = 1;
     }
 
+#ifdef UA_ENABLE_PUBSUB
+    /* PubSub: adapter bindings in the information model, then the optional
+     * --pubsub-config. Applied after startup so the EventLoop (UDP, MQTT, the
+     * SKS client) is running; the ready file is only written on success.
+     * Delta frames are off unless the configuration enables them, so that
+     * KeyFrameCount = 1 means key frames only (see pubsub_server.c). */
+    UA_Server_getConfig(server)->pubSubConfig.enableDeltaFrames = false;
+    pubsub_server_init(server);
+    if (args->pubsubConfig && *args->pubsubConfig) {
+        PubSubOptions popt;
+        memset(&popt, 0, sizeof(popt));
+        popt.configPath = args->pubsubConfig;
+        popt.certFile = args->certFile;
+        popt.keyFile = args->keyFile;
+        popt.pkiDir = (args->pkiDir && *args->pkiDir) ? args->pkiDir : "/run/opcua-interop/pki";
+        char perr[512];
+        if (pubsub_server_apply(server, &popt, perr, sizeof(perr)) != 0) {
+            fprintf(stderr, "[open62541] error: --pubsub-config: %s\n", perr);
+            UA_Server_run_shutdown(server);
+            UA_Server_delete(server);
+            pubsub_server_cleanup();
+            free(behCtxs); free(nsMap);
+            fixture_free(fixture);
+            return 1;
+        }
+    }
+#else
+    if (args->pubsubConfig && *args->pubsubConfig) {
+        fprintf(stderr, "[open62541] error: --pubsub-config: built without UA_ENABLE_PUBSUB\n");
+        UA_Server_run_shutdown(server);
+        UA_Server_delete(server);
+        free(behCtxs); free(nsMap);
+        fixture_free(fixture);
+        return 2;
+    }
+#endif
+
     for (int ri = 0; ri < args->reverseConnectCount; ri++) {
         UA_UInt64 handle = 0;
         UA_StatusCode rsc = UA_Server_addReverseConnect(
@@ -1772,8 +1823,15 @@ int server_run(const ServerArgs *args) {
         }
     }
 #endif
+#ifdef UA_ENABLE_PUBSUB
+    /* Stop publishing / subscribing before the server goes down */
+    UA_Server_disableAllPubSubComponents(server);
+#endif
     UA_Server_run_shutdown(server);
     UA_Server_delete(server);
+#ifdef UA_ENABLE_PUBSUB
+    pubsub_server_cleanup();
+#endif
 
     /* Remove ready file on clean shutdown */
     if (args->readyFile && *args->readyFile)

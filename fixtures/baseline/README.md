@@ -16,7 +16,8 @@ Objects (i=85)
     ├── Diagnostics   — adapter name, stack version, fixture id
     ├── Events        — EventNotifier source emitting deterministic BaseEvents
     ├── History       — gate-compliant fixed raw HistoryRead samples
-    └── Analog        — AnalogItemType variables with EURange (deadband filters)
+    ├── Analog        — AnalogItemType variables with EURange (deadband filters)
+    └── PubSub        — writable PubSub fields / TargetVariables, one per type
 ```
 
 ## Namespace
@@ -81,6 +82,32 @@ numeric node and is rejected on non-numeric ones (`BadFilterNotAllowed`). A
 notification is sent when `|value − last reported| > deadband`. Write
 `Analog.Setpoint` to drive a filter deterministically; `Analog.Level` gives a
 steady stream (deadband 10 → every 6th sample).
+
+## PubSub
+
+Writable variables without behaviours under
+`nsu=urn:otfabric:opcua-interop:model;s=PubSub` (Organizes, added in fixture
+content for adapter v0.8.0, schema unchanged). On a publisher they are
+published fields (a test writes them, the next NetworkMessage carries the new
+value); on a subscriber they are DataSetReader TargetVariables (written by the
+reader). Both adapters load them; only the open62541 adapter does PubSub.
+
+| Node | Type | ValueRank | Initial value |
+|---|---|---|---|
+| `PubSub.Boolean` | Boolean | -1 | `false` |
+| `PubSub.Int32` | Int32 | -1 | `0` |
+| `PubSub.Int64` | Int64 | -1 | `0` (the smoke publishes `Dynamic.Counter` into it) |
+| `PubSub.UInt64` | UInt64 | -1 | `0` |
+| `PubSub.Double` | Double | -1 | `0.0` |
+| `PubSub.String` | String | -1 | `""` |
+| `PubSub.DateTime` | DateTime | -1 | `2026-01-01T00:00:00Z` |
+| `PubSub.ByteString` | ByteString | -1 | empty |
+| `PubSub.Int32Array` | Int32 | 1 (ArrayDimensions `[0]`) | `[0, 0, 0]` |
+| `PubSub.DoubleArray` | Double | 1 (ArrayDimensions `[0]`) | `[0.0, 0.0, 0.0]` |
+
+Access: CurrentRead + CurrentWrite. `Dynamic.Counter` (Int64, +1 every
+250 ms) is a continuously changing source for publishers. The configurations
+in `pubsub/examples/` use these nodes (docs/CLIENT_CONTRACT.md §14).
 
 ## Methods
 

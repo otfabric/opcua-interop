@@ -35,7 +35,7 @@ this contract. Changes that break it require a major schema version bump.
 | `node-management` | AddNodes (Int32 Variable), Read, DeleteNodes, Read-after-delete |
 | `find-servers-on-network` | FindServersOnNetwork against a Local Discovery Server (mDNS records) |
 | `register-server` | RegisterServer2 / RegisterServer of an arbitrary server description with an LDS |
-| `codec` | Encode / decode built-in values in the OPC UA JSON and XML DataEncodings (no session needed for literals) |
+| `codec` | Encode / decode built-in values in the OPC UA JSON and XML DataEncodings (no session needed for literals); PubSub NetworkMessages (UADP / JSON, §14) |
 
 Which of these (and which optional features) an image provides is declared by
 `print-capabilities` (§13). A feature the underlying stack does not implement is
@@ -324,6 +324,10 @@ codec decode --format json|xml --type <BuiltInType|Variant|DataValue>
 
 codec --endpoint <url> --node <nodeId> [--node ...]        (short form: both formats per node)
 codec --decode json|xml --type <BuiltInType|Variant|DataValue>   (short form of decode)
+
+codec pubsub-uadp-encode | pubsub-uadp-decode | pubsub-json-encode | pubsub-json-decode
+             [--document <text> | --input <file>]          (default: stdin)
+             [--metadata <json> | --metadata-file <file>]   (PubSub NetworkMessages, §14.9)
 ```
 
 | Flag | Description |
@@ -1131,6 +1135,7 @@ supplied. The server must exit with code 6.
 | `--mdns-capability <cap>` | mDNS / RegisterServer2 server capability (repeatable) | `NA` (`--lds`: `LDS`) |
 | `--register-with <lds-url>` | Register with an LDS: RegisterServer2, falling back to RegisterServer; repeated periodically; unregistered (`IsOnline=false`) on SIGTERM | — |
 | `--register-interval-ms <n>` | Re-registration period | 30000 |
+| `--pubsub-config <file>` | open62541: OPC UA PubSub (Part 14) configuration — a JSON file with a `PubSubConfigurationDataType`, security groups and SKS settings (§14). Applied after startup; the ready file is only written once it is applied; an invalid configuration exits 1. Milo: refused (exit 2) | — |
 
 Notes on the discovery flags:
 
@@ -1205,12 +1210,13 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 
 | Field | Meaning |
 |-------|---------|
-| `adapter.version` | `0.7.0` |
+| `adapter.version` | `0.8.0` |
 | `clientOperations` | the `client` subcommands the image has |
 | `clientFeatures` | optional client-side features (strings below) |
 | `serverFeatures` | optional server-side features (strings below) |
 | `securityProfiles` | `{policy, mode}` pairs usable on both the client and the server side |
 | `codec` | `{formats, jsonVersion, jsonModes, xmlEncodeUnsupported, xmlDecodeUnsupported}` |
+| `pubsub` | PubSub (Part 14) support, §14.11. Milo: `{"supported": false, …}` with empty lists |
 
 | Feature string | In | open62541 | Milo | Meaning |
 |----------------|----|:---------:|:----:|---------|
@@ -1223,6 +1229,7 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `register-server2` | client | ✓ | ✓ | `register-server` can call RegisterServer2 |
 | `codec-json`, `codec-xml` | client | ✓ | ✓ | `codec` formats |
 | `codec-json-verbose` | client | — | ✓ | `codec --json-mode verbose` |
+| `codec-pubsub` | client | ✓ | — | `codec pubsub-{uadp,json}-{encode,decode}` (§14.9) |
 | `deadband` | server | ✓ | ✓ | DataChangeFilter absolute deadband / trigger honoured |
 | `percent-deadband` | server | ✓ | ✓ | percent deadband on AnalogItems with EURange (`Analog.*`) |
 | `reverse-connect` | server | ✓ | — | `--reverse-connect` |
@@ -1230,6 +1237,7 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `mdns` | server | ✓ | — | `--mdns-name`, FindServersOnNetwork |
 | `register-with` | server | ✓ | ✓ | `--register-with` |
 | `node-management` | server | ✓ | — | AddNodes / DeleteNodes served |
+| `pubsub` | server | ✓ | — | `--pubsub-config`, PubSub information model, SKS (§14) |
 
 Eclipse Milo 1.1.8 has no ReverseHello in its transports
 (`opc-ua-stack/stack-core/.../channel/messages/MessageType.java` knows only
@@ -1238,3 +1246,575 @@ Hello / Acknowledge / Error), no ECC `SecurityPolicy`
 `Aes256_Sha256_RsaPss`) and its server answers RegisterServer, RegisterServer2
 and FindServersOnNetwork with `Bad_ServiceUnsupported`
 (`opc-ua-sdk/sdk-server/.../servicesets/impl/DefaultDiscoveryServiceSet.java`).
+It has no PubSub implementation either (§14.12).
+
+---
+
+## 14. PubSub (OPC UA Part 14)
+
+Added in adapter **0.8.0**, open62541 adapter only (Eclipse Milo 1.1.8 has no
+PubSub implementation, §14.12). Declared in `print-capabilities` →
+`pubsub` (§14.11), `serverFeatures` `pubsub`, `clientFeatures` `codec-pubsub`.
+
+The open62541 image is built with `UA_ENABLE_PUBSUB`,
+`UA_ENABLE_PUBSUB_INFORMATIONMODEL` (with the configuration methods),
+`UA_ENABLE_PUBSUB_SKS`, `UA_ENABLE_PUBSUB_FILE_CONFIG`, `UA_ENABLE_MQTT` and
+the JSON encoding, still as the single-file amalgamation. Three adapter-side
+additions make that work and are the only places where the adapter goes beyond
+stock v1.5.9 (all in `open62541/`):
+
+| What | Why |
+|------|-----|
+| `amalgam/inline_mqtt.py` | `tools/amalgamate.py` drops the two quoted `#include` lines through which `arch/common/eventloop_mqtt.c` pulls in the MQTT-C submodule, so the amalgamation does not compile with `UA_ENABLE_MQTT`. The script inlines `deps/mqtt-c/include/mqtt.h` and `src/mqtt.c` before the amalgamation is generated. No behaviour change |
+| `amalgam/backport_json_reader.py` | In v1.5.9 `UA_DataSetReader_checkIdentifier` is an unimplemented TODO for JSON and rejects **every** JSON NetworkMessage, so no open62541 subscriber could receive `pubsub-mqtt-json`. The script applies the matching logic of upstream master: PublisherId compared by value across the numeric widths (JSON carries numeric PublisherIds as strings), DataSetWriterId matched against the decoded JSON DataSetMessages (0 = any) |
+| `src/pubsub_security.c` | v1.5.9 implements the PubSub message security policies `PubSub-Aes128-CTR` / `PubSub-Aes256-CTR` for mbedTLS only; the adapter is built on OpenSSL (ECC SecureChannel policies). The file is an OpenSSL port of the mbedTLS plugins (HMAC-SHA256 signature, AES-CTR with KeyNonce‖MessageNonce‖counter starting at 1, P_SHA256 key derivation) installed as `pubSubConfig.securityPolicies` |
+
+### 14.1 `server --pubsub-config <file>`
+
+```
+server --fixture /fixtures/baseline/fixture.json --pubsub-config /pubsub/udp-unicast-publisher.json
+       [--certificate … --private-key … --pki-dir …]     (only for sksClient / serveSks)
+```
+
+The configuration is applied **after** the server started (the EventLoop with
+the UDP and MQTT connection managers and the SKS client must be running) and
+**before** the ready file is written: a ready server has its PubSub
+configuration in place. Any error (malformed JSON, a configuration open62541
+rejects, an unknown SecurityGroupId, …) is logged as
+`[open62541] error: --pubsub-config: <reason>: <StatusCode>` and the server
+exits 1. Progress is logged on stderr (`[open62541] info: pubsub: …`), e.g.
+the created components and `configuration applied (…)`.
+
+The file is one JSON object; unknown top-level members are an error:
+
+| Member | Type | Meaning |
+|--------|------|---------|
+| `configuration` | object, **required** | A `PubSubConfigurationDataType` in the OPC UA 1.05 JSON encoding (§14.2) |
+| `securityGroups` | array | SecurityGroups referenced by `SecurityGroupId` of WriterGroups / ReaderGroups with `SecurityMode` Sign (2) or SignAndEncrypt (3), and the groups an SKS serves (§14.5) |
+| `serveSks` | boolean | This server is the Security Key Service of every listed group: the groups are created under `PublishSubscribe.SecurityGroups` (i=15443) with keys generated by open62541, `GetSecurityKeys` serves them, local groups use them. Default `false` |
+| `sksClient` | object | Pull the keys of the listed groups that have no `keys` from a remote SKS with `GetSecurityKeys` (§14.5) |
+| `deltaFrames` | boolean | Let DataSetWriters send DeltaFrames between KeyFrames (open62541 `pubSubConfig.enableDeltaFrames`, server-wide). Default `false`, see §14.10 |
+
+`securityGroups[]`:
+
+| Member | Type | Default | Meaning |
+|--------|------|---------|---------|
+| `securityGroupId` | string | required | The `SecurityGroupId` (open62541 uses the SecurityGroup *name* as its id) |
+| `securityPolicyUri` | string | `…#PubSub-Aes256-CTR` | `http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR` or `…#PubSub-Aes256-CTR` |
+| `keyLifetimeMs` | number | 60000 | KeyLifetime (SKS only) |
+| `maxFutureKeyCount` / `maxPastKeyCount` | number | 2 / 1 | SKS only |
+| `keys` | array of `{"tokenId": n, "key": "<Base64>"}` | — | Static keys. `key` is the key data exactly as `GetSecurityKeys` returns it: `SigningKey ‖ EncryptingKey ‖ KeyNonce` = 32+16+4 = **52 bytes** (Aes128-CTR) or 32+32+4 = **68 bytes** (Aes256-CTR). The **first** entry is activated with its `tokenId` as SecurityTokenId; static keys do not roll over. Not allowed together with `serveSks` |
+
+`sksClient`:
+
+| Member | Default | Meaning |
+|--------|---------|---------|
+| `endpointUrl` | required | `opc.tcp://…` endpoint of the SKS |
+| `securityPolicyUri` | `…#Basic256Sha256` | SecureChannel policy (full URI or short name) |
+| `securityMode` | `SignAndEncrypt` | `Sign` or `SignAndEncrypt` (`GetSecurityKeys` requires SignAndEncrypt on an open62541 SKS) |
+| `username` / `password` | — | UserName identity (otherwise Anonymous) |
+
+The SKS client uses the server's `--certificate` / `--private-key` as its
+application certificate (ApplicationUri = the certificate's URI SAN) and trusts
+`<--pki-dir>/trusted/certs/*` (default `/run/opcua-interop/pki`). The first
+`GetSecurityKeys` is retried every 2 s until it succeeds (the SKS may start
+later); afterwards open62541 refreshes the keys itself (at half the KeyLifetime
+before the last key is used) and rolls over at `TimeToNextKey`.
+
+### 14.2 JSON encoding of `configuration`
+
+`configuration` is decoded by open62541's `UA_decodeJson` into
+`UA_TYPES[UA_TYPES_PUBSUBCONFIGURATIONDATATYPE]`, i.e. the OPC UA 1.05 JSON
+DataEncoding ("compact"/non-reversible field names as in the NodeSet:
+`PublishedDataSets`, `Connections`, `Enabled`, …). Conventions:
+
+- **ExtensionObjects** (`Address`, `TransportSettings`, `MessageSettings`,
+  `DataSetSource`, `SubscribedDataSet`): `{"UaTypeId": "<DataType NodeId>",
+  "UaBody": { …fields… }}`. The 1.05 in-situ form `{"UaTypeId": "…", …fields…}`
+  is accepted too (the adapter rewrites it to `UaBody`, open62541 v1.5.9 only
+  decodes that), and a `UaTypeId` naming the DefaultBinary / DefaultXml
+  encoding NodeId is mapped to the DataType NodeId.
+- **NodeIds** are strings; `nsu=<uri>;…` is resolved against the server's
+  NamespaceArray, so use `nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32`
+  instead of a namespace index.
+- **PublisherId** is a Variant: `{"UaType": 5, "Value": 2234}` (UaType 3 Byte,
+  5 UInt16, 7 UInt32, 9 UInt64 — Value then a decimal string —, 12 String).
+- **Enumerations** are numbers: `SecurityMode` 1 None, 2 Sign, 3
+  SignAndEncrypt; `AttributeId` 13 = Value.
+- **Masks** are numbers (`NetworkMessageContentMask`, `DataSetMessageContentMask`,
+  `DataSetFieldContentMask`).
+- Durations in milliseconds (`PublishingInterval`, `MessageReceiveTimeout`).
+
+DataType NodeIds used in `UaTypeId`:
+
+| DataType | NodeId | Where |
+|----------|--------|-------|
+| NetworkAddressUrlDataType | `i=15510` | `Connection.Address`, `DatagramWriterGroupTransport2DataType.Address` |
+| PublishedDataItemsDataType | `i=15581` | `PublishedDataSet.DataSetSource` |
+| UadpWriterGroupMessageDataType | `i=15645` | `WriterGroup.MessageSettings` (UADP) |
+| UadpDataSetWriterMessageDataType | `i=15652` | `DataSetWriter.MessageSettings` (UADP) |
+| UadpDataSetReaderMessageDataType | `i=15653` | `DataSetReader.MessageSettings` (UADP) |
+| JsonWriterGroupMessageDataType | `i=15657` | `WriterGroup.MessageSettings` (JSON) |
+| JsonDataSetWriterMessageDataType | `i=15664` | `DataSetWriter.MessageSettings` (JSON) |
+| JsonDataSetReaderMessageDataType | `i=15665` | `DataSetReader.MessageSettings` (JSON) |
+| DatagramWriterGroupTransport2DataType | `i=23613` | `WriterGroup.TransportSettings` (UDP unicast destination) |
+| BrokerWriterGroupTransportDataType | `i=15667` | `WriterGroup.TransportSettings` (MQTT `QueueName`) |
+| BrokerDataSetReaderTransportDataType | `i=15670` | `DataSetReader.TransportSettings` (MQTT `QueueName`) |
+| TargetVariablesDataType | `i=15631` | `DataSetReader.SubscribedDataSet` |
+
+### 14.3 Which fields are honoured
+
+The adapter builds the configuration with the open62541 API
+(`UA_Server_addPubSubConnection`, `_addPublishedDataSet`, `_addDataSetField`,
+`_addWriterGroup`, `_addDataSetWriter`, `_addReaderGroup`,
+`_addDataSetReader`, `_setDataSetReaderTargetVariables`, then the
+`_enable…` calls) rather than `UA_Server_loadPubSubConfigFromByteString`,
+whose v1.5.9 implementation drops the WriterGroup / ReaderGroup
+`SecurityGroupId`, the ReaderGroup and DataSetReader `TransportSettings` (the
+MQTT QueueName of a subscriber) and ignores errors of nested components.
+"Passed" = handed to open62541 unchanged; what open62541 then does with it is
+noted.
+
+| Structure | Honoured | Ignored |
+|-----------|----------|---------|
+| PubSubConfigurationDataType | `PublishedDataSets`, `Connections`, `Enabled` (false: everything is created but nothing enabled) | — |
+| PublishedDataSetDataType | `Name`, `DataSetSource` (**PublishedDataItemsDataType only**; PublishedEvents → error `BadNotImplemented`), `DataSetMetaData.Fields[i]`: `Name` (field name = JSON key), `FieldFlags` bit 0 (PromotedField), `MaxStringLength`, `Description`, `DataSetFieldId`; `DataSetMetaData.ConfigurationVersion` → field configuration version | `DataSetFolder`, `ExtensionFields`, the other `DataSetMetaData` members (types are taken from the published Variables; open62541 generates the DataSetMetaData and its ConfigurationVersion itself) |
+| PublishedVariableDataType | `PublishedVariable`, `AttributeId` (0 → Value), `IndexRange` (applied when sampling); `SamplingIntervalHint`, `DeadbandType`, `DeadbandValue`, `SubstituteValue`, `MetaDataProperties` passed (not evaluated by v1.5.9: every publish reads the current value) | — |
+| PubSubConnectionDataType | `Name`, `Enabled`, `PublisherId`, `TransportProfileUri`, `Address` (NetworkAddressUrlDataType: `Url`, `NetworkInterface`), `ConnectionProperties`, `TransportSettings` (passed), `WriterGroups`, `ReaderGroups`. `mqtt://` URLs are rewritten to `opc.mqtt://` (the only MQTT scheme v1.5.9 parses); `mqtts://` → error | — |
+| WriterGroupDataType | `Name`, `Enabled`, `WriterGroupId`, `PublishingInterval`, `SecurityMode`, `SecurityGroupId`, `GroupProperties`, `TransportSettings` (DatagramWriterGroupTransport2DataType `Address` for UDP unicast, BrokerWriterGroupTransportDataType `QueueName` for MQTT), `MessageSettings` (UADP: `NetworkMessageContentMask`, `GroupVersion`; JSON: the type selects the JSON encoding), `DataSetWriters`. `KeepAliveTime`, `Priority` passed (unused by v1.5.9). Up to 255 DataSetMessages per NetworkMessage | `SecurityKeyServices`, `MaxNetworkMessageSize`, `LocaleIds`, `HeaderLayoutUri`; JSON `NetworkMessageContentMask` (v1.5.9 always writes the full NetworkMessage header and the `Messages` array) |
+| DataSetWriterDataType | `Name`, `Enabled`, `DataSetWriterId`, `DataSetFieldContentMask` (0 = Variant, `RawData` 0x20, else DataValue with the selected StatusCode / timestamps / picoseconds), `KeyFrameCount`, `DataSetName` (→ PublishedDataSet; empty = heartbeat writer), `DataSetWriterProperties`, `MessageSettings` (UADP / JSON `DataSetMessageContentMask`), `TransportSettings` (passed) | UADP `ConfiguredSize` / `NetworkMessageNumber` / `DataSetOffset` (fixed layouts: open62541 warns and resets them) |
+| ReaderGroupDataType | `Name`, `Enabled`, `SecurityMode`, `SecurityGroupId`, `GroupProperties`, `TransportSettings` if a BrokerDataSetReaderTransportDataType, `DataSetReaders`. The encoding (JSON / UADP) follows the connection's TransportProfileUri (`pubsub-mqtt-json`) or a JsonDataSetReaderMessageDataType on the first reader. MQTT: the group subscribes one topic — its own BrokerDataSetReaderTransportDataType, else the readers' (all must name the same `QueueName`) | `SecurityKeyServices`, `MaxNetworkMessageSize`, `MessageSettings` |
+| DataSetReaderDataType | `Name`, `Enabled`, `PublisherId` (an empty Variant leaves the reader at Byte 0: v1.5.9 has no "any publisher" — set it), `WriterGroupId`, `DataSetWriterId`, `DataSetMetaData` (field count, names for JSON, types for RawData; `MaxStringLength` is required for String/ByteString with RawData), `DataSetFieldContentMask`, `MessageReceiveTimeout` (ms; 0 = none, §14.10), `MessageSettings`, `TransportSettings` (passed; MQTT QueueName see ReaderGroup), `SubscribedDataSet` = TargetVariablesDataType | `KeyFrameCount`, `HeaderLayoutUri`, `SecurityMode` / `SecurityGroupId` / `SecurityKeyServices` (security is per ReaderGroup), `DataSetReaderProperties`; `SubscribedDataSetMirrorDataType` → error `BadNotImplemented` |
+| FieldTargetDataType | `TargetNodeId`, `AttributeId`, `ReceiverIndexRange` (v1.5.9 uses it as the IndexRange of the write), `WriteIndexRange` (passed). TargetVariables[i] receives DataSetMetaData.Fields[i] (position, not `DataSetFieldId`) | `DataSetFieldId`, `OverrideValueHandling`, `OverrideValue` |
+
+Reader matching (UADP): a NetworkMessage is accepted when its PublisherId (if
+present) equals the reader's (same integer width!), its WriterGroupId (if the
+group header carries one) equals the reader's `WriterGroupId`, and — with a
+payload header — one of its DataSetWriterIds equals the reader's. JSON: the
+PublisherId is compared by value, `DataSetWriterId` 0 accepts any writer.
+
+### 14.4 Transports, addresses and the Docker networking contract
+
+| Profile | `TransportProfileUri` | Connection `Address.Url` | Extra |
+|---------|----------------------|--------------------------|-------|
+| UDP UADP | `http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp` | `opc.udp://<host>:<port>` | see below |
+| MQTT UADP | `…/pubsub-mqtt-uadp` | `mqtt://<broker>:<port>` (or `opc.mqtt://`) | WriterGroup BrokerWriterGroupTransportDataType `QueueName` = topic; DataSetReader (or ReaderGroup) BrokerDataSetReaderTransportDataType `QueueName` |
+| MQTT JSON | `…/pubsub-mqtt-json` | same | same; JSON message settings |
+
+**How open62541 v1.5.9 opens UDP sockets** (`ua_pubsub_connection.c`):
+
+- Connection `Url` host `localhost` or empty → *receive-all*: a socket bound to
+  `<port>` on all interfaces (IPv4 and IPv6), and **no** connection-level send
+  socket.
+- Any other host → a receive socket bound to that address (`bind()` — so it
+  must be a local address, `0.0.0.0`, or a multicast group, which is joined)
+  **and** a send socket to that address. A unicast destination that is not a
+  local address therefore cannot be the connection Url (`Cannot assign
+  requested address` → `BadConnectionRejected`).
+- Unicast publishing therefore uses a receive-all connection
+  (`opc.udp://localhost:<any free port>`) and the destination in the
+  WriterGroup `TransportSettings` = DatagramWriterGroupTransport2DataType
+  `{"Address": NetworkAddressUrlDataType {"Url": "opc.udp://<dest>:<port>"}}`.
+  The destination host name is resolved when the configuration is applied:
+  it must resolve then (start the subscriber container first; a host name that
+  does not resolve fails the WriterGroup).
+
+| Direction | Configuration | Docker |
+|-----------|---------------|--------|
+| container publishes → host (unicast) | connection `opc.udp://localhost:<p>`, WriterGroup DatagramWriterGroupTransport2DataType `opc.udp://host.docker.internal:<host-port>` | Linux: `--add-host host.docker.internal:host-gateway` (Docker Desktop resolves it by itself; the flag is harmless there). The host listens on `0.0.0.0:<host-port>`; on Docker Desktop the datagrams arrive from `127.0.0.1` |
+| host publishes → container (unicast) | subscriber connection `opc.udp://0.0.0.0:<p>` (or `opc.udp://localhost:<p>`, receive-all) | `-p <p>:<p>/udp`; the host sends to `127.0.0.1:<p>` (or the host's address) |
+| container ↔ container (unicast) | as above, destination = the peer's container name / network alias | same Docker network |
+| multicast | publisher and subscriber connection `opc.udp://224.0.0.22:<p>` (any group) | container ↔ container on the same Docker network (bridge networks forward multicast between containers). **Not** between the macOS host and Docker Desktop (the VM boundary drops multicast); on Linux use `--network host` for host ↔ container multicast |
+
+Verified on macOS / Docker Desktop with the exact addresses above (host
+listener on `0.0.0.0:5555` ← container `opc.udp://host.docker.internal:5555`;
+host sender → `127.0.0.1:4841` → container `opc.udp://0.0.0.0:4841` with
+`-p 4841:4841/udp`, also with `opc.udp://localhost:4841`), and container ↔
+container unicast and multicast by `scripts/pubsub-smoke.sh`.
+
+**MQTT** (v1.5.9 MQTT-C client): MQTT 3.1.1, clean session, empty client id
+(the broker assigns one), keep-alive 400 s, QoS 0 publish and subscribe, no
+retain, no TLS, and the PubSubConnection `ConnectionProperties` /
+`authenticationProfileUri` are not used for MQTT credentials (anonymous only).
+The MQTT-C send and receive buffers are **1024 bytes**: a NetworkMessage
+(including the MQTT header) must stay below about 1000 bytes. The JSON
+message of the example data set (10 fields) is ~690 bytes. `MetaDataQueueName`
+is not used (no metadata publishing). The broker for the tests:
+`eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c`
+with `mqtt/mosquitto.conf` (README "MQTT broker").
+
+### 14.5 Message security and keys
+
+UADP only: `SecurityMode` 2 (Sign) / 3 (SignAndEncrypt) on the WriterGroup /
+ReaderGroup with a `SecurityGroupId` listed in `securityGroups`. JSON message
+security is not defined by Part 14 and refused by open62541
+(`BadInternalError` when keys are set). Key sources per SecurityGroup:
+
+| Source | Configuration | Behaviour |
+|--------|---------------|-----------|
+| static | `keys` | The first key is set with `UA_Server_setWriterGroupEncryptionKeys` / `…ReaderGroup…` (SecurityTokenId = `tokenId`) |
+| SKS (this server) | `"serveSks": true` | `UA_Server_addSecurityGroup` under PublishSubscribe.SecurityGroups; open62541 generates the current and `maxFutureKeyCount` future keys (P_SHA256 of random secret / seed), rolls over every `keyLifetimeMs`; local groups activate the SKS keys; remote clients read them with `GetSecurityKeys` |
+| SKS pull | `sksClient` | `UA_Server_setSksClient` per group: `GetSecurityKeys(SecurityGroupId, 0, UInt32.Max)` on the SKS, keys activated when they arrive |
+| SKS push | none of the above | The groups start without keys; an SKS pushes them with `SetSecurityKeys` (PublishSubscribe i=17364) on a SignAndEncrypt session |
+
+The SecurityHeader carries the SecurityTokenId and an 8-byte MessageNonce
+(PubSub-Aes*-CTR); the signature is 32 bytes (HMAC-SHA256) over the whole
+message; the payload (DataSetMessages) is encrypted with AES-CTR, counter block
+= KeyNonce (4) ‖ MessageNonce (8) ‖ BlockCounter (4, big endian, from 1).
+
+### 14.6 Information model
+
+Available with or without `--pubsub-config`: `Server` →
+`PublishSubscribe` (i=14443) with every configured component as an object
+(connections are `ns=1;i=…` objects under PublishSubscribe, groups under their
+connection, writers / readers under their group; each has a `Status` object
+with `State` (Int32 PubSubState: 0 Disabled, 1 Paused, 2 Operational, 3 Error,
+4 PreOperational) and the `Enable` (i=14645) / `Disable` (i=14646) methods).
+`SupportedTransportProfiles` (i=17481) lists the three profiles above.
+Method argument conventions of open62541 v1.5.9 (call on the object noted;
+ExtensionObject arguments are binary-encoded with the DefaultBinary encoding
+NodeId, e.g. PubSubConnectionDataType i=15694):
+
+| Method (NodeId) | Object | Inputs | Outputs | Notes |
+|-----------------|--------|--------|---------|-------|
+| AddConnection (i=17366) | PublishSubscribe i=14443 | PubSubConnectionDataType | NodeId | Creates the connection with its WriterGroups / DataSetWriters / ReaderGroups / DataSetReaders. The **connection is created Disabled** (State 0) regardless of `Enabled`: call Enable on its Status object. With `Enabled` true the groups are set Operational and therefore wait as Paused (1) until the connection is enabled; DataSetWriters / DataSetReaders stay Disabled (`Enabled` of the nested structures is not evaluated) — enable them through their Status objects. WriterGroup `TransportSettings` / `MessageSettings` / `SecurityGroupId` are kept (JSON needs BrokerWriterGroupTransportDataType); DataSetWriters only get Name, DataSetWriterId, KeyFrameCount, DataSetFieldContentMask and the PublishedDataSet named by `DataSetName`; ReaderGroups only get `Name` (no security, no transport settings, always UADP — MQTT / JSON subscriptions cannot be built this way); DataSetReaders get PublisherId, WriterGroupId, DataSetWriterId, the field Name / DataType / BuiltInType / ValueRank of the metadata, and TargetVariables. On error the connection is removed again |
+| RemoveConnection (i=17369) | i=14443 | NodeId | — | `BadNodeIdUnknown` if unknown |
+| AddWriterGroup (i=17427) | the connection object | WriterGroupDataType | NodeId | As in AddConnection; JSON needs BrokerWriterGroupTransportDataType (`BadConfigurationError`); the group is created disabled (call Enable) |
+| AddReaderGroup (i=17465) | the connection object | ReaderGroupDataType | NodeId | Only `Name` is used (created disabled) |
+| RemoveGroup (i=14225) | the connection object | NodeId | — | WriterGroup or ReaderGroup of that connection |
+| AddDataSetWriter (i=17969) | the WriterGroup object | DataSetWriterDataType | NodeId | PublishedDataSet by `DataSetName` (`BadParentNodeIdInvalid` if none) |
+| RemoveDataSetWriter (i=17992) | the WriterGroup object | NodeId | — | |
+| AddDataSetReader (i=21082) | the ReaderGroup object | DataSetReaderDataType | NodeId | TargetVariables: each `TargetNodeId` is *added* as a new Variable under a folder (BrowseName = metadata `Name`) in Objects; when the NodeId already exists (a fixture variable) the add fails silently and the existing node becomes the target |
+| RemoveDataSetReader (i=21085) | the ReaderGroup object | NodeId | — | |
+| AddPublishedDataItems (i=14493, DataSetFolderType method referenced by PublishedDataSets) | PublishedDataSets i=17371 | String Name, String[] FieldNameAliases, DataSetFieldFlags[] (UInt16; 1 = PromotedField), PublishedVariableDataType[] | **3 outputs expected** (DataSetNodeId, ConfigurationVersion, AddResults); only DataSetNodeId is set | The three arrays must have the same length |
+| RemovePublishedDataSet (i=14499) | i=17371 | NodeId | — | |
+| AddDataSetFolder / RemoveDataSetFolder (i=16994 / i=16997) | i=17371 | String / NodeId | NodeId / — | |
+| AddVariables / RemoveVariables (i=14555 / i=14558) | PublishedDataItems object | — | — | Bound to a no-op that returns Good (not implemented) |
+| ReserveIds (i=25474) | PublishSubscribe.PubSubConfiguration (i=25451) | String TransportProfileUri, UInt16 #WriterGroupIds, UInt16 #DataSetWriterIds | Variant DefaultPublisherId (ApplicationUri String for MQTT profiles, else UInt64), UInt16[], UInt16[] | |
+| Enable / Disable (i=14645 / i=14646) | a component's `Status` object (or PublishSubscribe.Status i=17405) | — | — | Enable only from Disabled, Disable only when not Disabled (`BadInvalidState`). A reader in Error must be disabled and enabled again |
+| GetSecurityKeys (i=15215) | i=14443 | String SecurityGroupId, UInt32 StartingTokenId (0 = current), UInt32 RequestedKeyCount | String SecurityPolicyUri, UInt32 FirstTokenId, ByteString[] Keys, Duration TimeToNextKey, Duration KeyLifetime | **SignAndEncrypt session required** (`BadSecurityModeInsufficient` otherwise); unknown group `BadNotFound`; returns current + RequestedKeyCount future keys (capped). v1.5.9 bug: `TimeToNextKey` is a large negative number (it subtracts a monotonic clock from a wall-clock base time) — use KeyLifetime |
+| SetSecurityKeys (i=17364) | i=14443 | String SecurityGroupId, String SecurityPolicyUri, UInt32 CurrentTokenId, ByteString CurrentKey, ByteString[] FutureKeys, Duration TimeToNextKey, Duration KeyLifetime | — | SignAndEncrypt required; the group must exist locally (a WriterGroup / ReaderGroup with that SecurityGroupId) |
+| AddSecurityGroup (i=15444 on PublishSubscribe.SecurityGroups i=15443; i=15461 on SecurityGroupFolderType) | SecurityGroups folder | String SecurityGroupName, Duration KeyLifetime (Double accepted), String SecurityPolicyUri, UInt32 MaxFutureKeyCount, UInt32 MaxPastKeyCount | String SecurityGroupId (= the name), NodeId SecurityGroupNodeId | **Adapter binding**: v1.5.9 has no callback for this method; the adapter binds it to `UA_Server_addSecurityGroup`. Not restricted to encrypted sessions |
+| RemoveSecurityGroup (i=15447; i=15464 on SecurityGroupFolderType) | SecurityGroups folder | NodeId SecurityGroupNodeId | — | Adapter binding to `UA_Server_removeSecurityGroup` |
+| LoadPubSubConfigurationFile ("PubSub configuration", ns=0 numeric id assigned at startup) / DeletePubSubConfiguration | i=14443 | ByteString (UABinaryFileDataType holding a PubSubConfigurationDataType) / — | — | open62541 extensions from `UA_ENABLE_PUBSUB_FILE_CONFIG` |
+
+### 14.7 Fixture nodes
+
+The baseline fixture has a `PubSub` folder (`nsu=urn:otfabric:opcua-interop:model;s=PubSub`)
+with writable variables without behaviours — published fields on a publisher,
+TargetVariables on a subscriber: `PubSub.Boolean`, `PubSub.Int32`,
+`PubSub.Int64`, `PubSub.UInt64`, `PubSub.Double`, `PubSub.String`,
+`PubSub.DateTime`, `PubSub.ByteString`, `PubSub.Int32Array` (Int32[]),
+`PubSub.DoubleArray` (Double[]) — see `fixtures/baseline/README.md`.
+`Dynamic.Counter` (Int64, +1 every 250 ms) is a continuously changing source.
+
+### 14.8 Worked examples
+
+`pubsub/examples/` holds the configurations `scripts/pubsub-smoke.sh` runs
+(regenerate with `python3 pubsub/examples/generate.py pubsub/examples`). They
+use the network aliases `pubsub-publisher`, `pubsub-subscriber` and
+`mosquitto`; replace them with your addresses. All publish the same data set
+(`InteropDataSet`: `PubSub.Boolean`, `PubSub.Int32`, `Dynamic.Counter` as
+`Counter`, `PubSub.UInt64`, `PubSub.Double`, `PubSub.String`,
+`PubSub.DateTime`, `PubSub.ByteString`, `PubSub.Int32Array`,
+`PubSub.DoubleArray`) with PublisherId UInt16 2234, WriterGroupId 100,
+DataSetWriterId 1, PublishingInterval 100 ms, and the subscribers write it into
+the `PubSub.*` variables (Counter → `PubSub.Int64`).
+
+| Files | Transport |
+|-------|-----------|
+| `udp-unicast-{publisher,subscriber}.json` | UADP, unicast to `pubsub-subscriber:4841` |
+| `udp-multicast-{publisher,subscriber}.json` | UADP, `opc.udp://224.0.0.22:4840` |
+| `mqtt-uadp-{publisher,subscriber}.json` | UADP over `mqtt://mosquitto:1883`, topic `opcua-interop/uadp` |
+| `mqtt-json-{publisher,subscriber}.json` | JSON over MQTT, topic `opcua-interop/json` |
+| `udp-secure-{publisher,subscriber}.json` | UADP unicast, SignAndEncrypt, PubSub-Aes256-CTR, static key (token 1) |
+| `sks-{publisher,subscriber}.json` | publisher = SKS (`serveSks`), subscriber pulls with `sksClient` (Basic256Sha256 SignAndEncrypt, `test-user`) |
+| `sks-push-subscriber.json` | subscriber without keys (with `udp-secure-publisher.json`); the keys are pushed with SetSecurityKeys |
+
+Publisher, UDP unicast (two of the ten fields shown):
+
+```json
+{
+  "configuration": {
+    "PublishedDataSets": [{
+      "Name": "InteropDataSet",
+      "DataSetMetaData": {
+        "Name": "InteropDataSet",
+        "Fields": [
+          {"Name": "Int32",   "BuiltInType": 6, "DataType": "i=6", "ValueRank": -1},
+          {"Name": "Counter", "BuiltInType": 8, "DataType": "i=8", "ValueRank": -1}
+        ]
+      },
+      "DataSetSource": {"UaTypeId": "i=15581", "UaBody": {"PublishedData": [
+        {"PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32",   "AttributeId": 13},
+        {"PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter", "AttributeId": 13}
+      ]}}
+    }],
+    "Connections": [{
+      "Name": "InteropPublisher", "Enabled": true,
+      "PublisherId": {"UaType": 5, "Value": 2234},
+      "TransportProfileUri": "http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp",
+      "Address": {"UaTypeId": "i=15510", "UaBody": {"Url": "opc.udp://localhost:4840"}},
+      "WriterGroups": [{
+        "Name": "InteropWriterGroup", "Enabled": true, "WriterGroupId": 100,
+        "PublishingInterval": 100,
+        "MessageSettings": {"UaTypeId": "i=15645", "UaBody": {"NetworkMessageContentMask": 231}},
+        "TransportSettings": {"UaTypeId": "i=23613", "UaBody": {
+          "Address": {"UaTypeId": "i=15510", "UaBody": {"Url": "opc.udp://pubsub-subscriber:4841"}}}},
+        "DataSetWriters": [{
+          "Name": "InteropWriter", "Enabled": true, "DataSetWriterId": 1,
+          "DataSetName": "InteropDataSet", "KeyFrameCount": 1, "DataSetFieldContentMask": 0,
+          "MessageSettings": {"UaTypeId": "i=15652", "UaBody": {"DataSetMessageContentMask": 61}}
+        }]
+      }]
+    }],
+    "Enabled": true
+  }
+}
+```
+
+(`NetworkMessageContentMask` 231 = PublisherId | GroupHeader | WriterGroupId
+| SequenceNumber | PayloadHeader | Timestamp; `DataSetMessageContentMask` 61 =
+Timestamp | Status | MajorVersion | MinorVersion | SequenceNumber.)
+
+Subscriber, UDP unicast:
+
+```json
+{
+  "configuration": {
+    "Connections": [{
+      "Name": "InteropSubscriber", "Enabled": true,
+      "PublisherId": {"UaType": 5, "Value": 2235},
+      "TransportProfileUri": "http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp",
+      "Address": {"UaTypeId": "i=15510", "UaBody": {"Url": "opc.udp://0.0.0.0:4841"}},
+      "ReaderGroups": [{
+        "Name": "InteropReaderGroup", "Enabled": true,
+        "DataSetReaders": [{
+          "Name": "InteropReader", "Enabled": true,
+          "PublisherId": {"UaType": 5, "Value": 2234},
+          "WriterGroupId": 100, "DataSetWriterId": 1,
+          "DataSetMetaData": {"Name": "InteropDataSet", "Fields": [
+            {"Name": "Int32",   "BuiltInType": 6, "DataType": "i=6", "ValueRank": -1},
+            {"Name": "Counter", "BuiltInType": 8, "DataType": "i=8", "ValueRank": -1}
+          ]},
+          "MessageReceiveTimeout": 0,
+          "MessageSettings": {"UaTypeId": "i=15653", "UaBody": {
+            "NetworkMessageContentMask": 231, "DataSetMessageContentMask": 61}},
+          "SubscribedDataSet": {"UaTypeId": "i=15631", "UaBody": {"TargetVariables": [
+            {"TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32", "AttributeId": 13},
+            {"TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int64", "AttributeId": 13}
+          ]}}
+        }]
+      }]
+    }],
+    "Enabled": true
+  }
+}
+```
+
+MQTT JSON — the differences: `TransportProfileUri`
+`…/pubsub-mqtt-json`, `Address` `mqtt://mosquitto:1883`, WriterGroup
+`"TransportSettings": {"UaTypeId": "i=15667", "UaBody": {"QueueName": "opcua-interop/json"}}`
+and `"MessageSettings": {"UaTypeId": "i=15657", "UaBody": {"NetworkMessageContentMask": 11}}`,
+DataSetWriter `"MessageSettings": {"UaTypeId": "i=15664", "UaBody": {"DataSetMessageContentMask": 63}}`,
+DataSetReader `"TransportSettings": {"UaTypeId": "i=15670", "UaBody": {"QueueName": "opcua-interop/json"}}`
+and `"MessageSettings": {"UaTypeId": "i=15665", …}`. What open62541 publishes:
+
+```json
+{"MessageId":null,"MessageType":"ua-data","PublisherId":"2234","Messages":[{"DataSetWriterId":1,
+ "SequenceNumber":99,"MetaDataVersion":{"MajorVersion":2369083044,"MinorVersion":2369080796},
+ "Timestamp":"2026-10-23T20:54:39.758101Z","Status":{},"MessageType":"ua-keyframe",
+ "Payload":{"Boolean":{"UaType":1,"Value":false},"Int32":{"UaType":6,"Value":7731},
+  "Counter":{"UaType":8,"Value":"39"}, … ,"ByteString":{"UaType":15,"Value":null},
+  "Int32Array":{"UaType":6,"Value":[1,2,7731]}}}]}
+```
+
+Security — on both the WriterGroup and the ReaderGroup
+`"SecurityMode": 3, "SecurityGroupId": "InteropGroup"`, plus on both sides:
+
+```json
+"securityGroups": [{
+  "securityGroupId": "InteropGroup",
+  "securityPolicyUri": "http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes256-CTR",
+  "keys": [{"tokenId": 1,
+            "key": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyBlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhKGio6Q="}]
+}]
+```
+
+(signing key 0x01…0x20, encrypting key 0x65…0x84, key nonce A1 A2 A3 A4.)
+With an SKS instead of static keys: the publisher has `"serveSks": true` and
+the group without `keys`; the subscriber has the group without `keys` and
+`"sksClient": {"endpointUrl": "opc.tcp://pubsub-publisher:4840/opcua-interop",
+"securityPolicyUri": "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
+"securityMode": "SignAndEncrypt", "username": "test-user", "password": "test-password"}`
+— both servers started with `--certificate`, `--private-key`, `--pki-dir`.
+
+### 14.9 `codec` PubSub operations
+
+Byte-level interop of the message mappings without a transport, with
+open62541's `UA_NetworkMessage_encodeBinary` / `_decodeBinary` /
+`_encodeJson` / `_decodeJson`:
+
+| Op | Input (`--document`, `--input` or stdin) | Result |
+|----|------------------------------------------|--------|
+| `pubsub-uadp-encode` | description (JSON) | `encoded` = UADP NetworkMessage (Base64), `length` |
+| `pubsub-uadp-decode` | UADP NetworkMessage (Base64 text) | `networkMessage` = description, `reencoded` (Base64), `reencodeStatusCode` |
+| `pubsub-json-encode` | description (JSON) | `encoded` = the JSON NetworkMessage (as a JSON string), `length` |
+| `pubsub-json-decode` | JSON NetworkMessage | `networkMessage`, `reencoded` (JSON string), `reencodeStatusCode` |
+
+`--metadata <json>` / `--metadata-file <file>`: a `DataSetMetaDataType` (OPC
+UA JSON, applies to every DataSetMessage) or
+`[{"dataSetWriterId": n, "metaData": <DataSetMetaDataType>}, …]`. Needed to
+decode **RawData** (field types, ValueRank, ArrayDimensions,
+MaxStringLength) and a UADP message without payload header (the
+DataSetMessage count); for JSON it orders the Payload keys and names the
+fields. Encoding builds the metadata from the description's field `name` /
+value types unless `--metadata` is given (e.g. for MaxStringLength padding).
+
+Result envelope (operation `codec`), e.g.:
+
+```json
+{"action":"pubsub-uadp-encode","mapping":"uadp","statusCode":{"name":"Good","code":0,"severity":"Good"},
+ "encoded":"8SG6CAlkAAcAAU30hyYcRNVi3QEJAwAEAAb7////DAIAAABoaQn//////////4YDAAAAAQAAAAIAAAADAAAA","length":63}
+```
+
+An encode / decode failure: `success: false`, `serviceResult` = the stack's
+status (`BadDecodingError`, `BadEncodingError`, `BadNotImplemented`, …), exit
+4; a malformed description or option: exit 2 (`error.category: "input"`).
+
+**Description of a NetworkMessage.** Members are present only when the
+corresponding header field / flag is present (on decode) and enable it when
+present (on encode):
+
+| Member | Type | Mapping |
+|--------|------|---------|
+| `mapping` | `"uadp"` \| `"json"` | output only |
+| `version` | number | UADP version (low 4 bits of the first byte; default 1). UADP only |
+| `messageId` | string | JSON `MessageId` |
+| `publisherId` | `{"type": "Byte"\|"UInt16"\|"UInt32"\|"UInt64"\|"String", "value": …}` | UInt64 value as a decimal string. JSON decoding yields `UInt64` for numeric ids (JSON has no width) |
+| `dataSetClassId` | Guid string | |
+| `groupHeader` | `{"writerGroupId", "groupVersion", "networkMessageNumber", "sequenceNumber"}` — each optional | UADP GroupHeader |
+| `payloadHeader` | boolean | UADP PayloadHeader (DataSetWriterIds on the wire; default `true` on encode). Always true for JSON |
+| `timestamp` | RFC 3339 UTC, **7 fractional digits** (full 100 ns resolution) | NetworkMessage Timestamp |
+| `picoseconds` | number | |
+| `promotedFields` | `[{"dataType", "builtInType", "value"}, …]` | UADP PromotedFields |
+| `security` | `{"signed", "encrypted", "forceKeyReset", "securityTokenId", "nonce": "<Base64>", ["securityFooterSize"]}` | UADP SecurityHeader — **fields only**: nothing is signed, encrypted, verified or decrypted (the standalone API has no security; signed / encrypted traffic is covered by the live path, §14.5) |
+| `securityFooter` | Base64 | |
+| `chunk` | boolean | UADP chunk flag (decoded; chunked payloads are not reassembled) |
+| `messages` | array of DataSetMessages (max 32) | |
+
+DataSetMessage:
+
+| Member | Type | Mapping |
+|--------|------|---------|
+| `dataSetWriterId` | number | from the payload header (UADP) / `DataSetWriterId` (JSON); absent on decode when not on the wire |
+| `messageType` | `KeyFrame` \| `DeltaFrame` \| `KeepAlive` \| `Event` | JSON: KeyFrame only; Event: `BadNotImplemented` |
+| `fieldEncoding` | `Variant` \| `RawData` \| `DataValue` | JSON decode always reports `DataValue` |
+| `valid` | boolean | DataSetFlags1 bit 0 (default true) |
+| `sequenceNumber` | number (UInt16) | |
+| `timestamp`, `picoseconds` | as above | |
+| `status` | number (UInt16) | UADP: the 16-bit status; JSON `Status` (a StatusCode; open62541 rejects values > 65535 on decode) |
+| `configVersion` | `{"majorVersion", "minorVersion"}` | UADP ConfigurationVersion / JSON `MetaDataVersion` |
+| `fields` | array | KeyFrame: one per field; DeltaFrame: with `index` |
+
+Field: `{["name"], ["index"], "dataType", "builtInType", ["arrayDimensions"], "value"}` —
+the canonical Variant encoding of §7 (`dataType` "Null" / `value` null for an
+empty Variant; arrays are JSON arrays). With `fieldEncoding: "DataValue"` also
+`statusCode` (§7 object; on encode also a number), `sourceTimestamp`,
+`sourcePicoseconds`, `serverTimestamp`, `serverPicoseconds` (timestamps with 7
+fractional digits). `name` comes from the metadata (or the JSON Payload key);
+on encode it becomes the JSON Payload key. Field values follow §7 (DateTime
+values at millisecond precision; Int64 / UInt64 as strings).
+
+Example (`pubsub-uadp-decode` of the message above):
+
+```json
+{"mapping":"uadp","version":1,"publisherId":{"type":"UInt16","value":2234},
+ "groupHeader":{"writerGroupId":100,"sequenceNumber":7},"payloadHeader":true,
+ "timestamp":"2026-10-23T10:00:00.1234567Z","chunk":false,
+ "messages":[{"dataSetWriterId":62541,"messageType":"KeyFrame","fieldEncoding":"Variant","valid":true,
+   "sequenceNumber":3,"fields":[{"dataType":"Int32","builtInType":6,"value":-5},
+     {"dataType":"String","builtInType":12,"value":"hi"},
+     {"dataType":"UInt64","builtInType":9,"value":"18446744073709551615"},
+     {"dataType":"Int32","builtInType":6,"value":[1,2,3]}]}]}
+```
+
+JSON example — description
+`{"messageId":"m-1","publisherId":{"type":"String","value":"pub-a"},"messages":[{"dataSetWriterId":7,"messageType":"KeyFrame","fieldEncoding":"DataValue","sequenceNumber":9,"timestamp":"2026-10-23T10:00:00Z","status":0,"configVersion":{"majorVersion":1,"minorVersion":2},"fields":[{"name":"Temp","dataType":"Double","value":21.5,"sourceTimestamp":"2026-10-23T09:59:59.5Z"}]}]}`
+encodes to
+`{"MessageId":"m-1","MessageType":"ua-data","PublisherId":"pub-a","Messages":[{"DataSetWriterId":7,"SequenceNumber":9,"MetaDataVersion":{"MajorVersion":1,"MinorVersion":2},"Timestamp":"2026-10-23T10:00:00Z","Status":{},"MessageType":"ua-keyframe","Payload":{"Temp":{"UaType":11,"Value":21.5,"SourceTimestamp":"2026-10-23T09:59:59.5Z"}}}]}`.
+
+### 14.10 open62541 v1.5.9 behaviour and limits
+
+| Feature | Status |
+|---------|--------|
+| UADP over UDP unicast / multicast, MQTT | ✓ publish and subscribe |
+| JSON over MQTT | ✓ publish; subscribe with the backport above. JSON over UDP is not a Part 14 profile (not offered) |
+| Field encodings | Variant, DataValue, RawData (RawData subscribing needs `MaxStringLength` for String / ByteString fields) |
+| KeyFrames | ✓ |
+| DeltaFrames | UADP encode / decode ✓ (not RawData). Published only with `"deltaFrames": true`; v1.5.9 then sends KeyFrameCount DeltaFrames after each KeyFrame (one more than Part 14 — even KeyFrameCount 1 alternates Key / Delta). **The v1.5.9 DataSetReader discards DeltaFrames** ("Only keyframes are supported"), hence off by default |
+| KeepAlive DataSetMessages | codec ✓; a writer with an empty `DataSetName` sends heartbeat KeyFrames with 0 fields |
+| Event DataSetMessages, PublishedEvents | ✗ (`BadNotImplemented`) |
+| Chunked NetworkMessages | ✗ (flag only) |
+| Promoted fields, DataSetClassId, GroupVersion, picoseconds | ✓ |
+| Discovery messages (DataSetMetaData / announcements), MetaDataQueueName | ✗ |
+| SubscribedDataSetMirror, StandaloneSubscribedDataSets via the configuration | ✗ (TargetVariables only) |
+| Fixed layouts (ConfiguredSize, NetworkMessageNumber, DataSetOffset) | ✗ (reset with a warning) |
+| MessageReceiveTimeout | ✓ — the reader goes to **Error** and stays there: later messages are dropped until it is disabled and enabled again (Status methods). The examples use 0 |
+| JSON `MessageId` | always `null` |
+| JSON metadata version | generated by open62541 (not the configured ConfigurationVersion) |
+| Security | UADP only, PubSub-Aes128-CTR / PubSub-Aes256-CTR (OpenSSL port) |
+| SKS | server (`GetSecurityKeys`, `SetSecurityKeys`), pull client, push target; `AddSecurityGroup` / `RemoveSecurityGroup` via the adapter binding; `TimeToNextKey` from GetSecurityKeys is wrong (negative) |
+| MQTT | QoS 0, anonymous, no TLS, 1024-byte buffers |
+| `UA_NetworkMessage_encodeJson` | needs encoding metadata for every DataSetWriterId (v1.5.9 dereferences NULL otherwise); the codec always provides it |
+
+### 14.11 `print-capabilities` → `pubsub`
+
+open62541:
+
+```json
+"pubsub": {
+  "supported": true,
+  "serverFlag": "--pubsub-config",
+  "roles": ["publisher", "subscriber"],
+  "transports": ["udp-uadp", "mqtt-uadp", "mqtt-json"],
+  "transportProfiles": ["http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp", "…/pubsub-mqtt-uadp", "…/pubsub-mqtt-json"],
+  "udp": {"unicast": true, "multicast": true},
+  "encodings": ["uadp", "json"],
+  "fieldEncodings": ["Variant", "DataValue", "RawData"],
+  "dataSetMessageTypes": {"uadp": ["KeyFrame", "DeltaFrame", "KeepAlive"], "json": ["KeyFrame"]},
+  "publishedDataSets": ["PublishedDataItems"],
+  "subscribedDataSets": ["TargetVariables"],
+  "securityPolicies": ["http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR", "…#PubSub-Aes256-CTR"],
+  "securityModes": ["None", "Sign", "SignAndEncrypt"],
+  "securityEncodings": ["uadp"],
+  "keySources": ["static", "sks-pull", "sks-push", "sks-server"],
+  "sks": {"server": true, "pull": true, "push": true, "methods": ["GetSecurityKeys", "SetSecurityKeys", "AddSecurityGroup", "RemoveSecurityGroup"]},
+  "informationModel": true,
+  "informationModelMethods": ["AddConnection", "RemoveConnection", "AddWriterGroup", "AddReaderGroup", "RemoveGroup", "…"],
+  "codecOps": ["pubsub-uadp-encode", "pubsub-uadp-decode", "pubsub-json-encode", "pubsub-json-decode"],
+  "codecSecurity": false
+}
+```
+
+Milo:
+
+```json
+"pubsub": {"supported": false, "reason": "Eclipse Milo 1.1.8 has no PubSub (Part 14) implementation",
+           "transports": [], "encodings": [], "roles": [], "securityPolicies": [],
+           "sks": {"server": false, "pull": false, "push": false},
+           "informationModel": false, "codecOps": []}
+```
+
+### 14.12 Eclipse Milo 1.1.8
+
+Not implemented by the stack. The Milo 1.1.8 artifacts (`milo-stack-core`,
+`milo-sdk-core`, `milo-sdk-server`, `milo-sdk-client`, `milo-transport`,
+`milo-encoding-json`, `milo-encoding-xml`; Maven Central has no other Milo
+PubSub artifact) contain only the generated PubSub DataTypes
+(`stack-core …/types/structured/PubSubConnectionDataType`, `Uadp…`, `Json…`)
+and ObjectType / Method stubs (`sdk-server …/model/objects/PubSub…Type`) —
+no NetworkMessage encoder, no UDP / MQTT transport, no PublishSubscribe
+runtime, no SKS. The Milo adapter therefore refuses `--pubsub-config` and
+`codec pubsub-*` (exit 2, `error.category: "input"`) and declares
+`pubsub.supported: false`.

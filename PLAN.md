@@ -332,17 +332,64 @@ Known limits recorded for consumers:
 
 ---
 
+## PubSub (0.8.0)
+
+Adapter release **v0.8.0** (supports the go-opcua PubSub work); `adapter.version` = `0.8.0`:
+
+1. **open62541 build** — PubSub, PubSub information model, SKS, file config and
+   MQTT enabled in the amalgamation. Three adapter-side additions:
+   `amalgam/inline_mqtt.py` (the amalgamation dropped MQTT-C),
+   `amalgam/backport_json_reader.py` (v1.5.9 DataSetReaders rejected every JSON
+   NetworkMessage; upstream master's matching), `src/pubsub_security.c`
+   (PubSub-Aes128/256-CTR existed for mbedTLS only; OpenSSL port).
+2. **`--pubsub-config`** — PubSubConfigurationDataType (OPC UA 1.05 JSON)
+   built through the open62541 API (`src/pubsub_server.c`), security groups
+   with static keys, SKS server (`serveSks`) and SKS pull (`sksClient`,
+   retried until the SKS answers); AddSecurityGroup / RemoveSecurityGroup bound
+   in the information model; SupportedTransportProfiles completed.
+3. **Codec** — `codec pubsub-{uadp,json}-{encode,decode}` with a canonical
+   NetworkMessage description (`src/pubsub_codec.c`).
+4. **Fixture** — baseline `PubSub` folder (10 writable variables).
+5. **MQTT broker** — `eclipse-mosquitto:2.0.22` by digest, `mqtt/mosquitto.conf`.
+6. **Networking contract** — host ↔ container UDP unicast verified on
+   macOS / Docker Desktop; multicast container ↔ container.
+7. **Capabilities** — `pubsub` section (Milo: `supported: false`),
+   `serverFeatures` `pubsub`, `clientFeatures` `codec-pubsub`.
+8. **Smoke** — `scripts/pubsub-smoke.sh` (`make smoke-pubsub`, CI job
+   `PubSub smoke`, candidate workflow).
+
+| Feature | open62541 | Milo | Notes |
+|---------|:---------:|:----:|-------|
+| UADP over UDP unicast / multicast | ✓ | — | multicast container ↔ container only |
+| UADP / JSON over MQTT | ✓ | — | QoS 0, anonymous, no TLS, ~1000-byte messages |
+| Variant / DataValue / RawData fields | ✓ | — | RawData decoding needs metadata |
+| KeyFrame / KeepAlive | ✓ | — | |
+| DeltaFrame | codec ✓, publish opt-in | — | v1.5.9 readers drop DeltaFrames |
+| Events, chunking, discovery messages, Mirror | — | — | not in open62541 1.5.9 |
+| Sign / SignAndEncrypt (PubSub-Aes128/256-CTR) | ✓ UADP | — | |
+| SKS server / pull / push | ✓ | — | GetSecurityKeys TimeToNextKey wrong in v1.5.9 |
+| Information-model configuration methods | ✓ | — | AddReaderGroup via methods: name only (no MQTT / JSON / security) |
+| `codec pubsub-*` | ✓ | — | no message security in the standalone API |
+
+Known limits recorded for consumers (docs/CLIENT_CONTRACT.md §14.10): a
+DataSetReader that hit its MessageReceiveTimeout stays in Error; JSON
+`MessageId` is null; KeyFrameCount 1 with delta frames enabled alternates Key /
+Delta; the unicast destination host must resolve when the publisher starts.
+
+---
+
 ## Current status ← here
 
 | Item | Status |
 |------|--------|
-| Latest released image tag | **v0.7.0** |
-| Publication model | Immutable tags: every adapter-surface change gets a new release (see `PUBLISH.md`) |
-| Capabilities `adapter.version` | **0.7.0** |
-| Upstream stacks | open62541 **v1.5.9** (OpenSSL, mdnsd), Eclipse Milo **1.1.8** |
+| Latest released image tag | **v0.7.0** (next: v0.8.0, PubSub) |
+| Publication model | Immutable tags: every adapter-surface change gets a new release (see `RELEASE.md`) |
+| Capabilities `adapter.version` | **0.8.0** |
+| Upstream stacks | open62541 **v1.5.9** (OpenSSL, mdnsd, PubSub + MQTT + SKS), Eclipse Milo **1.1.8** |
 | Client operations | 18 (see above) |
-| Optional features | declared in `print-capabilities` (`clientFeatures`, `serverFeatures`, `codec`) |
-| Consumer pin | go-opcua re-pins to the published `v0.7.0` digests after release |
+| Optional features | declared in `print-capabilities` (`clientFeatures`, `serverFeatures`, `codec`, `pubsub`) |
+| PubSub | open62541 only (`--pubsub-config`, `codec pubsub-*`); Milo declares `pubsub.supported: false` |
+| Consumer pin | go-opcua re-pins to the published `v0.8.0` digests after release |
 
 ---
 
@@ -360,7 +407,8 @@ Known limits recorded for consumers:
 | v0.5.0 | Phase 18 WP1B + events/historian/find-servers/translate/continue | **released** |
 | v0.6.0 | open62541 v1.5.9 / Milo 1.1.8; `register-nodes`, `node-management`, `--channel-lifetime-ms`; capabilities 0.6.0 | **released** |
 | v0.7.0 | DataChangeFilter deadbands, reverse connect, ECC policies, LDS / mDNS, `codec` (JSON / XML); feature capabilities; capabilities 0.7.0 | **released** |
-| Later | Alarms; NodeSet2 import; PubSub | — |
+| v0.8.0 | PubSub (open62541): `--pubsub-config`, UDP / MQTT, UADP / JSON, security, SKS, information model, `codec pubsub-*`; fixture `PubSub` folder; Mosquitto broker; capabilities 0.8.0 | **in preparation** |
+| Later | Alarms; NodeSet2 import | — |
 
 ---
 

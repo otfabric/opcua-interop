@@ -94,6 +94,9 @@ public class ServerCommand {
                 case "--mdns-name":
                 case "--mdns-capability":
                     why = "Eclipse Milo 1.1.8 has no mDNS / LDS-ME support"; break;
+                case "--pubsub-config":
+                    why = "Eclipse Milo 1.1.8 has no PubSub (Part 14) implementation"
+                        + " (only the generated PubSub DataTypes / ObjectTypes)"; break;
                 default: break;
             }
             if (why != null) {
@@ -300,7 +303,7 @@ public class ServerCommand {
                 fixture.server.productUri,
                 "OTFabric",
                 "opcua-interop-milo",
-                "0.7.0",
+                "0.8.0",
                 "1.1.8",
                 DateTime.now());
 

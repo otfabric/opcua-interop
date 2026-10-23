@@ -144,6 +144,44 @@ refused, never ignored.
 - Backward compatible: existing commands, flags, result shapes and the RSA PKI
   are unchanged
 
+### v0.8.0 — PubSub (OPC UA Part 14)
+
+Supports the go-opcua PubSub implementation. open62541 only (Eclipse Milo 1.1.8
+has no PubSub; the Milo adapter declares `pubsub.supported: false` and refuses
+the PubSub flags with exit 2).
+
+- **Build**: open62541 v1.5.9 amalgamation with `UA_ENABLE_PUBSUB`,
+  `UA_ENABLE_PUBSUB_INFORMATIONMODEL`, `UA_ENABLE_PUBSUB_SKS`,
+  `UA_ENABLE_PUBSUB_FILE_CONFIG`, `UA_ENABLE_MQTT`; MQTT-C inlined into the
+  amalgamation (`amalgam/inline_mqtt.py`); JSON DataSetReader matching
+  backported from upstream (`amalgam/backport_json_reader.py`); PubSub-Aes128-CTR
+  / PubSub-Aes256-CTR ported to OpenSSL (`src/pubsub_security.c`)
+- **Server** `--pubsub-config <file>`: a `PubSubConfigurationDataType` (OPC UA
+  1.05 JSON) plus security groups (static keys), `serveSks` (this server is the
+  SKS) and `sksClient` (pull keys from an SKS); UDP unicast / multicast and MQTT
+  connections, UADP and JSON writer groups, PublishedDataItems, DataSetReaders
+  with TargetVariables, message receive timeouts, Sign / SignAndEncrypt
+- **Information model**: `PublishSubscribe` browsable and configurable through
+  its methods, also without `--pubsub-config`; AddSecurityGroup /
+  RemoveSecurityGroup bound by the adapter
+- **Codec**: `codec pubsub-uadp-encode|-decode`, `pubsub-json-encode|-decode`
+  with a canonical JSON description of a NetworkMessage (`--metadata` for
+  RawData)
+- **Fixture**: baseline `PubSub` folder (writable Boolean, Int32, Int64,
+  UInt64, Double, String, DateTime, ByteString, Int32[], Double[] variables)
+- **MQTT broker**: `eclipse-mosquitto:2.0.22` pinned by digest,
+  `mqtt/mosquitto.conf`, compose service, `make run-mosquitto`
+- **Networking contract** for UDP between the host and containers (documented
+  addresses, verified on macOS / Docker Desktop); multicast container ↔
+  container only
+- **Capabilities**: `pubsub` section, `serverFeatures` `pubsub`,
+  `clientFeatures` `codec-pubsub`; `adapter.version` = `0.8.0` in both adapters
+- **Smoke**: `scripts/pubsub-smoke.sh` (codec, UDP unicast / multicast, MQTT
+  UADP / JSON, SignAndEncrypt static keys, SKS pull, information model) in
+  `make smoke` and CI
+- Backward compatible: existing commands, flags and result shapes are
+  unchanged; the fixture only gains nodes
+
 ### Later (planned) — remaining type surface
 
 - Remaining structured types / enumerations / edge-case fixture expansion as needed
@@ -170,7 +208,7 @@ A fixture must not expose:
 
 Each container image must:
 
-1. Accept `--fixture`, `--bind-address`, `--bind-port`, `--advertised-host`, `--advertised-port`, `--endpoint-path`, `--ready-file` flags
+1. Accept `--fixture`, `--bind-address`, `--bind-port`, `--advertised-host`, `--advertised-port`, `--endpoint-path`, `--ready-file` flags (and, where the stack implements PubSub, `--pubsub-config`)
 2. Accept `--certificate`, `--private-key`, `--pki-dir` for secure operation
 3. Load and validate the fixture before reporting ready
 4. Advertise secure endpoints according to the fixture `securityProfiles` field when a certificate is provided
@@ -199,7 +237,7 @@ Each container image must expose client subcommands:
 - `transfer-subscriptions` — TransferSubscriptions for one or more subscription ids
 - `register-nodes`, `node-management`
 - `find-servers-on-network`, `register-server` — discovery against an LDS
-- `codec` — JSON / XML DataEncoding of built-in values
+- `codec` — JSON / XML DataEncoding of built-in values; PubSub NetworkMessages (UADP / JSON) where the stack implements PubSub
 
 Client output rules:
 
@@ -267,9 +305,9 @@ Consumer repositories own:
 
 ## Out of scope (no concrete requirement yet)
 
-- PubSub (distinct communication model; separate workstream)
-- MQTT and AMQP transport
-- UDP multicast
+- PubSub on Eclipse Milo (no implementation in Milo 1.1.8)
+- AMQP transport, MQTT over TLS, Ethernet (`opc.eth://`) PubSub transport
+- PubSub events (PublishedEvents), SubscribedDataSetMirror, discovery messages
 - WebSockets transport
 - HTTPS transport
 - Alarms and conditions

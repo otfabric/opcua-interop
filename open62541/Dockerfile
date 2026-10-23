@@ -24,10 +24,30 @@ RUN git clone --depth 1 --branch "${OPEN62541_COMMIT}" "${OPEN62541_REPO}" open6
     && cd open62541 \
     && git submodule update --init --depth 1
 
+# Source preparation before the amalgamation is generated (both scripts only
+# touch the exact v1.5.9 code and print a warning for anything else):
+#  * inline_mqtt.py — MQTT (UA_ENABLE_MQTT) pulls the MQTT-C submodule into
+#    arch/common/eventloop_mqtt.c with two quoted #include lines, which
+#    tools/amalgamate.py drops; inline them so the amalgamation is complete.
+#  * backport_json_reader.py — v1.5.9 DataSetReaders reject every JSON
+#    NetworkMessage (an unimplemented TODO in UA_DataSetReader_checkIdentifier);
+#    apply the PublisherId / DataSetWriterId matching of upstream master.
+COPY amalgam/inline_mqtt.py amalgam/backport_json_reader.py /src/prepare/
+RUN python3 /src/prepare/inline_mqtt.py /src/open62541 \
+    && python3 /src/prepare/backport_json_reader.py /src/open62541
+
 # Only the amalgamation target is built: the adapter compiles open62541.c itself,
 # and with UA_ENABLE_AMALGAMATION + mDNS (mdnsd) the non-amalgamated object
 # library of v1.5.9 does not compile (ua_discovery_mdns.c skips the xht.h /
 # sdtxt.h includes under UA_ENABLE_AMALGAMATION).
+#
+# PubSub (Part 14): UADP + JSON NetworkMessages over opc.udp:// and mqtt://
+# (MQTT-C), the PubSub information model with its configuration methods, the
+# Security Key Service (GetSecurityKeys / SetSecurityKeys, SKS pull client;
+# AddSecurityGroup is bound by the adapter) and the PubSubConfiguration file
+# loader. The PubSub-Aes128/256-CTR message
+# security policies of v1.5.9 only exist for mbedTLS; the adapter carries an
+# OpenSSL implementation of them (src/pubsub_security.c).
 WORKDIR /src/open62541/build
 RUN cmake .. \
       -DCMAKE_BUILD_TYPE=Release \
@@ -44,6 +64,11 @@ RUN cmake .. \
       -DUA_ENABLE_DISCOVERY_MULTICAST=MDNSD \
       -DUA_ENABLE_JSON_ENCODING=ON \
       -DUA_ENABLE_XML_ENCODING=ON \
+      -DUA_ENABLE_PUBSUB=ON \
+      -DUA_ENABLE_PUBSUB_INFORMATIONMODEL=ON \
+      -DUA_ENABLE_PUBSUB_FILE_CONFIG=ON \
+      -DUA_ENABLE_PUBSUB_SKS=ON \
+      -DUA_ENABLE_MQTT=ON \
     && cmake --build . --target open62541-amalgamation -- -j"$(nproc)"
 
 # ---------------------------------------------------------------------------

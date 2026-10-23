@@ -37,6 +37,9 @@ set(ADAPTER_SRCS
     src/client.c
     src/codec.c
     src/discovery.c
+    src/pubsub_server.c
+    src/pubsub_security.c
+    src/pubsub_codec.c
     src/values.c
     src/output.c
 )

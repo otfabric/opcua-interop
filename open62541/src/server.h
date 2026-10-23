@@ -39,6 +39,10 @@ typedef struct {
     int   mdnsCapCount;
     char *registerWith;       /* LDS URL to register with */
     int   registerIntervalMs; /* re-register period, default 30000 */
+
+    /* PubSub (Part 14): JSON file with a PubSubConfigurationDataType, security
+     * groups and SKS settings (see pubsub_server.c) */
+    char *pubsubConfig;
 } ServerArgs;
 
 /*

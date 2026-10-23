@@ -35,6 +35,10 @@ data and automated protocol compatibility testing.
   event subscriptions and subscription lifecycle testing.
 - **Historical data** — HistoryRead operations, continuation
   points and historical value retrieval.
+- **PubSub (Part 14)** — UADP and JSON NetworkMessages over UDP
+  (unicast, multicast) and MQTT, message security with static keys or a
+  Security Key Service, the PubSub information model, and a byte-level
+  NetworkMessage codec (open62541).
 - **Method calls and node management** — Exercise advanced
   OPC UA services using documented client commands.
 - **Cross-platform containers** — Docker images for
@@ -126,7 +130,9 @@ opcua-interop/
 ├── milo/               # Java adapter (Dockerfile, pom.xml, source)
 ├── schemas/            # JSON Schemas for client results and print-capabilities
 ├── docs/               # Client command contract (CLIENT_CONTRACT.md)
-├── scripts/            # Readiness, smoke, and validation helpers
+├── pubsub/examples/    # PubSub configurations (--pubsub-config) used by the PubSub smoke
+├── mqtt/               # Eclipse Mosquitto configuration for the MQTT PubSub tests
+├── scripts/            # Readiness, smoke (incl. pubsub-smoke.sh), and validation helpers
 ├── compose.yaml        # Docker Compose service definitions
 └── .github/            # CI workflows and Dependabot config
 ```
@@ -180,8 +186,8 @@ server \
 The fixture's `securityProfiles` array controls which secure endpoints are advertised.
 The fixture's `users` array controls which username/password credentials are accepted.
 
-Optional server features (v0.7.0; see [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md) §11
-and `print-capabilities` → `serverFeatures`):
+Optional server features (v0.7.0, PubSub v0.8.0; see [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md) §11 / §14
+and `print-capabilities` → `serverFeatures`, `pubsub`):
 
 ```sh
 # open62541: ECC endpoints (one certificate per curve under <dir>/ecc-<curve>/)
@@ -197,6 +203,9 @@ server ... --mdns-name my-server            # announce a plain server via mDNS
 
 # both adapters: register with an LDS (RegisterServer2, fallback RegisterServer)
 server ... --register-with opc.tcp://lds:4840/opcua-interop
+
+# open62541 (v0.8.0): OPC UA PubSub configuration, see "PubSub" below
+server ... --pubsub-config /pubsub/udp-unicast-subscriber.json
 ```
 
 ### Client commands
@@ -234,6 +243,8 @@ client codec encode --format json|xml --type 'Int32[]' --value 1,2,3 [--dimensio
 client codec encode --format json|xml --endpoint ... --node '...'
 client codec decode --format json|xml --type Variant|DataValue|<BuiltInType>   # document on stdin
 client codec --endpoint ... --node '...' [--node '...']                        # JSON + XML per node
+client codec pubsub-uadp-encode|pubsub-json-encode [--document <description>] # PubSub NetworkMessage (open62541)
+client codec pubsub-uadp-decode|pubsub-json-decode [--document <message>] [--metadata <DataSetMetaDataType>]
 ```
 
 `subscribe` takes a DataChangeFilter (`--deadband-absolute <x>` | `--deadband-percent <x>`,
@@ -257,6 +268,121 @@ client subscribe --endpoint ... --node '...' --notifications 24 --timeout-ms 400
 plus optional `sourceTimestamp` / `serverTimestamp` on notifications.
 
 All client operations write JSON to stdout and diagnostics to stderr.
+
+## PubSub (OPC UA Part 14)
+
+The open62541 server publishes and subscribes OPC UA PubSub when started with
+`--pubsub-config <file>` (v0.8.0). Eclipse Milo 1.1.8 has no PubSub
+implementation: the Milo adapter refuses the flag and declares
+`print-capabilities` → `pubsub.supported: false`. The complete contract —
+file format, honoured fields, information-model method conventions, codec
+description format and open62541 v1.5.9 limits — is
+[`docs/CLIENT_CONTRACT.md` §14](docs/CLIENT_CONTRACT.md#14-pubsub-opc-ua-part-14).
+
+| | open62541 adapter |
+|---|---|
+| Transports | `pubsub-udp-uadp` (unicast, multicast), `pubsub-mqtt-uadp`, `pubsub-mqtt-json` |
+| Encodings | UADP, JSON; field encodings Variant, DataValue, RawData |
+| Publisher / subscriber | PublishedDataItems over any variable; DataSetReaders with TargetVariables |
+| Security | UADP Sign / SignAndEncrypt with PubSub-Aes128-CTR / PubSub-Aes256-CTR; keys static, from an SKS (pull), pushed (SetSecurityKeys), or served (this server is the SKS) |
+| Information model | `Server.PublishSubscribe` browsable; AddConnection / AddWriterGroup / AddReaderGroup / AddDataSetWriter / AddDataSetReader / AddPublishedDataItems / Remove* / Enable / Disable / GetSecurityKeys / SetSecurityKeys / AddSecurityGroup — also without `--pubsub-config` |
+| Codec | `client codec pubsub-uadp-encode/-decode`, `pubsub-json-encode/-decode` (no transport) |
+
+### Configuration file
+
+```json
+{
+  "configuration":  { "PublishedDataSets": [...], "Connections": [...], "Enabled": true },
+  "securityGroups": [ { "securityGroupId": "InteropGroup",
+                        "securityPolicyUri": "http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes256-CTR",
+                        "keys": [ { "tokenId": 1, "key": "<Base64 signingKey|encryptingKey|keyNonce>" } ] } ],
+  "serveSks":  false,
+  "sksClient": { "endpointUrl": "opc.tcp://sks:4840/opcua-interop", "securityMode": "SignAndEncrypt",
+                 "username": "test-user", "password": "test-password" },
+  "deltaFrames": false
+}
+```
+
+`configuration` is a `PubSubConfigurationDataType` in the OPC UA 1.05 JSON
+encoding (ExtensionObjects as `{"UaTypeId": "i=15510", "UaBody": {...}}`,
+NodeIds may use `nsu=`). Worked examples for every scenario are in
+[`pubsub/examples/`](pubsub/examples/) (UDP unicast / multicast, MQTT UADP /
+JSON, SignAndEncrypt with a static key, SKS pull):
+
+```sh
+docker network create pubsub
+docker run -d --name pubsub-subscriber --network pubsub \
+  -v "$PWD/fixtures:/fixtures:ro" -v "$PWD/pubsub/examples:/pubsub:ro" \
+  ghcr.io/otfabric/opcua-interop-open62541:v0.8.0 server \
+  --fixture /fixtures/baseline/fixture.json --pubsub-config /pubsub/udp-unicast-subscriber.json
+docker run -d --name pubsub-publisher --network pubsub \
+  -v "$PWD/fixtures:/fixtures:ro" -v "$PWD/pubsub/examples:/pubsub:ro" \
+  ghcr.io/otfabric/opcua-interop-open62541:v0.8.0 server \
+  --fixture /fixtures/baseline/fixture.json --pubsub-config /pubsub/udp-unicast-publisher.json
+# write on the publisher, read the subscriber's TargetVariable
+docker run --rm --network pubsub ghcr.io/otfabric/opcua-interop-open62541:v0.8.0 client write \
+  --endpoint opc.tcp://pubsub-publisher:4840/opcua-interop \
+  --node 'nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32' --type Int32 --value 42
+docker run --rm --network pubsub ghcr.io/otfabric/opcua-interop-open62541:v0.8.0 client read \
+  --endpoint opc.tcp://pubsub-subscriber:4840/opcua-interop \
+  --node 'nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32'
+```
+
+The fixture's `PubSub` folder (`PubSub.Boolean`, `.Int32`, `.Int64`,
+`.UInt64`, `.Double`, `.String`, `.DateTime`, `.ByteString`, `.Int32Array`,
+`.DoubleArray`) holds writable variables for published fields and
+TargetVariables; `Dynamic.Counter` is a continuously changing source.
+
+### Networking (UDP)
+
+| Direction | Address in the configuration | Docker |
+|---|---|---|
+| container → host | publisher connection `opc.udp://localhost:<p>`, WriterGroup `TransportSettings` = DatagramWriterGroupTransport2DataType `opc.udp://host.docker.internal:<host-port>` | Linux: `--add-host host.docker.internal:host-gateway` (Docker Desktop resolves it itself) |
+| host → container | subscriber connection `opc.udp://0.0.0.0:<p>` (or `opc.udp://localhost:<p>`) | `-p <p>:<p>/udp`; the host sends to `127.0.0.1:<p>` |
+| container ↔ container | as above with the peer's container name; multicast `opc.udp://224.0.0.22:<p>` on both sides | same Docker network |
+
+open62541 binds a connection's receive socket to the connection URL's host
+(so a remote unicast destination cannot be the connection URL — it goes into
+the WriterGroup's DatagramWriterGroupTransport2DataType), and resolves the
+destination host when the configuration is applied (start the subscriber
+first). Both host directions were verified on macOS / Docker Desktop.
+**Multicast does not cross the Docker Desktop VM boundary**: test multicast
+container ↔ container (or with `--network host` on Linux).
+
+### MQTT broker
+
+The MQTT tests use Eclipse Mosquitto, pinned by its multi-arch index digest:
+
+```
+eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c
+```
+
+with [`mqtt/mosquitto.conf`](mqtt/mosquitto.conf) (`listener 1883 0.0.0.0`,
+`allow_anonymous true`, `persistence false`, logging to stdout):
+
+```sh
+docker run -d --name mosquitto -p 1883:1883 \
+  -v "$PWD/mqtt/mosquitto.conf:/mosquitto-interop.conf:ro" \
+  eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c \
+  mosquitto -c /mosquitto-interop.conf
+```
+
+(also `make run-mosquitto` and the `mosquitto` service in `compose.yaml`).
+Connections use `mqtt://<broker>:1883` (rewritten to open62541's
+`opc.mqtt://`); topics are the `QueueName` of BrokerWriterGroupTransportDataType
+/ BrokerDataSetReaderTransportDataType. open62541 v1.5.9 speaks MQTT 3.1.1 with
+QoS 0, anonymously, without TLS, and its MQTT buffers limit a NetworkMessage
+to about 1000 bytes.
+
+### PubSub smoke
+
+`make smoke-pubsub` (`scripts/pubsub-smoke.sh <image>`) runs, on a dedicated
+Docker network: the codec round trips; publisher → subscriber over UDP
+unicast, UDP multicast, MQTT UADP and MQTT JSON; UADP SignAndEncrypt with a
+static key; SKS pull (the publisher is the SKS) and SKS push (SetSecurityKeys);
+and the information-model
+methods (GetSecurityKeys, AddSecurityGroup, AddConnection / RemoveConnection,
+Disable / Enable). About one minute.
 
 ## Test PKI
 
@@ -333,20 +459,23 @@ make smoke               # Run all smoke tests (images must be built)
 make smoke-open62541     # Smoke test open62541 only
 make smoke-milo          # Smoke test Milo only
 make smoke-cross-stack   # Cross-stack interop self-check
+make smoke-pubsub        # PubSub smoke (open62541 publisher/subscriber containers, Mosquitto)
 make shutdown            # Test graceful shutdown for both adapters
 make run-open62541       # Start open62541 server (foreground, port 4840)
 make run-milo            # Start Milo server (foreground, port 4841)
+make run-mosquitto       # Start the MQTT broker for PubSub tests (foreground, port 1883)
 make certs               # Generate test PKI (requires openssl >= 1.1)
 make clean               # Remove build artifacts and containers
-make release VERSION=v0.7.0  # Build and push multi-arch release images
+make check-release VERSION=v0.8.0  # Check versions and RELEASE.md before tagging (see RELEASE.md)
+make release-notes VERSION=v0.8.0  # Print the release notes of a version
 ```
 
 ## Versioning
 
 | Version type | Location |
 |---|---|
-| Repository release | Git tag and image tag — latest **`v0.7.0`** |
-| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.7.0`** (must match the tag) |
+| Repository release | Git tag and image tag — **`v0.8.0`** (latest published: `v0.7.0`) |
+| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.8.0`** (must match the tag) |
 | Upstream stack version | Image label and `print-capabilities` → `stack.version` |
 | Fixture schema version | `schemaVersion` field in every fixture |
 
@@ -356,19 +485,22 @@ Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`, `v0.5
 `register-nodes`, `node-management` and `--channel-lifetime-ms`. `v0.7.0` adds
 DataChangeFilter deadbands, reverse connect, the ECC security policies, LDS / mDNS
 discovery and the JSON / XML `codec` command, and declares optional features in
-`print-capabilities` (`clientFeatures`, `serverFeatures`, `codec`). Every change to the
-adapter surface gets a new tag; published tags are not moved. See [`PUBLISH.md`](PUBLISH.md).
+`print-capabilities` (`clientFeatures`, `serverFeatures`, `codec`). `v0.8.0` adds
+OPC UA PubSub (Part 14) to the open62541 adapter (`--pubsub-config`, UDP / MQTT,
+UADP / JSON, message security, SKS, `codec pubsub-*`, `print-capabilities` →
+`pubsub`), the baseline fixture's `PubSub` folder and an MQTT broker. Every change to the
+adapter surface gets a new tag; published tags are not moved. Release notes and the release procedure: [`RELEASE.md`](RELEASE.md).
 
 ## Reference stacks
 
 | Adapter | Language | Stack | Why included |
 |---|---|---|---|
-| open62541 | C | open62541 v1.5.9 (OpenSSL crypto backend, mDNS via mdnsd) | Native/embedded diversity, OPC UA Binary, certified example-server history |
+| open62541 | C | open62541 v1.5.9 (OpenSSL crypto backend, mDNS via mdnsd, PubSub with MQTT and SKS) | Native/embedded diversity, OPC UA Binary, certified example-server history |
 | Eclipse Milo | Java | Eclipse Milo v1.1.8 (+ `milo-encoding-json`, `milo-encoding-xml`) | JVM/enterprise diversity, independent serialization and security code paths |
 
 Feature support differs per stack and is declared by `print-capabilities`:
 
-| Feature (v0.7.0) | open62541 | Eclipse Milo |
+| Feature | open62541 | Eclipse Milo |
 |---|:---:|:---:|
 | DataChangeFilter (absolute / percent deadband, trigger) — client and server | ✓ | ✓ |
 | Reverse connect (server `--reverse-connect`, client `--reverse-listen`) | ✓ | — (no ReverseHello in Milo 1.1.8) |
@@ -377,6 +509,8 @@ Feature support differs per stack and is declared by `print-capabilities`:
 | `--register-with`, `register-server`, `find-servers-on-network` | ✓ | ✓ |
 | `codec` JSON (OPC UA 1.05) | ✓ compact | ✓ compact + verbose |
 | `codec` XML | ✓ (no DataValue / DiagnosticInfo / matrices) | ✓ |
+| PubSub (Part 14): UDP / MQTT, UADP / JSON, security, SKS, information model (v0.8.0) | ✓ | — (no PubSub in Milo 1.1.8) |
+| `codec pubsub-*` (UADP / JSON NetworkMessages) | ✓ | — |
 
 ## Security
 

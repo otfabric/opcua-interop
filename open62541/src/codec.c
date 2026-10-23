@@ -591,8 +591,14 @@ int cmd_codec(int argc, char **argv) {
         "usage: codec encode --format json|xml (--type <T> --value <v> | --endpoint <url> --node <id>)"
         " | codec decode --format json|xml --type <T>"
         " | codec --endpoint <url> --node <id> [--node ...]"
-        " | codec --decode json|xml --type <T>";
+        " | codec --decode json|xml --type <T>"
+        " | codec pubsub-uadp-encode|pubsub-uadp-decode|pubsub-json-encode|pubsub-json-decode"
+        " [--document <text>|--input <file>] [--metadata <json>|--metadata-file <file>]";
     if (argc < 2) return usage_error(usage);
+#ifdef UA_ENABLE_PUBSUB
+    /* PubSub NetworkMessage mappings (pubsub_codec.c) */
+    if (strncmp(argv[1], "pubsub-", 7) == 0) return cmd_codec_pubsub(argc - 1, argv + 1);
+#endif
     if (strcmp(argv[1], "encode") == 0) return codec_encode(argc - 1, argv + 1);
     if (strcmp(argv[1], "decode") == 0) return codec_decode(argc - 1, argv + 1);
     if (cli_find_arg(argc, argv, "--decode")) return codec_decode(argc, argv);

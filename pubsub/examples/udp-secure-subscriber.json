@@ -1,0 +1,181 @@
+{
+  "configuration": {
+    "Connections": [
+      {
+        "Name": "InteropSubscriber",
+        "Enabled": true,
+        "PublisherId": {
+          "UaType": 5,
+          "Value": 2235
+        },
+        "TransportProfileUri": "http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp",
+        "Address": {
+          "UaTypeId": "i=15510",
+          "UaBody": {
+            "Url": "opc.udp://0.0.0.0:4841"
+          }
+        },
+        "ReaderGroups": [
+          {
+            "Name": "InteropReaderGroup",
+            "Enabled": true,
+            "DataSetReaders": [
+              {
+                "Name": "InteropReader",
+                "Enabled": true,
+                "PublisherId": {
+                  "UaType": 5,
+                  "Value": 2234
+                },
+                "WriterGroupId": 100,
+                "DataSetWriterId": 1,
+                "DataSetMetaData": {
+                  "Name": "InteropDataSet",
+                  "Fields": [
+                    {
+                      "Name": "Boolean",
+                      "BuiltInType": 1,
+                      "DataType": "i=1",
+                      "ValueRank": -1
+                    },
+                    {
+                      "Name": "Int32",
+                      "BuiltInType": 6,
+                      "DataType": "i=6",
+                      "ValueRank": -1
+                    },
+                    {
+                      "Name": "Counter",
+                      "BuiltInType": 8,
+                      "DataType": "i=8",
+                      "ValueRank": -1
+                    },
+                    {
+                      "Name": "UInt64",
+                      "BuiltInType": 9,
+                      "DataType": "i=9",
+                      "ValueRank": -1
+                    },
+                    {
+                      "Name": "Double",
+                      "BuiltInType": 11,
+                      "DataType": "i=11",
+                      "ValueRank": -1
+                    },
+                    {
+                      "Name": "String",
+                      "BuiltInType": 12,
+                      "DataType": "i=12",
+                      "ValueRank": -1
+                    },
+                    {
+                      "Name": "DateTime",
+                      "BuiltInType": 13,
+                      "DataType": "i=13",
+                      "ValueRank": -1
+                    },
+                    {
+                      "Name": "ByteString",
+                      "BuiltInType": 15,
+                      "DataType": "i=15",
+                      "ValueRank": -1
+                    },
+                    {
+                      "Name": "Int32Array",
+                      "BuiltInType": 6,
+                      "DataType": "i=6",
+                      "ValueRank": 1
+                    },
+                    {
+                      "Name": "DoubleArray",
+                      "BuiltInType": 11,
+                      "DataType": "i=11",
+                      "ValueRank": 1
+                    }
+                  ],
+                  "ConfigurationVersion": {
+                    "MajorVersion": 1,
+                    "MinorVersion": 1
+                  }
+                },
+                "MessageReceiveTimeout": 0,
+                "SubscribedDataSet": {
+                  "UaTypeId": "i=15631",
+                  "UaBody": {
+                    "TargetVariables": [
+                      {
+                        "TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Boolean",
+                        "AttributeId": 13
+                      },
+                      {
+                        "TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32",
+                        "AttributeId": 13
+                      },
+                      {
+                        "TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int64",
+                        "AttributeId": 13
+                      },
+                      {
+                        "TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.UInt64",
+                        "AttributeId": 13
+                      },
+                      {
+                        "TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Double",
+                        "AttributeId": 13
+                      },
+                      {
+                        "TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.String",
+                        "AttributeId": 13
+                      },
+                      {
+                        "TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.DateTime",
+                        "AttributeId": 13
+                      },
+                      {
+                        "TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.ByteString",
+                        "AttributeId": 13
+                      },
+                      {
+                        "TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32Array",
+                        "AttributeId": 13
+                      },
+                      {
+                        "TargetNodeId": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.DoubleArray",
+                        "AttributeId": 13
+                      }
+                    ]
+                  }
+                },
+                "MessageSettings": {
+                  "UaTypeId": "i=15653",
+                  "UaBody": {
+                    "NetworkMessageContentMask": 231,
+                    "DataSetMessageContentMask": 61
+                  }
+                }
+              }
+            ],
+            "SecurityMode": 3,
+            "SecurityGroupId": "InteropGroup"
+          }
+        ]
+      }
+    ],
+    "Enabled": true
+  },
+  "securityGroups": [
+    {
+      "securityGroupId": "InteropGroup",
+      "securityPolicyUri": "http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes256-CTR",
+      "keyLifetimeMs": 60000,
+      "maxFutureKeyCount": 2,
+      "maxPastKeyCount": 1,
+      "keys": [
+        {
+          "tokenId": 1,
+          "key": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyBlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhKGio6Q="
+        }
+      ]
+    }
+  ]
+}

@@ -269,6 +269,10 @@ static char *certificate_san_uri(const char *path) {
     return result;
 }
 
+char *cli_certificate_san_uri(const char *path) {
+    return certificate_san_uri(path);
+}
+
 /* -------------------------------------------------------------------------
  * Base64 decode (for ByteString NodeIds)
  * ---------------------------------------------------------------------- */

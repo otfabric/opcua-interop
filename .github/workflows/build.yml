@@ -29,6 +29,16 @@ jobs:
       - name: Validate fixtures
         run: scripts/validate-fixtures.sh
 
+      # The version the adapters report must have a section in RELEASE.md
+      # (its date may still say "unreleased"; the Release workflow requires one).
+      - name: Release notes for the adapter version
+        run: |
+          version=$(sed -nE 's/.*"adapter\\": \{\\"name\\": \\"open62541\\", \\"version\\": \\"([0-9.]+)\\".*/\1/p' open62541/src/main.c | head -1)
+          [ -n "${version}" ] || { echo "::error::cannot read adapter.version from open62541/src/main.c"; exit 1; }
+          scripts/release-notes.sh "v${version}" > /dev/null \
+            || { echo "::error::RELEASE.md has no section \"## v${version}\""; exit 1; }
+          echo "RELEASE.md has notes for v${version}"
+
   build-open62541:
     name: Build open62541 image
     runs-on: ubuntu-latest

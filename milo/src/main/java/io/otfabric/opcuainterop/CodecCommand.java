@@ -110,6 +110,12 @@ final class CodecCommand {
     static int run(String[] args) throws Exception {
         if (args.length < 1) return usage(USAGE);
         useNamespaceFlags(args);
+        if (args[0].startsWith("pubsub-")) {
+            // The PubSub NetworkMessage mappings (UADP / JSON) need a PubSub
+            // implementation; Eclipse Milo 1.1.8 has none.
+            return usage("codec " + args[0] + ": not supported: Eclipse Milo 1.1.8 has no PubSub"
+                + " (Part 14) NetworkMessage encoding");
+        }
         if ("encode".equals(args[0])) return encode(args);
         if ("decode".equals(args[0])) return decode(args);
         if (find(args, "--decode") != null) return decode(args);

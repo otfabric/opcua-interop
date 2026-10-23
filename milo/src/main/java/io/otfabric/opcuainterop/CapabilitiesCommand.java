@@ -10,7 +10,7 @@ public class CapabilitiesCommand {
     public static void run() throws Exception {
         Map<String, Object> adapter = new LinkedHashMap<>();
         adapter.put("name",    "milo");
-        adapter.put("version", "0.7.0");
+        adapter.put("version", "0.8.0");
 
         Map<String, Object> stack = new LinkedHashMap<>();
         stack.put("name",    "eclipse-milo");
@@ -60,6 +60,27 @@ public class CapabilitiesCommand {
         codec.put("xmlEncodeUnsupported", Collections.emptyList());
         codec.put("xmlDecodeUnsupported", Collections.emptyList());
         out.put("codec", codec);
+        // PubSub (OPC UA Part 14): Eclipse Milo 1.1.8 ships only the generated
+        // PubSub DataTypes and ObjectType/Method stubs (stack-core
+        // types.structured.*, sdk-server model.objects.*); there is no
+        // NetworkMessage (UADP / JSON) encoder, no UDP / MQTT transport, no
+        // PublishSubscribe runtime and no Security Key Service. Declared
+        // explicitly so consumers can record "not implemented by Milo".
+        Map<String, Object> pubsub = new LinkedHashMap<>();
+        pubsub.put("supported",        false);
+        pubsub.put("reason",           "Eclipse Milo 1.1.8 has no PubSub (Part 14) implementation");
+        pubsub.put("transports",       Collections.emptyList());
+        pubsub.put("encodings",        Collections.emptyList());
+        pubsub.put("roles",            Collections.emptyList());
+        pubsub.put("securityPolicies", Collections.emptyList());
+        Map<String, Object> sks = new LinkedHashMap<>();
+        sks.put("server", false);
+        sks.put("pull",   false);
+        sks.put("push",   false);
+        pubsub.put("sks",              sks);
+        pubsub.put("informationModel", false);
+        pubsub.put("codecOps",         Collections.emptyList());
+        out.put("pubsub", pubsub);
         out.put("serverServices",        Arrays.asList(
                 "GetEndpoints", "Browse", "Read", "Write", "Call",
                 "CreateSubscription", "CreateMonitoredItems", "Publish",

@@ -43,6 +43,9 @@ UA_Client *cli_make_channel_client(const char *url, int request_ms, const char *
  */
 UA_Client *cli_new_plain_client(int request_ms);
 
+/* malloc'd first URI subjectAltName of a PEM/DER certificate file, or NULL. */
+char *cli_certificate_san_uri(const char *path);
+
 /* Emit a complete failure envelope (empty results). */
 void cli_emit_failure(const char *op, UA_StatusCode sc, const char *category,
                       const char *message);
@@ -52,5 +55,6 @@ void cli_print_status(const char *key, UA_StatusCode sc);
 
 /* Command modules. argv[0] is the subcommand name. */
 int cmd_codec(int argc, char **argv);
+int cmd_codec_pubsub(int argc, char **argv); /* codec pubsub-{uadp,json}-{encode,decode} */
 int cmd_find_servers_on_network(int argc, char **argv);
 int cmd_register_server(int argc, char **argv);

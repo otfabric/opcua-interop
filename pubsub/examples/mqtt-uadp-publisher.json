@@ -1,0 +1,180 @@
+{
+  "configuration": {
+    "PublishedDataSets": [
+      {
+        "Name": "InteropDataSet",
+        "DataSetMetaData": {
+          "Name": "InteropDataSet",
+          "Fields": [
+            {
+              "Name": "Boolean",
+              "BuiltInType": 1,
+              "DataType": "i=1",
+              "ValueRank": -1
+            },
+            {
+              "Name": "Int32",
+              "BuiltInType": 6,
+              "DataType": "i=6",
+              "ValueRank": -1
+            },
+            {
+              "Name": "Counter",
+              "BuiltInType": 8,
+              "DataType": "i=8",
+              "ValueRank": -1
+            },
+            {
+              "Name": "UInt64",
+              "BuiltInType": 9,
+              "DataType": "i=9",
+              "ValueRank": -1
+            },
+            {
+              "Name": "Double",
+              "BuiltInType": 11,
+              "DataType": "i=11",
+              "ValueRank": -1
+            },
+            {
+              "Name": "String",
+              "BuiltInType": 12,
+              "DataType": "i=12",
+              "ValueRank": -1
+            },
+            {
+              "Name": "DateTime",
+              "BuiltInType": 13,
+              "DataType": "i=13",
+              "ValueRank": -1
+            },
+            {
+              "Name": "ByteString",
+              "BuiltInType": 15,
+              "DataType": "i=15",
+              "ValueRank": -1
+            },
+            {
+              "Name": "Int32Array",
+              "BuiltInType": 6,
+              "DataType": "i=6",
+              "ValueRank": 1
+            },
+            {
+              "Name": "DoubleArray",
+              "BuiltInType": 11,
+              "DataType": "i=11",
+              "ValueRank": 1
+            }
+          ],
+          "ConfigurationVersion": {
+            "MajorVersion": 1,
+            "MinorVersion": 1
+          }
+        },
+        "DataSetSource": {
+          "UaTypeId": "i=15581",
+          "UaBody": {
+            "PublishedData": [
+              {
+                "PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Boolean",
+                "AttributeId": 13
+              },
+              {
+                "PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32",
+                "AttributeId": 13
+              },
+              {
+                "PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter",
+                "AttributeId": 13
+              },
+              {
+                "PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.UInt64",
+                "AttributeId": 13
+              },
+              {
+                "PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Double",
+                "AttributeId": 13
+              },
+              {
+                "PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.String",
+                "AttributeId": 13
+              },
+              {
+                "PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.DateTime",
+                "AttributeId": 13
+              },
+              {
+                "PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.ByteString",
+                "AttributeId": 13
+              },
+              {
+                "PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32Array",
+                "AttributeId": 13
+              },
+              {
+                "PublishedVariable": "nsu=urn:otfabric:opcua-interop:model;s=PubSub.DoubleArray",
+                "AttributeId": 13
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "Connections": [
+      {
+        "Name": "InteropPublisher",
+        "Enabled": true,
+        "PublisherId": {
+          "UaType": 5,
+          "Value": 2234
+        },
+        "TransportProfileUri": "http://opcfoundation.org/UA-Profile/Transport/pubsub-mqtt-uadp",
+        "Address": {
+          "UaTypeId": "i=15510",
+          "UaBody": {
+            "Url": "mqtt://mosquitto:1883"
+          }
+        },
+        "WriterGroups": [
+          {
+            "Name": "InteropWriterGroup",
+            "Enabled": true,
+            "WriterGroupId": 100,
+            "PublishingInterval": 100,
+            "KeepAliveTime": 1000,
+            "MessageSettings": {
+              "UaTypeId": "i=15645",
+              "UaBody": {
+                "NetworkMessageContentMask": 231
+              }
+            },
+            "DataSetWriters": [
+              {
+                "Name": "InteropWriter",
+                "Enabled": true,
+                "DataSetWriterId": 1,
+                "DataSetName": "InteropDataSet",
+                "KeyFrameCount": 1,
+                "DataSetFieldContentMask": 0,
+                "MessageSettings": {
+                  "UaTypeId": "i=15652",
+                  "UaBody": {
+                    "DataSetMessageContentMask": 61
+                  }
+                }
+              }
+            ],
+            "TransportSettings": {
+              "UaTypeId": "i=15667",
+              "UaBody": {
+                "QueueName": "opcua-interop/uadp"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "Enabled": true
+  }
+}
