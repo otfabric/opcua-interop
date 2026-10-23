@@ -1,0 +1,189 @@
+name: CI
+
+# One workflow for every push and pull request: fixtures and release notes are
+# checked, each adapter image is built once (amd64) and shared with the unit
+# tests, the single-adapter smoke tests (with the graceful-shutdown checks),
+# the PubSub smoke and the cross-stack smoke, which all run in parallel. On
+# main the arm64 images are built natively as well, in parallel with the rest.
+#
+# Docker layer caches are scoped per adapter and architecture
+# (<adapter>-<arch>), the same scopes the Release workflow uses, so the
+# adapters and architectures do not evict each other's cache.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OPEN62541_IMAGE: ghcr.io/otfabric/opcua-interop-open62541:ci
+  MILO_IMAGE: ghcr.io/otfabric/opcua-interop-milo:ci
+
+jobs:
+  validate:
+    name: Validate fixtures and release notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install check-jsonschema
+        run: pip install check-jsonschema
+
+      - name: Validate fixture schema
+        run: check-jsonschema --check-metaschema fixtures/schema/opcua-fixture.schema.json
+
+      - name: Validate fixtures
+        run: scripts/validate-fixtures.sh
+
+      # The version the adapters report must have a section in RELEASE.md
+      # (its date may still say "unreleased"; the Release workflow requires one).
+      - name: Release notes for the adapter version
+        run: |
+          version=$(sed -nE 's/.*"adapter\\": \{\\"name\\": \\"open62541\\", \\"version\\": \\"([0-9.]+)\\".*/\1/p' open62541/src/main.c | head -1)
+          [ -n "${version}" ] || { echo "::error::cannot read adapter.version from open62541/src/main.c"; exit 1; }
+          scripts/release-notes.sh "v${version}" > /dev/null \
+            || { echo "::error::RELEASE.md has no section \"## v${version}\""; exit 1; }
+          echo "RELEASE.md has notes for v${version}"
+
+  # ── Build each image once (amd64) and share it as an artifact ────────────
+  build:
+    name: Build ${{ matrix.adapter }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [open62541, milo]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build ${{ matrix.adapter }} (linux/amd64)
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.adapter }}
+          file: ${{ matrix.adapter }}/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:ci
+          cache-from: type=gha,scope=${{ matrix.adapter }}-amd64
+          cache-to: type=gha,mode=max,scope=${{ matrix.adapter }}-amd64
+
+      - name: Save image
+        run: docker save ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:ci | gzip -1 > /tmp/${{ matrix.adapter }}.tar.gz
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.adapter }}
+          path: /tmp/${{ matrix.adapter }}.tar.gz
+          retention-days: 1
+
+  # ── Tests on the built images, all in parallel ────────────────────────────
+  adapter:
+    name: ${{ matrix.adapter }} unit tests, smoke, shutdown
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [open62541, milo]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: image-${{ matrix.adapter }}
+          path: /tmp
+
+      - name: Load image
+        run: docker load < /tmp/${{ matrix.adapter }}.tar.gz
+
+      - name: Unit tests
+        run: docker run --rm -v "$PWD/fixtures:/fixtures:ro" ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:ci test
+
+      - name: Smoke
+        run: scripts/smoke.sh ${{ matrix.adapter }} ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:ci
+
+      - name: Graceful shutdown
+        run: scripts/shutdown-test.sh ${{ matrix.adapter }} ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:ci
+
+  pubsub:
+    name: PubSub smoke
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: image-open62541
+          path: /tmp
+
+      - name: Load image
+        run: docker load < /tmp/open62541.tar.gz
+
+      - name: PubSub smoke
+        run: scripts/pubsub-smoke.sh "${OPEN62541_IMAGE}"
+
+  cross-stack:
+    name: Cross-stack smoke
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: image-*
+          path: /tmp
+          merge-multiple: true
+
+      - name: Load images
+        run: |
+          docker load < /tmp/open62541.tar.gz
+          docker load < /tmp/milo.tar.gz
+
+      - name: Cross-stack smoke
+        run: scripts/smoke.sh cross "${OPEN62541_IMAGE}" "${MILO_IMAGE}"
+
+  # ── main only: the arm64 images build natively (no QEMU) ──────────────────
+  arm64:
+    name: Build ${{ matrix.adapter }} (arm64)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [open62541, milo]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build ${{ matrix.adapter }} (linux/arm64)
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.adapter }}
+          file: ${{ matrix.adapter }}/Dockerfile
+          platforms: linux/arm64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.adapter }}-arm64
+          cache-to: type=gha,mode=max,scope=${{ matrix.adapter }}-arm64

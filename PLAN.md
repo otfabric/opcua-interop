@@ -99,7 +99,7 @@ All four directions verified:
 - Milo client → Milo server
 
 `scripts/smoke.sh cross` automates all four directions.
-Cross-stack CI job in `.github/workflows/smoke.yml` runs after both single-adapter jobs pass.
+Cross-stack CI job in `.github/workflows/ci.yml` runs in parallel with the single-adapter jobs, on the same images.
 
 ---
 

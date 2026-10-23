@@ -4,8 +4,8 @@
 
 1. `make ci` on the commit to release (validates fixtures, builds both images,
    runs the adapter unit tests, the single-adapter, cross-stack and PubSub
-   smoke tests and the graceful-shutdown checks). The `Build` and `Smoke`
-   workflows run the same gate on every push.
+   smoke tests and the graceful-shutdown checks). The `CI` workflow runs
+   the same gate on every push and pull request.
 2. Set the version everywhere it is reported — `make check-release
    VERSION=vX.Y.Z` lists what does not match:
    - `open62541/src/main.c` (`adapter.version`)
