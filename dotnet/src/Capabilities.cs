@@ -52,12 +52,12 @@ namespace OpcUaInterop
                 ["clientOperations"] = Json.Strings(ClientCommand.Operations),
                 // Not listed: reverse-listen (ReverseConnectManager not wired), ecc-security /
                 // ecc-user-token (2.0.1 does not accept the test PKI's RSA-CA-signed ECC
-                // certificates), codec-pubsub (PubSub not wired).
+                // certificates).
                 ["clientFeatures"] = Json.Strings([
                     "channel-lifetime", "deadband", "application-uri", "register-server2",
-                    "codec-json", "codec-xml", "codec-json-verbose"]),
-                // Not listed: reverse-connect, lds, mdns, pubsub (not wired), ecc-security (see above).
-                ["serverFeatures"] = Json.Strings(["deadband", "percent-deadband", "register-with", "node-management"]),
+                    "codec-json", "codec-xml", "codec-json-verbose", "codec-pubsub"]),
+                // Not listed: reverse-connect, lds, mdns, ecc-security (see above).
+                ["serverFeatures"] = Json.Strings(["deadband", "percent-deadband", "register-with", "node-management", "pubsub"]),
                 ["codec"] = new JsonObject
                 {
                     ["formats"] = Json.Strings(["json", "xml"]),
@@ -66,18 +66,7 @@ namespace OpcUaInterop
                     ["xmlEncodeUnsupported"] = new JsonArray(),
                     ["xmlDecodeUnsupported"] = new JsonArray()
                 },
-                ["pubsub"] = new JsonObject
-                {
-                    ["supported"] = false,
-                    ["reason"] = "UA-.NETStandard 2.0.1 ships a PubSub runtime (Opc.Ua.PubSub, .Udp, .Mqtt), but this adapter does not implement the --pubsub-config / codec pubsub-* contract (§14) yet",
-                    ["transports"] = new JsonArray(),
-                    ["encodings"] = new JsonArray(),
-                    ["roles"] = new JsonArray(),
-                    ["securityPolicies"] = new JsonArray(),
-                    ["sks"] = new JsonObject { ["server"] = false, ["pull"] = false, ["push"] = false },
-                    ["informationModel"] = false,
-                    ["codecOps"] = new JsonArray()
-                },
+                ["pubsub"] = PubSub(),
                 ["serverServices"] = Json.Strings([
                     "GetEndpoints", "FindServers", "Browse", "BrowseNext", "TranslateBrowsePathsToNodeIds",
                     "Read", "Write", "Call", "RegisterNodes", "UnregisterNodes", "AddNodes", "DeleteNodes",
@@ -89,5 +78,47 @@ namespace OpcUaInterop
             };
             return Json.Serialize(o);
         }
+
+        /// <summary>The PubSub block (docs/CLIENT_CONTRACT.md §14.11, .NET: §14.13).</summary>
+        private static JsonObject PubSub() => new()
+        {
+            ["supported"] = true,
+            ["serverFlag"] = "--pubsub-config",
+            ["roles"] = Json.Strings(["publisher", "subscriber"]),
+            ["transports"] = Json.Strings(["udp-uadp", "mqtt-uadp", "mqtt-json"]),
+            ["transportProfiles"] = Json.Strings([
+                "http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp",
+                "http://opcfoundation.org/UA-Profile/Transport/pubsub-mqtt-uadp",
+                "http://opcfoundation.org/UA-Profile/Transport/pubsub-mqtt-json"]),
+            ["udp"] = new JsonObject { ["unicast"] = true, ["multicast"] = true },
+            ["mqttVersions"] = Json.Strings(["5.0", "3.1.1", "3.1"]),
+            ["encodings"] = Json.Strings(["uadp", "json"]),
+            ["fieldEncodings"] = Json.Strings(["Variant", "DataValue", "RawData"]),
+            ["dataSetMessageTypes"] = new JsonObject
+            {
+                ["uadp"] = Json.Strings(["KeyFrame", "DeltaFrame", "KeepAlive"]),
+                ["json"] = Json.Strings(["KeyFrame", "DeltaFrame", "KeepAlive"])
+            },
+            ["publishedDataSets"] = Json.Strings(["PublishedDataItems"]),
+            ["subscribedDataSets"] = Json.Strings(["TargetVariables"]),
+            ["securityPolicies"] = Json.Strings([
+                "http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR",
+                "http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes256-CTR"]),
+            ["securityModes"] = Json.Strings(["None", "Sign", "SignAndEncrypt"]),
+            ["securityEncodings"] = Json.Strings(["uadp"]),
+            ["keySources"] = Json.Strings(["static"]),
+            ["sks"] = new JsonObject { ["server"] = false, ["pull"] = false, ["push"] = false },
+            ["informationModel"] = false,
+            ["chunking"] = true,
+            ["discovery"] = new JsonObject
+            {
+                ["layout"] = "dotnet",
+                ["respond"] = Json.Strings(["DataSetMetaData", "DataSetWriterConfiguration"]),
+                ["probe"] = Json.Strings(["DataSetMetaData", "DataSetWriterConfiguration"]),
+                ["clientOperation"] = "pubsub-discover"
+            },
+            ["codecOps"] = Json.Strings(PubSubCodec.Operations),
+            ["codecSecurity"] = false
+        };
     }
 }

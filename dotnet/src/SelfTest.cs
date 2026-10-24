@@ -31,6 +31,7 @@ namespace OpcUaInterop
 
             Section("capabilities", CheckCapabilities);
             Section("literals", CheckLiterals);
+            Section("pubsub codec", CheckPubSubCodec);
             if (File.Exists(fixturePath))
             {
                 Section("fixture " + fixturePath, () => CheckFixture(fixturePath));
@@ -95,7 +96,30 @@ namespace OpcUaInterop
             string[] ops = root.GetProperty("clientOperations").EnumerateArray().Select(e => e.GetString()).ToArray();
             Check(ops.Length > 0 && ops.SequenceEqual(ClientCommand.Operations),
                 "capabilities clientOperations are the implemented operations (" + ops.Length + ")");
-            Check(!root.GetProperty("pubsub").GetProperty("supported").GetBoolean(), "capabilities pubsub.supported is false");
+            JsonElement pubsub = root.GetProperty("pubsub");
+            Check(pubsub.GetProperty("supported").GetBoolean(), "capabilities pubsub.supported is true");
+            Check(pubsub.GetProperty("codecOps").EnumerateArray().Select(e => e.GetString()).SequenceEqual(PubSubCodec.Operations),
+                "capabilities pubsub.codecOps are the implemented codec operations");
+        }
+
+        // ── PubSub codec ────────────────────────────────────────────────────
+
+        // The UADP example of docs/CLIENT_CONTRACT.md §14.9 and its description.
+        private const string UadpExample = "8SG6CAlkAAcAAU30hyYcRNVi3QEJAwAEAAb7////DAIAAABoaQn//////////4YDAAAAAQAAAAIAAAADAAAA";
+
+        private const string UadpExampleDescription =
+            "{\"publisherId\":{\"type\":\"UInt16\",\"value\":2234},\"groupHeader\":{\"writerGroupId\":100,\"sequenceNumber\":7}," +
+            "\"payloadHeader\":true,\"timestamp\":\"2026-10-23T10:00:00.1234567Z\"," +
+            "\"messages\":[{\"dataSetWriterId\":62541,\"messageType\":\"KeyFrame\",\"fieldEncoding\":\"Variant\",\"sequenceNumber\":3," +
+            "\"fields\":[{\"dataType\":\"Int32\",\"value\":-5},{\"dataType\":\"String\",\"value\":\"hi\"}," +
+            "{\"dataType\":\"UInt64\",\"value\":\"18446744073709551615\"},{\"dataType\":\"Int32\",\"value\":[1,2,3]}]}]}";
+
+        private static void CheckPubSubCodec()
+        {
+            Check(PubSubCodec.ReencodeUadpAsync(UadpExample).GetAwaiter().GetResult() == UadpExample,
+                "pubsub-uadp-decode re-encodes the §14.9 example byte for byte");
+            Check(PubSubCodec.EncodeUadpAsync(UadpExampleDescription).GetAwaiter().GetResult() == UadpExample,
+                "pubsub-uadp-encode of the §14.9 description is the §14.9 example");
         }
 
         // ── literal parsing and binary encoding ─────────────────────────────
