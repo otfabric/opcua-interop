@@ -10,7 +10,7 @@ namespace OpcUaInterop
     ///   client &lt;op&gt;        run one client operation (docs/CLIENT_CONTRACT.md)
     ///   validate-fixture   validate a fixture file
     ///   print-capabilities emit the capability document
-    ///   test               self-test
+    ///   test               in-process unit tests (SelfTest.cs)
     /// </summary>
     public static class Program
     {
@@ -37,8 +37,7 @@ namespace OpcUaInterop
                         Console.Out.WriteLine(Capabilities.Document());
                         return 0;
                     case "test":
-                        Console.Error.WriteLine("[dotnet] self-test: OK (stack " + Capabilities.StackVersion + ")");
-                        return 0;
+                        return SelfTest.Run(rest);
                     default:
                         Console.Error.WriteLine("unknown subcommand: " + args[0]);
                         Usage();

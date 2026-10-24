@@ -43,6 +43,11 @@ namespace OpcUaInterop
                 {
                     return await CodecCommand.RunAsync(a).ConfigureAwait(false);
                 }
+                if (op == "history-read" && a.Get("--endpoint") == null)
+                {
+                    // Same usage text as the reference adapters: consumers probe it for "--scenario continue".
+                    throw new InputException("missing --endpoint, --node, --start, or --end [--scenario continue]");
+                }
                 c = await ClientContext.CreateAsync(a).ConfigureAwait(false);
                 return op switch
                 {

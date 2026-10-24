@@ -30,7 +30,10 @@ namespace OpcUaInterop
         private BaseDataVariableState m_historyTemperature;
 
         public InteropNodeManager(IServerInternal server, ApplicationConfiguration configuration, Fixture fixture)
-            : base(server, configuration, fixture.Namespaces[0].Uri)
+            // useSamplingGroups: sample monitored values at their revised sampling interval.
+            // Without it the stack reports every ClearChangeMasks as an exception and a
+            // 1 s item on the 100 ms ramp got a value every 500 ms.
+            : base(server, configuration, useSamplingGroups: true, fixture.Namespaces[0].Uri)
         {
             m_fixture = fixture;
             m_historian = new InMemoryHistorianProvider(new InMemoryHistorianOptions
@@ -299,7 +302,7 @@ namespace OpcUaInterop
         }
 
         /// <summary>The fixture initialValue as a Variant of the declared type / rank.</summary>
-        private Variant FixtureValue(Fixture.NodeDef nd)
+        internal static Variant FixtureValue(Fixture.NodeDef nd)
         {
             if (nd.InitialValue is not JsonElement json || json.ValueKind == JsonValueKind.Null)
             {
