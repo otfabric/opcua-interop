@@ -72,6 +72,25 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.10.1
+
+**Date:** 2026-10-24
+**Previous release:** v0.10.0
+
+### Summary
+
+Build dependency and base image updates; the command contract, the fixtures and the reference stack versions are unchanged.
+
+### Changed
+
+- **asyncua**: base image `python:3.15.0-slim-trixie` (was 3.14.9).
+- **milo**: `maven-compiler-plugin` 3.16.0 (was 3.15.0), `jackson-databind` 2.22.4 (was 2.22.3).
+- **node-opcua**: TypeScript 7.0.2 (was 5.9.3); the compiled output is unchanged.
+- **async-opcua**: `base64` 0.23.1 (was 0.22.1).
+- Dependabot keeps `@types/node` on the major of the Node.js runtime (24) instead of proposing newer type definitions than the runtime provides.
+
+---
+
 ## v0.10.0
 
 **Date:** 2026-10-24
