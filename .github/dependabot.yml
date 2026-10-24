@@ -60,3 +60,24 @@ updates:
       - "dependencies"
     ignore:
       - dependency-name: "async-opcua"
+      # The adapter passes certificates, keys and digests to async-opcua, so
+      # these crates must be the versions async-opcua is built with (0.19:
+      # x509-cert 0.2, spki 0.7, sha2 0.10, const-oid 0.9, der 0.7, ...). A 0.x
+      # minor release is a breaking one in Cargo: bumping it alone puts two
+      # versions of der in the graph and the build fails. They move with the
+      # async-opcua pin; Dependabot offers patch releases only.
+      - dependency-name: "x509-cert"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "spki"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "sha2"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "const-oid"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "der"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "rsa"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      rustcrypto:
+        patterns: ["x509-cert", "spki", "sha2", "const-oid", "der", "rsa"]
