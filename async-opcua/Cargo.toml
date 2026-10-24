@@ -31,7 +31,7 @@ der = "0.7"
 rsa = { version = "0.9", features = ["sha2"] }
 sha2 = { version = "0.10", features = ["oid"] }
 spki = "0.7"
-const-oid = { version = "0.9", features = ["db"] }
+const-oid = { version = "0.10", features = ["db"] }
 arc-swap = "1"
 
 [profile.release]
