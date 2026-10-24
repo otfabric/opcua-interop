@@ -197,7 +197,7 @@ version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5418b074d0d9933521a2107a3808f8690ea6c1550b928416bd92ef68ffb2086"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "convert_case",
  "proc-macro2",
  "quote",
@@ -256,7 +256,7 @@ checksum = "ed08403ae2d0af9010420612d953f8edf65e1cdd3b0fa092009fc8ec08d82f9e"
 dependencies = [
  "async-opcua-macros",
  "async-opcua-xml",
- "base64",
+ "base64 0.22.1",
  "bitflags 2.13.2",
  "byteorder",
  "chrono",
@@ -313,6 +313,12 @@ name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "base64ct"
@@ -1174,7 +1180,7 @@ dependencies = [
  "arc-swap",
  "async-opcua",
  "async-trait",
- "base64",
+ "base64 0.23.1",
  "chrono",
  "const-oid",
  "der",
