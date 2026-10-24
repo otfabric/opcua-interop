@@ -15,6 +15,8 @@
      (`BuildInfo` software version)
    - `async-opcua/src/common.rs` (`ADAPTER_VERSION`) and
      `async-opcua/Cargo.toml` (crate `version`)
+   - `dotnet/src/Capabilities.cs` (`AdapterVersion`, also the server's
+     `BuildInfo` software version)
 3. Write the section `## vX.Y.Z` below, with its **Date**; `make release-notes
    VERSION=vX.Y.Z` prints what the GitHub release will say. Commit and push
    to `main`.
@@ -42,7 +44,8 @@
    The tag is created last: a failed run leaves no tag, fix and run again.
 5. Consumers pin the digests from the release (`manifest.json`). For go-opcua:
    update `defaultOpen62541Image` / `defaultMiloImage` (and, from v0.9.0,
-   `defaultAsyncOpcuaImage` in `interop/asyncopcua_harness_test.go`) in
+   `defaultAsyncOpcuaImage` in `interop/asyncopcua_harness_test.go` and
+   `defaultDotnetImage` in `interop/dotnet_harness_test.go`) in
    `interop/harness_test.go`, `.github/workflows/interop.yml`, `INTEROP.md` and
    `interop/BUCKET_B.md`, then run its interop suite against the published
    images:
@@ -62,7 +65,9 @@ Tags are immutable. A fix is a new version; a published tag is never moved
 
 Upstream pins: `open62541/Dockerfile` (`ARG OPEN62541_COMMIT`),
 `milo/pom.xml` (`milo.version`), `async-opcua/Cargo.toml` (`async-opcua =
-"=X.Y.Z"`, with `Cargo.lock`), the MQTT broker `eclipse-mosquitto:2.0.22` by
+"=X.Y.Z"`, with `Cargo.lock`), `dotnet/Dockerfile` (`ARG OPCUA_VERSION`, the
+`OPCFoundation.NetStandard.Opc.Ua.*` NuGet version; `ARG DOTNET_SDK_VERSION` /
+`DOTNET_RUNTIME_VERSION` for .NET), the MQTT broker `eclipse-mosquitto:2.0.22` by
 digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
@@ -82,10 +87,23 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 - `make image-async-opcua`, `test-async-opcua`, `smoke-async-opcua`, `shutdown-async-opcua`, `run-async-opcua` (port 4842), `compose.yaml` service `async-opcua`; CI and Release build, test and publish the third image (manifest.json records the async-opcua pin). `scripts/smoke.sh async-opcua <image>`; `smoke.sh cross` takes the async-opcua image as an optional third argument and then also runs the open62541 and Milo clients against it, the async-opcua client against all three servers, and secured channels (Basic256Sha256, Aes128 / Aes256, UserName, untrusted certificate).
 - `Upstream candidates` workflow: an async-opcua job compares the `Cargo.toml` pin with the latest crates.io release, builds the adapter at that release (Cargo.toml / Cargo.lock edited in the job checkout only) and runs the smoke; Dependabot covers the `async-opcua/` Dockerfile and the adapter's other crates (the `async-opcua` crate itself is ignored there, its pin is exact).
 - `schemas/client-result.schema.json`: `adapter` may be `async-opcua`.
+- **UA-.NETStandard (C#) adapter** (`dotnet/`, image `ghcr.io/otfabric/opcua-interop-dotnet`), on the OPC Foundation UA-.NETStandard stack 2.0.1 (NuGet `OPCFoundation.NetStandard.Opc.Ua.Server`, `.Client`, `.Configuration`) on .NET 10; multi-stage image (portable IL built on the build platform, no compilation under emulation for arm64; .NET runtime on Alpine as the non-root user `app`; linux/amd64 and linux/arm64). The same command contract as the open62541 and Milo adapters: `server`, the eighteen `client` operations, `codec`, `validate-fixture`, `print-capabilities`, `test`. The server serves the baseline fixture (all node classes, dynamic values, methods, events, raw history with continuation points, AnalogItems with EURange, AddNodes / DeleteNodes, DataChangeFilter with absolute and percent deadband), the RSA security profiles (Basic256Sha256 Sign / SignAndEncrypt, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss), Anonymous and UserName tokens, `--register-with` and the trust lists of `--pki-dir`. Monitored items are sampled at their revised sampling interval (the node manager uses the stack's sampling groups; event-driven reporting would send every value change). The client covers all eighteen operations, including `--channel-lifetime-ms`, DataChangeFilter deadbands, `register-server` / `find-servers-on-network` and `codec` JSON (compact and verbose) and XML.
+- Declared as not provided in `print-capabilities`: reverse connect, ECC (2.0.1 refuses the test PKI's ECC certificates, which the RSA test CA issues), LDS / mDNS and PubSub (the stack has a PubSub runtime, the adapter does not wire it).
+- `docker run <image> test` for the dotnet adapter: in-process checks of the capability document, literal parsing and the OPC UA Binary encodings it produces, and a binary round trip of every Variable value of the mounted fixture.
+- Test PKI: `dotnet-server` / `dotnet-client` identities (RSA), trusted by the other server identities (async-opcua's by exact certificate) and trusting the other clients. `certs/generate.sh --add-dotnet` adds them to an existing PKI without regenerating the CA or the other certificates.
+- `make image-dotnet`, `buildx-dotnet`, `test-dotnet`, `smoke-dotnet`, `smoke-cross-dotnet`, `shutdown-dotnet`, `run-dotnet` (port 4843), `compose.yaml` service `dotnet`; `image`, `test`, `smoke`, `shutdown`, `publish-*` and `digests` include the dotnet adapter. `scripts/smoke.sh dotnet <image>` and `scripts/smoke.sh cross-dotnet <dotnet> <open62541> <milo>`: the dotnet client against the open62541 and Milo servers, both reference clients against the dotnet server, and codec documents of each stack decoded by the other.
+- CI builds the dotnet image once per run, runs its unit tests, smoke and shutdown check in the adapter matrix and the dotnet cross-stack smoke in its own job; on `main` it builds the arm64 image as well. The Release workflow builds, tests and publishes the dotnet image with the others (`manifest.json`: `images.dotnet`, `upstream.opcfoundation-uanetstandard`). The `Upstream candidates` workflow probes the latest NuGet release of the stack.
+- `schemas/client-result.schema.json`: `adapter` may be `dotnet`.
 
 ### Changed
 
 - **Milo adapter:** the server no longer applies Milo's per-address connection rate limit (`Stack.ConnectionLimits`: at most 4 connection attempts per second per remote address). Test clients reach the server through the Docker gateway, all from one address; the async-opcua client, which opens GetEndpoints and the session on separate connections, had connections closed before the Acknowledge.
+- All adapters report `0.9.0` (`print-capabilities` → `adapter.version`, the servers' BuildInfo); `scripts/check-release.sh` checks the async-opcua and dotnet adapters too.
+
+### Docs
+
+- README: the async-opcua and UA-.NETStandard stacks in the reference-stack and feature tables, the images, make targets, test PKI and test directions.
+- CLIENT_CONTRACT §4: the UA-.NETStandard column of the codec stack limits. Its XmlDecoder reads namespace-qualified elements only, so the open62541 XML documents (no namespace) fail with `BadDecodingError`; the cross-stack smoke checks exactly that instead of a round trip.
 
 ---
 

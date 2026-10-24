@@ -93,6 +93,36 @@ services:
       retries: 15
       start_period: 5s
 
+  dotnet:
+    image: ghcr.io/otfabric/opcua-interop-dotnet:${OPCUA_COMPAT_VERSION:-dev}
+    command:
+      - server
+      - --fixture
+      - /fixtures/baseline/fixture.json
+      - --bind-address
+      - 0.0.0.0
+      - --bind-port
+      - "4840"
+      - --advertised-host
+      - dotnet
+      - --endpoint-path
+      - /opcua-interop
+      - --pki-dir
+      - /pki
+      - --ready-file
+      - /run/opcua-interop/ready
+    ports:
+      - "4843:4840"
+    volumes:
+      - ./fixtures:/fixtures:ro
+      - ./certs/test-pki:/pki:ro
+    healthcheck:
+      test: ["CMD", "test", "-f", "/run/opcua-interop/ready"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+
   # MQTT broker for the PubSub (Part 14) tests: plain MQTT on 1883, anonymous.
   # eclipse-mosquitto:2.0.22, pinned by its multi-arch index digest.
   mosquitto:

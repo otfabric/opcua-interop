@@ -5,7 +5,7 @@ interoperability testing infrastructure providing Dockerized
 reference clients and servers based on independent OPC UA
 protocol implementations.**
 
-Test OPC UA client and server implementations against three independent
+Test OPC UA client and server implementations against four independent
 reference stacks:
 
 - **open62541 (C)** — Open-source OPC UA implementation for
@@ -14,6 +14,8 @@ reference stacks:
   for Java and JVM-based industrial applications.
 - **async-opcua (Rust)** — Asynchronous OPC UA client and server
   library for Rust (FreeOpcUa) with pure-Rust crypto (since v0.9.0).
+- **OPC Foundation UA-.NETStandard (C#)** — The OPC Foundation's own
+  reference implementation for .NET (v0.9.0).
 
 The infrastructure provides deterministic test fixtures, simulated
 OPC UA servers, reference client operations, secure communication,
@@ -22,8 +24,8 @@ data and automated protocol compatibility testing.
 
 ## Key features
 
-- **Independent reference implementations** — Three independently
-  implemented OPC UA stacks written in C, Java and Rust.
+- **Independent reference implementations** — Four independently
+  implemented OPC UA stacks written in C, Java, Rust and C#.
 - **Dockerized clients and servers** — Reproducible OPC UA
   test environments without installing native protocol libraries.
 - **Deterministic fixtures** — Shared OPC UA address spaces,
@@ -61,7 +63,7 @@ For example,
 uses these reference implementations to verify its client
 and server interoperability.
 
-**Open Source · Docker · open62541 · Eclipse Milo · OPC UA**
+**Open Source · Docker · open62541 · Eclipse Milo · UA-.NETStandard · OPC UA**
 
 ## Quick start
 
@@ -80,6 +82,9 @@ make run-open62541
 
 # Milo server on port 4841
 make run-milo
+
+# UA-.NETStandard server on port 4843
+make run-dotnet
 ```
 
 ### Run a reference client probe
@@ -112,6 +117,7 @@ docker run --rm --network host \
 ```sh
 docker run --rm ghcr.io/otfabric/opcua-interop-open62541:latest print-capabilities
 docker run --rm ghcr.io/otfabric/opcua-interop-milo:latest print-capabilities
+docker run --rm ghcr.io/otfabric/opcua-interop-dotnet:latest print-capabilities
 ```
 
 ## Architecture
@@ -131,6 +137,7 @@ opcua-interop/
 ├── open62541/          # C adapter (Dockerfile, CMakeLists, source)
 ├── milo/               # Java adapter (Dockerfile, pom.xml, source)
 ├── async-opcua/        # Rust adapter (Dockerfile, Cargo.toml, source)
+├── dotnet/             # C# adapter on UA-.NETStandard (Dockerfile, csproj, source)
 ├── schemas/            # JSON Schemas for client results and print-capabilities
 ├── docs/               # Client command contract (CLIENT_CONTRACT.md)
 ├── pubsub/examples/    # PubSub configurations (--pubsub-config) used by the PubSub smoke
@@ -165,6 +172,7 @@ Each image supports the same command contract:
 | `ghcr.io/otfabric/opcua-interop-open62541:<version>` | linux/amd64, linux/arm64 |
 | `ghcr.io/otfabric/opcua-interop-milo:<version>` | linux/amd64, linux/arm64 |
 | `ghcr.io/otfabric/opcua-interop-async-opcua:<version>` | linux/amd64, linux/arm64 |
+| `ghcr.io/otfabric/opcua-interop-dotnet:<version>` (from v0.9.0) | linux/amd64, linux/arm64 |
 
 ### Server command
 
@@ -258,6 +266,9 @@ client codec pubsub-uadp-decode|pubsub-json-decode [--document <message>] [--met
 The open62541 client can wait for a reverse connection instead of dialling
 (`--reverse-listen <port>`) and speaks the ECC security policies
 (`--security-policy ECC_nistP256 --certificate <identity>/ecc-nistp256/cert.crt ...`).
+
+The dotnet client speaks the RSA policies only (no `--reverse-listen`, no ECC; see
+"Reference stacks" below).
 
 Every client command also accepts `--channel-lifetime-ms <n>` to request a short
 SecureChannel lifetime and force SecurityToken renewals mid-command:
@@ -401,6 +412,8 @@ certs/test-pki/
 ├── milo-client/           # Milo client identity
 ├── async-opcua-server/    # async-opcua server identity (pki/trusted/certs also lists the client certificates)
 ├── async-opcua-client/    # async-opcua client identity
+├── dotnet-server/         # UA-.NETStandard server identity (v0.9.0)
+├── dotnet-client/         # UA-.NETStandard client identity (v0.9.0)
 ├── consumer/              # Consumer client identity (used by go-opcua test client)
 ├── go-server/             # go-opcua server identity (DNS:host.docker.internal SAN)
 └── untrusted/             # Self-signed cert for trust-rejection tests
@@ -417,6 +430,11 @@ Each identity directory contains:
   same subject / SAN URI, issued by the same test CA. `untrusted/ecc-nistp256/` is the
   self-signed ECC counterpart. `certs/generate.sh --add-ecc` adds them to an existing PKI
   without touching the CA or the RSA files.
+
+The `dotnet-server` / `dotnet-client` identities (v0.9.0, RSA only) are trusted by the
+other server identities (async-opcua's by exact certificate) and trust the other client
+identities. `certs/generate.sh --add-dotnet` adds them to a PKI generated before v0.9.0 without
+regenerating the CA or the other certificates.
 
 **WARNING:** These certificates are for isolated test environments only. They are not
 checked in: `certs/test-pki/` is git-ignored and generated locally with `make certs`.
@@ -446,10 +464,12 @@ Test directions:
 |---|---|
 | Go client → open62541 server | go-opcua |
 | Go client → Milo server | go-opcua |
+| Go client → UA-.NETStandard server | go-opcua |
 | open62541 client → Go server | go-opcua |
 | Milo client → Go server | go-opcua |
 | Go client → async-opcua server | go-opcua |
 | async-opcua client → Go server | go-opcua |
+| UA-.NETStandard client → Go server | go-opcua |
 
 ## Make targets
 
@@ -459,35 +479,40 @@ make image               # Build all adapter images for host architecture
 make image-open62541     # Build open62541 image (host arch)
 make image-milo          # Build Milo image (host arch)
 make image-async-opcua   # Build async-opcua image (host arch)
+make image-dotnet        # Build UA-.NETStandard image (host arch)
 make validate            # Validate fixtures and schema
 make validate-fixtures   # Validate all fixture files
 make test                # Run unit tests for all adapters
 make test-open62541      # Run open62541 unit tests
 make test-milo           # Run Milo unit tests
 make test-async-opcua    # Run async-opcua unit tests
+make test-dotnet         # Run UA-.NETStandard adapter unit tests
 make smoke               # Run all smoke tests (images must be built)
 make smoke-open62541     # Smoke test open62541 only
 make smoke-milo          # Smoke test Milo only
 make smoke-async-opcua   # Smoke test async-opcua only (no codec checks)
+make smoke-dotnet        # Smoke test UA-.NETStandard only
 make smoke-cross-stack   # Cross-stack interop self-check
+make smoke-cross-dotnet  # UA-.NETStandard client/server against open62541 and Milo
 make smoke-pubsub        # PubSub smoke (open62541 publisher/subscriber containers, Mosquitto)
 make shutdown            # Test graceful shutdown for all adapters
 make run-open62541       # Start open62541 server (foreground, port 4840)
 make run-milo            # Start Milo server (foreground, port 4841)
 make run-async-opcua     # Start async-opcua server (foreground, port 4842)
+make run-dotnet          # Start UA-.NETStandard server (foreground, port 4843)
 make run-mosquitto       # Start the MQTT broker for PubSub tests (foreground, port 1883)
 make certs               # Generate test PKI (requires openssl >= 1.1)
 make clean               # Remove build artifacts and containers
-make check-release VERSION=v0.8.0  # Check versions and RELEASE.md before tagging (see RELEASE.md)
-make release-notes VERSION=v0.8.0  # Print the release notes of a version
+make check-release VERSION=v0.9.0  # Check versions and RELEASE.md before tagging (see RELEASE.md)
+make release-notes VERSION=v0.9.0  # Print the release notes of a version
 ```
 
 ## Versioning
 
 | Version type | Location |
 |---|---|
-| Repository release | Git tag and image tag — **`v0.8.1`** (latest published: `v0.8.0`) |
-| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.8.1`** (must match the tag) |
+| Repository release | Git tag and image tag — **`v0.9.0`** (latest published: `v0.8.2`) |
+| Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.9.0`**, the same for every adapter (must match the tag) |
 | Upstream stack version | Image label and `print-capabilities` → `stack.version` |
 | Fixture schema version | `schemaVersion` field in every fixture |
 
@@ -500,7 +525,8 @@ discovery and the JSON / XML `codec` command, and declares optional features in
 `print-capabilities` (`clientFeatures`, `serverFeatures`, `codec`). `v0.8.0` adds
 OPC UA PubSub (Part 14) to the open62541 adapter (`--pubsub-config`, UDP / MQTT,
 UADP / JSON, message security, SKS, `codec pubsub-*`, `print-capabilities` →
-`pubsub`), the baseline fixture's `PubSub` folder and an MQTT broker. Every change to the
+`pubsub`), the baseline fixture's `PubSub` folder and an MQTT broker. `v0.9.0` adds the
+third reference stack, the OPC Foundation UA-.NETStandard adapter (`opcua-interop-dotnet`). Every change to the
 adapter surface gets a new tag; published tags are not moved. Release notes and the release procedure: [`RELEASE.md`](RELEASE.md).
 
 ## Reference stacks
@@ -510,20 +536,21 @@ adapter surface gets a new tag; published tags are not moved. Release notes and 
 | open62541 | C | open62541 v1.5.9 (OpenSSL crypto backend, mDNS via mdnsd, PubSub with MQTT and SKS) | Native/embedded diversity, OPC UA Binary, certified example-server history |
 | Eclipse Milo | Java | Eclipse Milo v1.1.8 (+ `milo-encoding-json`, `milo-encoding-xml`) | JVM/enterprise diversity, independent serialization and security code paths |
 | async-opcua | Rust | async-opcua 0.19.0 (crates.io, RustCrypto) | Memory-safe Rust stack, independent encoder/decoder and crypto (no OpenSSL); see [`async-opcua/README.md`](async-opcua/README.md) |
+| UA-.NETStandard (`dotnet`) | C# | OPC Foundation UA-.NETStandard 2.0.1 (NuGet `OPCFoundation.NetStandard.Opc.Ua.*`) on .NET 10 | The OPC Foundation reference implementation, the stack most commercial servers and clients build on |
 
 Feature support differs per stack and is declared by `print-capabilities`:
 
-| Feature | open62541 | Eclipse Milo | async-opcua |
-|---|:---:|:---:|:---:|
-| DataChangeFilter (absolute / percent deadband, trigger) — client and server | ✓ | ✓ | ✓ |
-| Reverse connect (server `--reverse-connect`, client `--reverse-listen`) | ✓ | — (no ReverseHello in Milo 1.1.8) | ✓ |
-| ECC security policies | ✓ | — (no ECC `SecurityPolicy` in Milo 1.1.8) | — (none in async-opcua 0.19) |
-| LDS server (`--lds`), mDNS | ✓ | — (Milo answers `Bad_ServiceUnsupported`) | — (stubs answer `BadServiceUnsupported`) |
-| `--register-with`, `register-server`, `find-servers-on-network` | ✓ | ✓ | ✓ |
-| AddNodes / DeleteNodes served (`node-management`) | ✓ | — | ✓ |
-| `codec` JSON (OPC UA 1.05) | ✓ compact | ✓ compact + verbose | — (the stack's JSON is the 1.04 `Type` / `Body` form) |
-| `codec` XML | ✓ (no DataValue / DiagnosticInfo / matrices) | ✓ | — (the stack's Variant XML is the NodeSet2 value form, without the Part 6 `<Value>` element) |
-| PubSub (Part 14): UDP / MQTT, UADP / JSON, security, SKS, information model (v0.8.0) | ✓ | — (no PubSub in Milo 1.1.8) | — (no PubSub in async-opcua 0.19) |
+| Feature | open62541 | Eclipse Milo | async-opcua | UA-.NETStandard |
+|---|:---:|:---:|:---:|:---:|
+| DataChangeFilter (absolute / percent deadband, trigger) — client and server | ✓ | ✓ | ✓ | ✓ |
+| Reverse connect (server `--reverse-connect`, client `--reverse-listen`) | ✓ | — (no ReverseHello in Milo 1.1.8) | ✓ | — (not wired in the adapter) |
+| ECC security policies | ✓ | — (no ECC `SecurityPolicy` in Milo 1.1.8) | — (none in async-opcua 0.19) | — (2.0.1 refuses the test PKI's ECC certificates issued by the RSA CA) |
+| LDS server (`--lds`), mDNS | ✓ | — (Milo answers `Bad_ServiceUnsupported`) | — (stubs answer `BadServiceUnsupported`) | — (not an LDS) |
+| `--register-with`, `register-server`, `find-servers-on-network` | ✓ | ✓ | ✓ | ✓ |
+| AddNodes / DeleteNodes served (`node-management`) | ✓ | — | ✓ | ✓ |
+| `codec` JSON (OPC UA 1.05) | ✓ compact | ✓ compact + verbose | — (the stack's JSON is the 1.04 `Type` / `Body` form) | ✓ compact + verbose |
+| `codec` XML | ✓ (no DataValue / DiagnosticInfo / matrices) | ✓ | — (the stack's Variant XML is the NodeSet2 value form, without the Part 6 `<Value>` element) | ✓ (decodes namespace-qualified documents only) |
+| PubSub (Part 14): UDP / MQTT, UADP / JSON, security, SKS, information model (v0.8.0) | ✓ | — (no PubSub in Milo 1.1.8) | — (no PubSub in async-opcua 0.19) | — (the stack has one; the adapter does not wire it) |
 | `codec pubsub-*` (UADP / JSON NetworkMessages) | ✓ | — | — |
 
 ## Security
@@ -534,12 +561,14 @@ completed in v0.2.0; Aes128 / Aes256 profiles followed in v0.2.1; SecureChannel 
 open62541 adapter to the OpenSSL crypto backend and adds the ECC security policies.
 
 **What is implemented and verified:**
-- Full test PKI with CA, nine identities (including go-server and, since v0.9.0, async-opcua-server / async-opcua-client), and OPC UA PKI directory layout
+- Full test PKI with CA, eleven identities (including go-server and, since v0.9.0, the async-opcua and dotnet server / client pairs), and OPC UA PKI directory layout
 - Server `--certificate`, `--private-key`, `--pki-dir` flags on all adapters
 - Secure endpoint advertisement driven by fixture `securityProfiles`
 - Trust list validation via open62541 `UA_ServerConfig_setDefaultWithSecurityPolicies`
 - Trust list validation via Milo `FileBasedTrustListManager` + `DefaultServerCertificateValidator`
 - async-opcua (v0.9.0): the stack trusts exact certificates only, so the server trusts the certificates listed in `<pki-dir>/trusted/certs` and the client checks the server certificate against `--trust-list` itself (exact match or issued by a listed CA); RSA profiles and UserName tokens verified in both directions against go-opcua, ECC not available in async-opcua 0.19
+- UA-.NETStandard (v0.9.0): trust list validation via the stack's directory certificate stores (`--pki-dir`
+  `trusted/` / `issuers/`, rejected certificates under `rejected/`)
 - Username/password authentication on both None/None and secure endpoints
 - Basic256Sha256 / Sign — all four directions: go-opcua client ↔ adapter servers; adapter clients ↔ go-opcua server
 - Basic256Sha256 / SignAndEncrypt — all four directions

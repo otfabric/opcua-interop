@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks that a release tag is consistent with the repository before anything
 # is built: the tag is vMAJOR.MINOR.PATCH, every adapter reports that version
-# (print-capabilities adapter.version, Milo BuildInfo), and RELEASE.md has a
+# (print-capabilities adapter.version, Milo BuildInfo; the dotnet BuildInfo is
+# its adapter.version), and RELEASE.md has a
 # non-empty section for it.
 #
 #   scripts/check-release.sh v0.8.0
@@ -28,6 +29,7 @@ check milo/src/main/java/io/otfabric/opcuainterop/CapabilitiesCommand.java 's/.*
 check milo/src/main/java/io/otfabric/opcuainterop/ServerCommand.java 's/^ +"([0-9]+\.[0-9]+\.[0-9]+)",$/\1/p' "Milo server BuildInfo version"
 check async-opcua/src/common.rs 's/^pub const ADAPTER_VERSION: &str = "([0-9.]+)";$/\1/p' "async-opcua adapter.version"
 check async-opcua/Cargo.toml 's/^version = "([0-9.]+)"$/\1/p' "async-opcua crate version"
+check dotnet/src/Capabilities.cs 's/.*const string AdapterVersion = "([0-9.]+)";.*/\1/p' "dotnet adapter.version (also its BuildInfo version)"
 
 notes="$("${ROOT}/scripts/release-notes.sh" "${TAG}")" || fail "RELEASE.md has no section \"## ${TAG}\""
 [[ -n "${notes//[[:space:]]/}" ]] || fail "RELEASE.md section \"## ${TAG}\" is empty"

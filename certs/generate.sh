@@ -9,6 +9,10 @@
 #                           keep the existing CA and identities untouched and only
 #                           (re)generate the async-opcua-server / async-opcua-client
 #                           identities (new in v0.9.0) and their trust list entries
+#   generate.sh --add-dotnet
+#                           keep the existing CA and identities untouched and only
+#                           (re)generate the dotnet-server / dotnet-client identities
+#                           (new in v0.9.0) and their trust list entries
 #
 # Requirements: openssl >= 1.1.1 (ECC: brainpool, Ed25519 and Ed448 support)
 # Output: certs/test-pki/
@@ -23,7 +27,8 @@ case "${1:-}" in
     "")        ;;
     --add-ecc) MODE="add-ecc" ;;
     --add-async-opcua) MODE="add-async-opcua" ;;
-    *) echo "usage: generate.sh [--add-ecc | --add-async-opcua]" >&2; exit 2 ;;
+    --add-dotnet) MODE="add-dotnet" ;;
+    *) echo "usage: generate.sh [--add-ecc | --add-async-opcua | --add-dotnet]" >&2; exit 2 ;;
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,6 +42,7 @@ GO_SERVER_URI="urn:otfabric:opcua-interop:server:go-opcua"
 OPEN62541_CLIENT_URI="urn:otfabric:opcua-interop:client:open62541"
 MILO_CLIENT_URI="urn:otfabric:opcua-interop:client:milo"
 ASYNC_OPCUA_CLIENT_URI="urn:otfabric:opcua-interop:client:async-opcua"
+DOTNET_CLIENT_URI="urn:otfabric:opcua-interop:client:dotnet"
 CONSUMER_CLIENT_URI="urn:otfabric:opcua-interop:client:consumer"
 
 log() { echo "[certs] $*" >&2; }
@@ -288,6 +294,46 @@ gen_async_opcua() {
     for server in open62541-server milo-server go-server; do
         cp "${PKI_DIR}/async-opcua-client/cert.crt" "${PKI_DIR}/${server}/pki/trusted/certs/async-opcua-client.crt"
     done
+    link_async_opcua_dotnet
+}
+
+# UA-.NETStandard (dotnet adapter) identities, RSA only: the adapter offers no
+# ECC SecurityPolicy (UA-.NETStandard 2.0.1 does not accept ECC certificates
+# issued by the RSA test CA). Every other identity's trust list gets the
+# dotnet client certificate, the dotnet server trusts the other clients.
+gen_dotnet() {
+    rm -rf "${PKI_DIR}/dotnet-server" "${PKI_DIR}/dotnet-client"
+    gen_cert "${PKI_DIR}/dotnet-server" \
+        "UA-.NETStandard Server" \
+        "${SERVER_APP_URI}" \
+        "DNS:dotnet"
+    gen_cert "${PKI_DIR}/dotnet-client" \
+        "UA-.NETStandard Client" \
+        "${DOTNET_CLIENT_URI}" \
+        "DNS:dotnet"
+    populate_trust_dir "${PKI_DIR}/dotnet-server/pki"
+    populate_trust_dir "${PKI_DIR}/dotnet-client/pki"
+
+    local id
+    for id in open62541-client milo-client consumer; do
+        cp "${PKI_DIR}/${id}/cert.crt" "${PKI_DIR}/dotnet-server/pki/trusted/certs/${id}.crt"
+    done
+    for id in open62541-server milo-server go-server; do
+        cp "${PKI_DIR}/dotnet-client/cert.crt" "${PKI_DIR}/${id}/pki/trusted/certs/dotnet-client.crt"
+    done
+    link_async_opcua_dotnet
+}
+
+# Cross trust of the two v0.9.0 adapters, whichever was generated last: the
+# async-opcua server trusts the exact dotnet client certificate, the dotnet
+# server the async-opcua client certificate.
+link_async_opcua_dotnet() {
+    if [[ -d "${PKI_DIR}/async-opcua-server/pki" && -f "${PKI_DIR}/dotnet-client/cert.crt" ]]; then
+        cp "${PKI_DIR}/dotnet-client/cert.crt" "${PKI_DIR}/async-opcua-server/pki/trusted/certs/dotnet-client.crt"
+    fi
+    if [[ -d "${PKI_DIR}/dotnet-server/pki" && -f "${PKI_DIR}/async-opcua-client/cert.crt" ]]; then
+        cp "${PKI_DIR}/async-opcua-client/cert.crt" "${PKI_DIR}/dotnet-server/pki/trusted/certs/async-opcua-client.crt"
+    fi
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -313,6 +359,18 @@ if [[ "${MODE}" == "add-async-opcua" ]]; then
     gen_async_opcua
     log ""
     log "async-opcua identities generated (CA and other identities left untouched)."
+    exit 0
+fi
+
+if [[ "${MODE}" == "add-dotnet" ]]; then
+    if [[ ! -f "${PKI_DIR}/ca/ca.crt" || ! -f "${PKI_DIR}/ca/ca.key" || ! -f "${PKI_DIR}/ca/ca.crl" ]]; then
+        echo "generate.sh --add-dotnet: no existing CA in ${PKI_DIR}/ca (run generate.sh first)" >&2
+        exit 1
+    fi
+    log "Adding the dotnet identities to the existing test PKI in ${PKI_DIR}"
+    gen_dotnet
+    log ""
+    log "dotnet identities generated (CA and the other certificates unchanged; dotnet-client.crt added to their trust lists)."
     exit 0
 fi
 
@@ -381,6 +439,8 @@ cp "${PKI_DIR}/open62541-client/cert.crt" "${PKI_DIR}/go-server/pki/trusted/cert
 cp "${PKI_DIR}/milo-client/cert.crt"      "${PKI_DIR}/go-server/pki/trusted/certs/milo-client.crt"
 cp "${PKI_DIR}/consumer/cert.crt"         "${PKI_DIR}/go-server/pki/trusted/certs/consumer.crt"
 gen_async_opcua
+
+gen_dotnet
 
 log ""
 log "Test PKI generated:"

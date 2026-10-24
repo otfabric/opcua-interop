@@ -5,8 +5,11 @@
 #   smoke.sh open62541 <image>                        # single-adapter smoke
 #   smoke.sh milo <image>                             # single-adapter smoke
 #   smoke.sh async-opcua <image>                      # single-adapter smoke
+#   smoke.sh dotnet <image>                           # single-adapter smoke
 #   smoke.sh cross <image-open62541> <image-milo> [image-async-opcua]
 #                                                     # cross-stack self-check
+#   smoke.sh cross-dotnet <image-dotnet> <image-open62541> <image-milo>
+#                                                     # dotnet against both reference stacks
 #
 # Exit codes:
 #   0  — all checks passed
@@ -19,7 +22,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENDPOINT_PATH="/opcua-interop"
 WAIT_TIMEOUT=60
 
-MODE="${1:?Usage: smoke.sh <open62541|milo|async-opcua|cross> <image> [image-milo] [image-async-opcua]}"
+MODE="${1:?Usage: smoke.sh <open62541|milo|async-opcua|dotnet|cross|cross-dotnet> <image> [images...]}"
 shift
 
 PASS=0
@@ -351,15 +354,18 @@ check_codec_node() {
 
 # codec without a server: the encoder's document is decoded by the decoder
 # (possibly the other stack) and must yield the same OPC UA Binary encoding.
+# The optional fourth argument limits the formats (default "json xml").
 check_codec_roundtrip() {
     local enc_image="$1"
     local dec_image="$2"
     local label="$3"
+    local formats="${4:-json xml}"
 
     local fmt type value
     for spec in "json|Int64|-1234567890123456789" "json|LocalizedText[]|[\"en:Hello\",\"de:Hallo\"]" \
                 "xml|Double[]|1.5,2.5" "xml|String|interop"; do
         fmt="${spec%%|*}"; value="${spec#*|}"; type="${value%%|*}"; value="${value#*|}"
+        [[ " ${formats} " == *" ${fmt} "* ]] || continue
         local enc dec doc bin
         enc=$(docker run --rm "${enc_image}" client codec encode --format "${fmt}" \
                 --type "${type}" --value "${value}" 2>/dev/null | grep -m1 '^{') || true
@@ -378,6 +384,32 @@ check_codec_roundtrip() {
             fail "${label}: codec decode ${fmt} ${type}: ${dec}"
         fi
     done
+}
+
+# open62541 writes XML documents without the UA Types namespace
+# (<Variant><Value><String>); the UA-.NETStandard XmlDecoder only reads
+# namespace-qualified elements and must refuse them (a stack limit,
+# docs/CLIENT_CONTRACT.md §4, reported, not worked around).
+check_codec_xml_unqualified_rejected() {
+    local enc_image="$1"
+    local dec_image="$2"
+    local label="$3"
+
+    local enc doc dec
+    enc=$(docker run --rm "${enc_image}" client codec encode --format xml \
+            --type String --value interop 2>/dev/null | grep -m1 '^{') || true
+    doc=$(echo "${enc}" | jq -r '.results[0].encoded.variant // empty')
+    if [[ -z "${doc}" || "${doc}" == *"xmlns="* || "${doc}" == *"xmlns:"* ]]; then
+        fail "${label}: expected an XML document without namespace: ${enc}"
+        return
+    fi
+    dec=$(printf '%s' "${doc}" | docker run --rm -i "${dec_image}" client codec decode \
+            --format xml --type Variant 2>/dev/null | grep -m1 '^{') || true
+    if echo "${dec}" | jq -e '.success == false and .results[0].statusCode.name == "BadDecodingError"' >/dev/null 2>&1; then
+        ok "${label}: codec xml without the UA Types namespace is refused (BadDecodingError)"
+    else
+        fail "${label}: codec decode of an unqualified xml document: ${dec}"
+    fi
 }
 
 # ── open62541 feature smoke: ECC, reverse connect, LDS / mDNS ─────────────────
@@ -832,6 +864,63 @@ run_cross_smoke() {
     trap - EXIT
 }
 
+# ── Mode: dotnet against the reference stacks ──────────────────────────────────
+
+# run_client_checks <client-image> <endpoint> <label>: the client-contract checks
+# of a cross-stack direction.
+run_client_checks() {
+    local check
+    for check in check_endpoints check_browse check_read_scalar check_write check_call \
+                 check_subscribe check_register_nodes check_channel_renewal check_deadband \
+                 check_codec_node; do
+        "${check}" "$@"
+    done
+}
+
+run_cross_dotnet_smoke() {
+    local img_dotnet="$1"
+    local img_open62541="$2"
+    local img_milo="$3"
+    local port_open62541=14840
+    local port_milo=14841
+    local port_dotnet=14842
+
+    local cname_open62541 cname_milo cname_dotnet
+    cname_open62541=$(start_server "open62541" "${img_open62541}" "${port_open62541}")
+    cname_milo=$(start_server "milo" "${img_milo}" "${port_milo}")
+    cname_dotnet=$(start_server "dotnet" "${img_dotnet}" "${port_dotnet}")
+    trap "stop_server ${cname_open62541}; stop_server ${cname_milo}; stop_server ${cname_dotnet}" EXIT
+
+    wait_ready "${cname_open62541}"
+    wait_ready "${cname_milo}"
+    wait_ready "${cname_dotnet}"
+
+    local ep_open62541="opc.tcp://localhost:${port_open62541}${ENDPOINT_PATH}"
+    local ep_milo="opc.tcp://localhost:${port_milo}${ENDPOINT_PATH}"
+    local ep_dotnet="opc.tcp://localhost:${port_dotnet}${ENDPOINT_PATH}"
+
+    log "Cross-stack: dotnet-client → open62541-server"
+    run_client_checks "${img_dotnet}" "${ep_open62541}" "dotnet→o62541"
+    log "Cross-stack: dotnet-client → milo-server"
+    run_client_checks "${img_dotnet}" "${ep_milo}" "dotnet→milo"
+    log "Cross-stack: open62541-client → dotnet-server"
+    run_client_checks "${img_open62541}" "${ep_dotnet}" "o62541→dotnet"
+    log "Cross-stack: milo-client → dotnet-server"
+    run_client_checks "${img_milo}" "${ep_dotnet}" "milo→dotnet"
+
+    log "Cross-stack: codec documents of dotnet decoded by the reference stacks and back"
+    check_codec_roundtrip "${img_dotnet}" "${img_open62541}" "dotnet→o62541"
+    check_codec_roundtrip "${img_open62541}" "${img_dotnet}" "o62541→dotnet" json
+    check_codec_xml_unqualified_rejected "${img_open62541}" "${img_dotnet}" "o62541→dotnet"
+    check_codec_roundtrip "${img_dotnet}" "${img_milo}" "dotnet→milo"
+    check_codec_roundtrip "${img_milo}" "${img_dotnet}" "milo→dotnet"
+
+    stop_server "${cname_open62541}"
+    stop_server "${cname_milo}"
+    stop_server "${cname_dotnet}"
+    trap - EXIT
+}
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 case "${MODE}" in
@@ -844,11 +933,17 @@ case "${MODE}" in
     async-opcua)
         run_single_smoke "async-opcua" "${1:?image required}"
         ;;
+    dotnet)
+        run_single_smoke "dotnet" "${1:?image required}"
+        ;;
     cross)
         run_cross_smoke "${1:?open62541 image required}" "${2:?milo image required}" "${3:-}"
         ;;
+    cross-dotnet)
+        run_cross_dotnet_smoke "${1:?dotnet image required}" "${2:?open62541 image required}" "${3:?milo image required}"
+        ;;
     *)
-        echo "Unknown mode: ${MODE}. Use open62541, milo, async-opcua, or cross." >&2
+        echo "Unknown mode: ${MODE}. Use open62541, milo, async-opcua, dotnet, cross or cross-dotnet." >&2
         exit 1
         ;;
 esac

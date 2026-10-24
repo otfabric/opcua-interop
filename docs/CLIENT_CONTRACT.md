@@ -952,18 +952,18 @@ DataValue documents (`null` when the stack cannot produce one), `binary` /
 
 **Stack limits (reported, not worked around):**
 
-| | open62541 v1.5.9 | Eclipse Milo 1.1.8 |
-|---|---|---|
-| JSON flavour | 1.05, one mode (`compact`); `useReversible` has no effect | 1.05, `compact` and `verbose` (`verbose` adds `Status.Symbol`) |
-| JSON DataValue | Variant members flattened: `{"UaType":6,"Value":7,…}` | Variant nested: `{"Value":{"UaType":6,"Value":7},…}`; does not decode the flattened form |
-| JSON NodeId / QualifiedName, ns ≠ 0 | namespace index (`"ns=2;s=x"`, `"2:Name"`) | namespace URI (`"nsu=…;s=x"`); `Bad_EncodingError` without `--namespace-uri` (a bare NodeId is emitted as the malformed `"s=ns=2;s=x"`) |
-| JSON StatusCode | `{"Code":n,"Symbol":"…"}` | `{"Code":n}` (`Symbol` only in `verbose`) |
-| JSON ExtensionObject | known types structurally (`{"UaTypeId":…,<fields>}`), cannot decode that in-place form back; unknown types as `UaEncoding`/`UaBody` | always `UaTypeId` / `UaEncoding` / `UaBody` |
-| XML element names | no namespace (`<Variant><Value><Int32>`) | `uax:` prefix with `xmlns:uax` / `xmlns:xsi` on the root |
-| XML encode | no DataValue, DiagnosticInfo, matrices, structures (`BadNotImplemented`) | all built-in types, matrices as `<Matrix>` |
-| XML decode | no DataValue, DiagnosticInfo, XmlElement (`BadNotImplemented`) | all built-in types |
-| XML Guid | `<Guid><String>…</String></Guid>` | `<Guid>…</Guid>` |
-| Status names | `BadDecodingError` | `Bad_DecodingError` (Milo's symbol table; compare `code`) |
+| | open62541 v1.5.9 | Eclipse Milo 1.1.8 | UA-.NETStandard 2.0.1 (v0.9.0) |
+|---|---|---|---|
+| JSON flavour | 1.05, one mode (`compact`); `useReversible` has no effect | 1.05, `compact` and `verbose` (`verbose` adds `Status.Symbol`) | 1.05, `compact` and `verbose` |
+| JSON DataValue | Variant members flattened: `{"UaType":6,"Value":7,…}` | Variant nested: `{"Value":{"UaType":6,"Value":7},…}`; does not decode the flattened form | Variant members flattened, like open62541 |
+| JSON NodeId / QualifiedName, ns ≠ 0 | namespace index (`"ns=2;s=x"`, `"2:Name"`) | namespace URI (`"nsu=…;s=x"`); `Bad_EncodingError` without `--namespace-uri` (a bare NodeId is emitted as the malformed `"s=ns=2;s=x"`) | namespace index (`"ns=2;s=x"`, `"2:Name"`) |
+| JSON StatusCode | `{"Code":n,"Symbol":"…"}` | `{"Code":n}` (`Symbol` only in `verbose`) | `{"Code":n}` |
+| JSON ExtensionObject | known types structurally (`{"UaTypeId":…,<fields>}`), cannot decode that in-place form back; unknown types as `UaEncoding`/`UaBody` | always `UaTypeId` / `UaEncoding` / `UaBody` | not exercised by the smoke |
+| XML element names | no namespace (`<Variant><Value><Int32>`) | `uax:` prefix with `xmlns:uax` / `xmlns:xsi` on the root | default namespace `xmlns="http://opcfoundation.org/UA/2008/02/Types.xsd"` on the root |
+| XML encode | no DataValue, DiagnosticInfo, matrices, structures (`BadNotImplemented`) | all built-in types, matrices as `<Matrix>` | Variant and DataValue, matrices as `<Matrix>` |
+| XML decode | no DataValue, DiagnosticInfo, XmlElement (`BadNotImplemented`) | all built-in types | namespace-qualified elements only: open62541's unqualified documents fail with `BadDecodingError` |
+| XML Guid | `<Guid><String>…</String></Guid>` | `<Guid>…</Guid>` | `<Guid><String>…</String></Guid>` |
+| Status names | `BadDecodingError` | `Bad_DecodingError` (Milo's symbol table; compare `code`) | `BadDecodingError` |
 
 ---
 
@@ -1041,7 +1041,7 @@ every command that prints a Variant of such a type; before v0.7.0 these were
 **Float/Double special values** — NaN and ±Infinity are not valid JSON numbers.
 Emit `null`. Consumers must treat `null` as a non-finite value in a float context.
 
-**Int64/UInt64 strings** — both adapters must emit strings for all 64-bit integer
+**Int64/UInt64 strings** — all adapters must emit strings for all 64-bit integer
 values, without exception. Consumers must parse them as strings.
 
 ---
