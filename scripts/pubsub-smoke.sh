@@ -10,6 +10,8 @@
 #   udp-multicast  UADP over opc.udp:// multicast (224.0.0.22), container → container
 #   mqtt-uadp      UADP over MQTT through Eclipse Mosquitto
 #   mqtt-json      JSON over MQTT through Eclipse Mosquitto
+#   mqtt-late-broker  the publisher starts before the broker answers and must
+#                  recover from Error
 #   udp-secure     UADP unicast, SignAndEncrypt (PubSub-Aes256-CTR), static keys
 #   sks            the publisher is the Security Key Service, the subscriber pulls
 #                  its keys with GetSecurityKeys (SignAndEncrypt), UADP SignAndEncrypt
@@ -34,7 +36,7 @@ IMG="${1:?Usage: pubsub-smoke.sh <open62541-image> [scenario ...]}"
 shift
 SCENARIOS=("$@")
 if [[ ${#SCENARIOS[@]} -eq 0 ]]; then
-    SCENARIOS=(codec udp-unicast udp-multicast mqtt-uadp mqtt-json udp-secure sks sks-push infomodel)
+    SCENARIOS=(codec udp-unicast udp-multicast mqtt-uadp mqtt-json mqtt-late-broker udp-secure sks sks-push infomodel)
 fi
 
 # Eclipse Mosquitto 2.0.22 (multi-arch index digest), see README "MQTT broker"
@@ -168,6 +170,58 @@ check_follow() {
         sleep 1
     done
     fail "${label}: subscriber did not follow within ${FOLLOW_TIMEOUT}s (expected Int32=${n}): ${out}"
+}
+
+# mqtt-late-broker: the publisher starts while the broker refuses connections
+# (the name "mosquitto" resolves, nothing listens on 1883), as a broker that is
+# still starting up: the first sends fail and the WriterGroup and connection
+# enter Error. They must recover (the adapter re-enables them) and data must
+# reach a subscriber once the real broker is up. (open62541 cannot configure
+# MQTT components while the broker's name does not resolve.)
+scenario_mqtt_late_broker() {
+    local broker="pubsub-smoke-mosquitto-$$" refuser="pubsub-smoke-refuser-$$"
+    local pubc="pubsub-smoke-pub-$$" subc="pubsub-smoke-sub-$$" i
+    # grep a captured log: grep -q on a pipe can SIGPIPE docker logs (pipefail)
+    local plog; plog=$(mktemp "${TMPDIR:-/tmp}/opcua-interop-late-broker.XXXXXX")
+    publog() { docker logs "${pubc}" > "${plog}" 2>&1 || true; }
+    log "Scenario mqtt-late-broker: mqtt-json with the publisher started before the broker is up"
+    docker rm -f "${broker}" &>/dev/null || true
+    CONTAINERS+=("${refuser}")
+    docker run -d --name "${refuser}" --network "${NET}" --network-alias mosquitto \
+        --entrypoint sleep "${MOSQUITTO_IMAGE}" 600 >/dev/null
+    start_server "${pubc}" pubsub-publisher "mqtt-json-publisher.json" || { stop_servers "${refuser}"; return; }
+    for i in $(seq 1 20); do
+        publog; grep -q "is in Error" "${plog}" && break
+        sleep 0.5
+    done
+    if grep -q "is in Error" "${plog}"; then
+        ok "mqtt-late-broker: the publisher went to Error while the broker refused connections"
+    else
+        fail "mqtt-late-broker: the publisher did not report Error while the broker refused connections"
+    fi
+    stop_servers "${refuser}"
+    ensure_mosquitto
+    if [[ "$(docker inspect -f '{{.State.Running}}' "${pubc}" 2>/dev/null)" != true ]]; then
+        fail "mqtt-late-broker: the publisher exited ($(docker inspect -f '{{.State.ExitCode}}' "${pubc}" 2>/dev/null))"
+        stop_servers "${pubc}"
+        return
+    fi
+    start_server "${subc}" pubsub-subscriber "mqtt-json-subscriber.json" || { stop_servers "${pubc}"; return; }
+    local before=${FAIL}
+    check_follow "mqtt-late-broker"
+    publog
+    if grep -q "re-enabled" "${plog}"; then
+        ok "mqtt-late-broker: the publisher re-enabled its components"
+    else
+        fail "mqtt-late-broker: no recovery reported by the publisher"
+    fi
+    if (( FAIL > before )); then
+        log "publisher PubSub log (tail):"; grep "pubsub\|open62541\]" "${plog}" | tail -12 >&2
+        log "subscriber PubSub log (tail):"
+        docker logs "${subc}" 2>&1 | grep "pubsub\|MQTT\|open62541\]" | tail -12 >&2 || true
+    fi
+    rm -f "${plog}"
+    stop_servers "${pubc}" "${subc}"
 }
 
 # run_pair <label> <config-prefix> [-- publisher-args -- subscriber-args]
@@ -324,6 +378,7 @@ for sc in "${SCENARIOS[@]}"; do
         udp-multicast) run_pair udp-multicast udp-multicast ;;
         mqtt-uadp)     ensure_mosquitto; run_pair mqtt-uadp mqtt-uadp ;;
         mqtt-json)     ensure_mosquitto; run_pair mqtt-json mqtt-json ;;
+        mqtt-late-broker) scenario_mqtt_late_broker ;;
         udp-secure)    run_pair udp-secure udp-secure ;;
         sks)
             prepare_pki

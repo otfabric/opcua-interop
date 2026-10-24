@@ -32,9 +32,15 @@ RUN git clone --depth 1 --branch "${OPEN62541_COMMIT}" "${OPEN62541_REPO}" open6
 #  * backport_json_reader.py — v1.5.9 DataSetReaders reject every JSON
 #    NetworkMessage (an unimplemented TODO in UA_DataSetReader_checkIdentifier);
 #    apply the PublisherId / DataSetWriterId matching of upstream master.
-COPY amalgam/inline_mqtt.py amalgam/backport_json_reader.py /src/prepare/
+#  * backport_mqtt_teardown.py — v1.5.9 double-frees an MQTT topic connection
+#    whose broker connection drops while it is already shutting down (a
+#    refused or lost broker while a WriterGroup goes to Error); apply the
+#    delayed-removal fix of upstream master.
+COPY amalgam/inline_mqtt.py amalgam/backport_json_reader.py \
+     amalgam/backport_mqtt_teardown.py /src/prepare/
 RUN python3 /src/prepare/inline_mqtt.py /src/open62541 \
-    && python3 /src/prepare/backport_json_reader.py /src/open62541
+    && python3 /src/prepare/backport_json_reader.py /src/open62541 \
+    && python3 /src/prepare/backport_mqtt_teardown.py /src/open62541
 
 # Only the amalgamation target is built: the adapter compiles open62541.c itself,
 # and with UA_ENABLE_AMALGAMATION + mDNS (mdnsd) the non-amalgamated object

@@ -88,12 +88,20 @@ typedef struct {
     char *pkiDir;
 } SksSettings;
 
+struct Built;
+
 typedef struct {
     SecGroup *groups;
     size_t    groupCount;
     SksSettings sks;
     UA_UInt64 sksRetryCallbackId;
     UA_Server *server;
+    /* Error recovery: the components the configuration enabled, and the
+     * pending one-shot re-enable (see on_state_change). */
+    struct Built *built;
+    UA_Boolean recoveryPending;
+    UA_UInt32  recoveryDelayMs;
+    UA_DateTime lastErrorAt;
 } PubSubRuntime;
 
 static PubSubRuntime g_rt;
@@ -676,12 +684,13 @@ static int apply_group_keys(UA_Server *server, const UA_NodeId *id, int isWriter
  * ---------------------------------------------------------------------- */
 
 typedef struct {
-    UA_NodeId id;
-    int       enabled;
+    UA_NodeId      id;
+    int            enabled;
+    UA_PubSubState state; /* last state reported by stateChangeCallback */
 } Created;
 
 #define MAX_COMPONENTS 256
-typedef struct {
+typedef struct Built {
     Created connections[MAX_COMPONENTS]; size_t nConn;
     Created writerGroups[MAX_COMPONENTS]; size_t nWg;
     Created writers[MAX_COMPONENTS];      size_t nDsw;
@@ -1145,6 +1154,97 @@ static int add_connections(UA_Server *server, const UA_PubSubConfigurationDataTy
     return 0;
 }
 
+/* ------------------------------------------------------------------------
+ * Error recovery
+ *
+ * open62541 puts a WriterGroup and its PubSubConnection into Error when a
+ * send fails, for example an MQTT publish before the broker has accepted
+ * the connection, and leaves them there. A deployment re-enables them; so
+ * does the adapter: a component the configuration enabled that enters
+ * Error is re-enabled after a delay that doubles up to 5 s while the
+ * recovery keeps failing (a re-enable can reach Operational and fail
+ * again on the first send: only 10 s without an error starts over). Components disabled on purpose (through the
+ * information model) are left alone: only Error is recovered from.
+ * ---------------------------------------------------------------------- */
+
+#define RECOVERY_MIN_MS 200
+#define RECOVERY_MAX_MS 5000
+
+/* find_created returns the entry of a component the configuration
+ * enabled, or NULL. */
+static Created *find_created(Created *list, size_t n, const UA_NodeId id) {
+    for (size_t i = 0; i < n; i++)
+        if (list[i].enabled && UA_NodeId_equal(&list[i].id, &id)) return &list[i];
+    return NULL;
+}
+
+/* recover re-enables the components of list last seen in Error; *failed
+ * counts the re-enables that failed. */
+static size_t recover(UA_Server *server, Created *list, size_t n,
+                      UA_StatusCode (*enable)(UA_Server *, const UA_NodeId),
+                      size_t *failed) {
+    size_t k = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (!list[i].enabled || list[i].state != UA_PUBSUBSTATE_ERROR) continue;
+        if (enable(server, list[i].id) != UA_STATUSCODE_GOOD) (*failed)++;
+        k++;
+    }
+    return k;
+}
+
+static void schedule_recovery(UA_Server *server);
+
+static void recover_cb(UA_Server *server, void *data) {
+    (void)data;
+    g_rt.recoveryPending = false;
+    struct Built *b = g_rt.built;
+    if (!b) return;
+    /* Connections first: a group cannot be operational on a broken one. */
+    size_t failed = 0;
+    size_t n = recover(server, b->connections, b->nConn, UA_Server_enablePubSubConnection, &failed);
+    n += recover(server, b->writerGroups, b->nWg, UA_Server_enableWriterGroup, &failed);
+    n += recover(server, b->readerGroups, b->nRg, UA_Server_enableReaderGroup, &failed);
+    if (n)
+        fprintf(stderr, LOG_PREFIX "info: pubsub: re-enabled %zu component(s) after an error"
+                " (%zu failed)\n", n, failed);
+    /* A re-enable that fails (for example a broker name that does not
+     * resolve yet) goes from Error to Error: no state change reports it. */
+    if (failed) schedule_recovery(server);
+}
+
+static void on_state_change(UA_Server *server, const UA_NodeId id,
+                            UA_PubSubState state, UA_StatusCode status) {
+    (void)status;
+    struct Built *b = g_rt.built;
+    if (!b) return;
+    Created *c = find_created(b->connections, b->nConn, id);
+    if (!c) c = find_created(b->writerGroups, b->nWg, id);
+    if (!c) c = find_created(b->readerGroups, b->nRg, id);
+    if (!c) return;
+    c->state = state;
+    if (state == UA_PUBSUBSTATE_ERROR) schedule_recovery(server);
+}
+
+/* schedule_recovery re-enables the components in Error after the current
+ * backoff delay, unless a re-enable is already pending. */
+static void schedule_recovery(UA_Server *server) {
+    if (g_rt.recoveryPending) return;
+    UA_EventLoop *el = UA_Server_getConfig(server)->eventLoop;
+    UA_DateTime now = el->dateTime_nowMonotonic(el);
+    if (now - g_rt.lastErrorAt > 2 * RECOVERY_MAX_MS * (UA_DateTime)UA_DATETIME_MSEC)
+        g_rt.recoveryDelayMs = RECOVERY_MIN_MS; /* stable since the last error: start over */
+    g_rt.lastErrorAt = now;
+    UA_UInt32 delay = g_rt.recoveryDelayMs ? g_rt.recoveryDelayMs : RECOVERY_MIN_MS;
+    g_rt.recoveryDelayMs = delay * 2 > RECOVERY_MAX_MS ? RECOVERY_MAX_MS : delay * 2;
+    UA_UInt64 cbId;
+    /* Not from inside the state machine: re-enable from a timed callback. */
+    UA_DateTime at = now + (UA_DateTime)delay * UA_DATETIME_MSEC;
+    if (UA_Server_addTimedCallback(server, recover_cb, NULL, at, &cbId) == UA_STATUSCODE_GOOD) {
+        g_rt.recoveryPending = true;
+        fprintf(stderr, LOG_PREFIX "info: pubsub: a component is in Error, re-enabling in %u ms\n", delay);
+    }
+}
+
 static int enable_all(UA_Server *server, const Built *b, char *errBuf, size_t errLen) {
     /* Children first, connections last (as UA_Server_enableAllPubSubComponents) */
     struct { const Created *list; size_t n; const char *kind;
@@ -1330,6 +1430,11 @@ int pubsub_server_apply(UA_Server *server, const PubSubOptions *opt,
             }
         }
     }
+    if (rc == 0) {
+        /* Before enabling: the first send may already fail. */
+        g_rt.built = b;
+        UA_Server_getConfig(server)->pubSubConfig.stateChangeCallback = on_state_change;
+    }
     if (rc == 0 && cfg.enabled)
         rc = enable_all(server, b, errBuf, errLen);
     if (rc == 0)
@@ -1338,14 +1443,20 @@ int pubsub_server_apply(UA_Server *server, const PubSubOptions *opt,
                 cfg.enabled ? "" : ", not enabled");
 
     /* The configuration is copied by the API; the secured-group list keeps
-     * borrowed group ids from g_rt (not from cfg). */
-    free(b);
+     * borrowed group ids from g_rt (not from cfg). b stays for the error
+     * recovery (freed in pubsub_server_cleanup) unless applying failed. */
+    if (rc != 0) {
+        if (g_rt.built == b) g_rt.built = NULL;
+        free(b);
+    }
     UA_PubSubConfigurationDataType_clear(&cfg);
     cJSON_Delete(root);
     return rc;
 }
 
 void pubsub_server_cleanup(void) {
+    free(g_rt.built);
+    g_rt.built = NULL;
     for (size_t i = 0; i < g_rt.groupCount; i++) {
         SecGroup *sg = &g_rt.groups[i];
         free(sg->id);

@@ -63,6 +63,22 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.8.2
+
+**Date:** 2026-10-24
+**Previous release:** v0.8.1
+
+### Fixed
+
+- **open62541 adapter, PubSub error recovery:** open62541 puts a WriterGroup and its PubSubConnection into Error when a send fails (an MQTT publish before the broker has accepted the connection) and leaves them there, so a publisher started just before its broker was ready published nothing for good. This made the go-opcua `mqtt-json` interop test fail intermittently. The adapter now re-enables a connection, WriterGroup or ReaderGroup that its configuration enabled and that is in Error, also when a re-enable itself fails (Error to Error reports no state change). The first retry comes after 200 ms, then the delay doubles up to 5 s and only starts over after 10 s without an error. Components disabled on purpose, through the information model, are left alone.
+- **open62541 adapter, crash when the MQTT broker refuses connections:** open62541 v1.5.9 double-frees an MQTT topic connection when its broker connection drops while the topic connection is already shutting down (a refused or lost broker while a WriterGroup goes to Error); the server aborted with `double free or corruption`. The build applies the delayed-removal fix of upstream master (`open62541/amalgam/backport_mqtt_teardown.py`).
+
+### Tests
+
+- PubSub smoke scenario `mqtt-late-broker`: the publisher starts while the broker refuses connections (the name resolves, nothing listens), must enter Error without crashing, and must recover and deliver data to a subscriber once the real broker is up.
+
+---
+
 ## v0.8.1
 
 **Date:** 2026-10-24
