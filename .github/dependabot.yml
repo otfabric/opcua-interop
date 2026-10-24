@@ -103,6 +103,12 @@ updates:
     ignore:
       - dependency-name: "node-opcua"
       - dependency-name: "node-opcua-*"
+      # @types/node follows the major of the Node.js runtime in the
+      # node-opcua/Dockerfile (NODE_IMAGE, node:24): typings of a newer major
+      # describe APIs the runtime does not have. Raise this bound together
+      # with the base image's major.
+      - dependency-name: "@types/node"
+        versions: [">=25.0.0"]
 
   - package-ecosystem: "docker"
     directory: "/asyncua"
