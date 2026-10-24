@@ -27,7 +27,7 @@ namespace OpcUaInterop
             string first = raw.Length > 0 ? raw[0] : null;
             if (first != null && first.StartsWith("pubsub-", StringComparison.Ordinal))
             {
-                throw new InputException("codec " + first + ": PubSub NetworkMessage coding is not wired in this adapter");
+                return await PubSubCodec.RunAsync(first, new Args(raw[1..])).ConfigureAwait(false);
             }
             string mode = a.Get("--json-mode") ?? "compact";
             if (mode is not ("compact" or "verbose"))
@@ -386,7 +386,7 @@ namespace OpcUaInterop
         // decode
         // ------------------------------------------------------------------
 
-        private static string ReadDocument(Args a)
+        internal static string ReadDocument(Args a)
         {
             string text = a.Get("--document");
             if (text == null)
