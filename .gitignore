@@ -2,6 +2,8 @@
 open62541/build/
 milo/target/
 async-opcua/target/
+dotnet/src/bin/
+dotnet/src/obj/
 
 # Generated test PKI (regenerate with make certs)
 certs/test-pki/

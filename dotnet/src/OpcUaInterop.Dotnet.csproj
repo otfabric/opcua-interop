@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>opcua-interop-dotnet</AssemblyName>
+    <RootNamespace>OpcUaInterop</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS1591;CS0618</NoWarn>
+    <OpcUaVersion Condition="'$(OpcUaVersion)' == ''">2.0.1</OpcUaVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Server" Version="$(OpcUaVersion)" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Client" Version="$(OpcUaVersion)" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Configuration" Version="$(OpcUaVersion)" />
+  </ItemGroup>
+</Project>
