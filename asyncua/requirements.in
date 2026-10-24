@@ -1,0 +1,2 @@
+# Direct dependencies of the asyncua adapter. Lock: requirements.txt (see README.md).
+asyncua==2.1.0

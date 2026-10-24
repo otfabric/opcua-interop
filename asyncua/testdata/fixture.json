@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1.0",
+  "id": "unit",
+  "description": "A small fixture for the adapter's unit tests: one node of each kind the server builds specially (write-only, AnalogItem with EURange, history, event source, method, counter behaviour).",
+  "server": {
+    "applicationUri": "urn:otfabric:opcua-interop:server",
+    "productUri": "urn:otfabric:opcua-interop",
+    "applicationName": "asyncua unit test server"
+  },
+  "endpoint": {"path": "/opcua-interop", "port": 4840},
+  "namespaces": [{"alias": "compat", "uri": "urn:otfabric:opcua-interop:model"}],
+  "nodes": [
+    {"nodeClass": "Object", "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Compatibility", "browseName": "1:Compatibility", "displayName": "Compatibility", "parentNodeId": "i=85", "referenceType": "Organizes", "typeDefinition": "i=61"},
+    {"nodeClass": "Variable", "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32", "browseName": "1:Scalar.Int32", "displayName": "Scalar.Int32", "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Compatibility", "referenceType": "Organizes", "dataType": "Int32", "valueRank": -1, "accessLevel": ["CurrentRead", "CurrentWrite"], "initialValue": -123456789},
+    {"nodeClass": "Variable", "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Array.Int32", "browseName": "1:Array.Int32", "displayName": "Array.Int32", "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Compatibility", "referenceType": "Organizes", "dataType": "Int32", "valueRank": 1, "arrayDimensions": [3], "accessLevel": ["CurrentRead"], "initialValue": [1, 2, 3]},
+    {"nodeClass": "Variable", "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Access.WriteOnly", "browseName": "1:Access.WriteOnly", "displayName": "Access.WriteOnly", "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Compatibility", "referenceType": "Organizes", "dataType": "Int32", "valueRank": -1, "accessLevel": ["CurrentWrite"], "initialValue": 0},
+    {"nodeClass": "Variable", "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Analog.Level", "browseName": "1:Analog.Level", "displayName": "Analog.Level", "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Compatibility", "referenceType": "Organizes", "typeDefinition": "i=2368", "dataType": "Double", "valueRank": -1, "accessLevel": ["CurrentRead"], "initialValue": 0.0, "euRange": {"low": 0.0, "high": 100.0}},
+    {"nodeClass": "Variable", "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=History.Temperature", "browseName": "1:History.Temperature", "displayName": "History.Temperature", "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Compatibility", "referenceType": "Organizes", "dataType": "Double", "valueRank": -1, "accessLevel": ["CurrentRead", "HistoryRead"], "initialValue": 22.5},
+    {"nodeClass": "Variable", "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter", "browseName": "1:Dynamic.Counter", "displayName": "Dynamic.Counter", "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Compatibility", "referenceType": "Organizes", "dataType": "Int64", "valueRank": -1, "accessLevel": ["CurrentRead"], "initialValue": "0"},
+    {"nodeClass": "Object", "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Events.Source", "browseName": "1:Events.Source", "displayName": "Events.Source", "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Compatibility", "referenceType": "Organizes", "typeDefinition": "i=58"},
+    {"nodeClass": "Object", "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Methods", "browseName": "1:Methods", "displayName": "Methods", "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Compatibility", "referenceType": "Organizes", "typeDefinition": "i=61"},
+    {"nodeClass": "Method", "nodeId": "nsu=urn:otfabric:opcua-interop:model;s=Methods.Add", "browseName": "1:Methods.Add", "displayName": "Methods.Add", "parentNodeId": "nsu=urn:otfabric:opcua-interop:model;s=Methods", "referenceType": "HasComponent", "methodBehavior": "Add",
+     "inputArguments": [{"name": "a", "dataType": "Int32", "valueRank": -1}, {"name": "b", "dataType": "Int32", "valueRank": -1}],
+     "outputArguments": [{"name": "result", "dataType": "Int32", "valueRank": -1}]}
+  ],
+  "behaviors": [
+    {"target": "nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter", "kind": "counter", "initial": 0, "increment": 1, "intervalMs": 50}
+  ],
+  "users": [{"username": "test-user", "password": "test-password", "roles": ["AuthenticatedUser"]}],
+  "securityProfiles": [{"securityPolicy": "None", "securityMode": "None"}]
+}
