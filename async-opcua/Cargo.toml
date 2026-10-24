@@ -26,7 +26,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 # Certificate chain verification for --trust-list (the stack itself trusts by
 # exact certificate only), same crate versions the stack uses.
-x509-cert = "0.2"
+x509-cert = "0.3"
 der = "0.7"
 rsa = { version = "0.9", features = ["sha2"] }
 sha2 = { version = "0.10", features = ["oid"] }
