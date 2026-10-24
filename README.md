@@ -231,13 +231,13 @@ server ... --mdns-name my-server            # announce a plain server via mDNS
 # all adapters: register with an LDS (RegisterServer2, fallback RegisterServer)
 server ... --register-with opc.tcp://lds:4840/opcua-interop
 
-# open62541 (v0.8.0): OPC UA PubSub configuration, see "PubSub" below
+# open62541 (v0.8.0), UA-.NETStandard (v0.10.0): OPC UA PubSub configuration, see "PubSub" below
 server ... --pubsub-config /pubsub/udp-unicast-subscriber.json
 ```
 
 ### Client commands
 
-Eighteen client operations (see `print-capabilities` → `clientOperations` and
+Eighteen client operations, plus `pubsub-discover` on the dotnet adapter (see `print-capabilities` → `clientOperations` and
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
 
 ```sh
@@ -270,8 +270,9 @@ client codec encode --format json|xml --type 'Int32[]' --value 1,2,3 [--dimensio
 client codec encode --format json|xml --endpoint ... --node '...'
 client codec decode --format json|xml --type Variant|DataValue|<BuiltInType>   # document on stdin
 client codec --endpoint ... --node '...' [--node '...']                        # JSON + XML per node
-client codec pubsub-uadp-encode|pubsub-json-encode [--document <description>] # PubSub NetworkMessage (open62541)
+client codec pubsub-uadp-encode|pubsub-json-encode [--document <description>] # PubSub NetworkMessage (open62541, dotnet)
 client codec pubsub-uadp-decode|pubsub-json-decode [--document <message>] [--metadata <DataSetMetaDataType>]
+client pubsub-discover --url opc.udp://<host>:<port> [--type DataSetMetaData|DataSetWriterConfiguration] # UADP discovery probe (dotnet)
 ```
 
 `subscribe` takes a DataChangeFilter (`--deadband-absolute <x>` | `--deadband-percent <x>`,
@@ -304,22 +305,25 @@ All client operations write JSON to stdout and diagnostics to stderr.
 
 ## PubSub (OPC UA Part 14)
 
-The open62541 server publishes and subscribes OPC UA PubSub when started with
-`--pubsub-config <file>` (v0.8.0). Eclipse Milo 1.1.8 has no PubSub
-implementation: the Milo adapter refuses the flag and declares
-`print-capabilities` → `pubsub.supported: false`. The complete contract —
-file format, honoured fields, information-model method conventions, codec
-description format and open62541 v1.5.9 limits — is
+The open62541 server (v0.8.0) and the UA-.NETStandard server (v0.10.0, on the
+stack's Opc.Ua.PubSub runtime) publish and subscribe OPC UA PubSub when
+started with `--pubsub-config <file>`; both read the same file. Eclipse Milo
+1.1.8 has no PubSub implementation: the Milo adapter refuses the flag and
+declares `print-capabilities` → `pubsub.supported: false` (as do async-opcua,
+node-opcua and asyncua). The complete contract — file format, honoured
+fields, information-model method conventions, codec description format, the
+open62541 v1.5.9 limits and the UA-.NETStandard 2.0.1 differences — is
 [`docs/CLIENT_CONTRACT.md` §14](docs/CLIENT_CONTRACT.md#14-pubsub-opc-ua-part-14).
 
-| | open62541 adapter |
-|---|---|
-| Transports | `pubsub-udp-uadp` (unicast, multicast), `pubsub-mqtt-uadp`, `pubsub-mqtt-json` |
-| Encodings | UADP, JSON; field encodings Variant, DataValue, RawData |
-| Publisher / subscriber | PublishedDataItems over any variable; DataSetReaders with TargetVariables |
-| Security | UADP Sign / SignAndEncrypt with PubSub-Aes128-CTR / PubSub-Aes256-CTR; keys static, from an SKS (pull), pushed (SetSecurityKeys), or served (this server is the SKS) |
-| Information model | `Server.PublishSubscribe` browsable; AddConnection / AddWriterGroup / AddReaderGroup / AddDataSetWriter / AddDataSetReader / AddPublishedDataItems / Remove* / Enable / Disable / GetSecurityKeys / SetSecurityKeys / AddSecurityGroup — also without `--pubsub-config` |
-| Codec | `client codec pubsub-uadp-encode/-decode`, `pubsub-json-encode/-decode` (no transport) |
+| | open62541 adapter | UA-.NETStandard adapter (§14.13) |
+|---|---|---|
+| Transports | `pubsub-udp-uadp` (unicast, multicast), `pubsub-mqtt-uadp`, `pubsub-mqtt-json` | the same; MQTT 5.0 (default), 3.1.1 or 3.1 — publishing needs 5.0 |
+| Encodings | UADP, JSON; field encodings Variant, DataValue, RawData | the same |
+| Publisher / subscriber | PublishedDataItems over any variable; DataSetReaders with TargetVariables | PublishedDataItems over the fixture variables; TargetVariables |
+| Security | UADP Sign / SignAndEncrypt with PubSub-Aes128-CTR / PubSub-Aes256-CTR; keys static, from an SKS (pull), pushed (SetSecurityKeys), or served (this server is the SKS) | UADP Sign / SignAndEncrypt, static keys only |
+| Chunking, discovery | — | chunk NetworkMessages (WriterGroup `MaxNetworkMessageSize`); UADP discovery in the .NET layout, `client pubsub-discover` |
+| Information model | `Server.PublishSubscribe` browsable; AddConnection / AddWriterGroup / AddReaderGroup / AddDataSetWriter / AddDataSetReader / AddPublishedDataItems / Remove* / Enable / Disable / GetSecurityKeys / SetSecurityKeys / AddSecurityGroup — also without `--pubsub-config` | — |
+| Codec | `client codec pubsub-uadp-encode/-decode`, `pubsub-json-encode/-decode` (no transport) | the same |
 
 ### Configuration file
 
@@ -415,7 +419,9 @@ unicast, UDP multicast, MQTT UADP and MQTT JSON; UADP SignAndEncrypt with a
 static key; SKS pull (the publisher is the SKS) and SKS push (SetSecurityKeys);
 and the information-model
 methods (GetSecurityKeys, AddSecurityGroup, AddConnection / RemoveConnection,
-Disable / Enable). About one minute.
+Disable / Enable). About one minute. `make smoke-pubsub-dotnet` runs the
+codec, UDP, MQTT and static-key scenarios on the UA-.NETStandard adapter,
+plus a `pubsub-discover` of the multicast publisher.
 
 ## Test PKI
 
@@ -532,6 +538,7 @@ make smoke-cross-stack   # Cross-stack interop self-check
 make smoke-cross-dotnet  # UA-.NETStandard client/server against open62541 and Milo
 make smoke-cross-asyncua # opcua-asyncio client/server against open62541 and Milo, secured channels, LDS
 make smoke-pubsub        # PubSub smoke (open62541 publisher/subscriber containers, Mosquitto)
+make smoke-pubsub-dotnet # PubSub smoke of the UA-.NETStandard adapter (no SKS / information model)
 make shutdown            # Test graceful shutdown for all adapters
 make run-open62541       # Start open62541 server (foreground, port 4840)
 make run-milo            # Start Milo server (foreground, port 4841)
@@ -592,8 +599,8 @@ Feature support differs per stack and is declared by `print-capabilities`:
 | AddNodes / DeleteNodes served (`node-management`) | ✓ | — | ✓ | ✓ | — (`BadServiceUnsupported`) | — (`BadUserAccessDenied`) |
 | `codec` JSON (OPC UA 1.05) | ✓ compact | ✓ compact + verbose | — (the stack's JSON is the 1.04 `Type` / `Body` form) | ✓ compact + verbose | — (not wired into the adapter) | — (not wired into the adapter) |
 | `codec` XML | ✓ (no DataValue / DiagnosticInfo / matrices) | ✓ | — (the stack's Variant XML is the NodeSet2 value form, without the Part 6 `<Value>` element) | ✓ (decodes namespace-qualified documents only) | — (no Part 6 XML Variant encoding) | — (not wired into the adapter) |
-| PubSub (Part 14): UDP / MQTT, UADP / JSON, security, SKS, information model (v0.8.0) | ✓ | — (no PubSub in Milo 1.1.8) | — (no PubSub in async-opcua 0.19) | — (the stack has one; the adapter does not wire it) | — (no open-source PubSub) | — (not wired into the adapter) |
-| `codec pubsub-*` (UADP / JSON NetworkMessages) | ✓ | — | — | — | — | — |
+| PubSub (Part 14): UDP / MQTT, UADP / JSON, security, SKS, information model (v0.8.0) | ✓ | — (no PubSub in Milo 1.1.8) | — (no PubSub in async-opcua 0.19) | ✓ (v0.10.0) UDP / MQTT, UADP / JSON, static keys, chunking, discovery; no SKS, no information model | — (no open-source PubSub) | — (not wired into the adapter) |
+| `codec pubsub-*` (UADP / JSON NetworkMessages) | ✓ | — | — | ✓ (v0.10.0) | — | — |
 
 ## Security
 

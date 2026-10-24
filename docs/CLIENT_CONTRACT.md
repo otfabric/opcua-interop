@@ -328,6 +328,10 @@ codec --decode json|xml --type <BuiltInType|Variant|DataValue>   (short form of 
 codec pubsub-uadp-encode | pubsub-uadp-decode | pubsub-json-encode | pubsub-json-decode
              [--document <text> | --input <file>]          (default: stdin)
              [--metadata <json> | --metadata-file <file>]   (PubSub NetworkMessages, §14.9)
+
+pubsub-discover --url opc.udp://<host>:<port>
+             [--type DataSetMetaData|DataSetWriterConfiguration] [--writer-ids <id>,…]
+             [--publisher-id <UInt16>] [--timeout-ms <n>]   (UADP discovery probe, dotnet, §14.13)
 ```
 
 | Flag | Description |
@@ -1135,7 +1139,7 @@ supplied. The server must exit with code 6.
 | `--mdns-capability <cap>` | mDNS / RegisterServer2 server capability (repeatable) | `NA` (`--lds`: `LDS`) |
 | `--register-with <lds-url>` | Register with an LDS: RegisterServer2, falling back to RegisterServer; repeated periodically; unregistered (`IsOnline=false`) on SIGTERM | — |
 | `--register-interval-ms <n>` | Re-registration period | 30000 |
-| `--pubsub-config <file>` | open62541: OPC UA PubSub (Part 14) configuration — a JSON file with a `PubSubConfigurationDataType`, security groups and SKS settings (§14). Applied after startup; the ready file is only written once it is applied; an invalid configuration exits 1. Milo: refused (exit 2) | — |
+| `--pubsub-config <file>` | open62541: OPC UA PubSub (Part 14) configuration — a JSON file with a `PubSubConfigurationDataType`, security groups and SKS settings (§14). Applied after startup; the ready file is only written once it is applied; an invalid configuration exits 1. UA-.NETStandard: the same file on Opc.Ua.PubSub, without SKS and information model (§14.13). Milo, async-opcua, node-opcua, asyncua: refused (exit 2) | — |
 
 Notes on the discovery flags:
 
@@ -1229,7 +1233,7 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `register-server2` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `register-server` can call RegisterServer2 |
 | `codec-json`, `codec-xml` | client | ✓ | ✓ | — | ✓ | — | — | `codec` formats |
 | `codec-json-verbose` | client | — | ✓ | — | ✓ | — | — | `codec --json-mode verbose` |
-| `codec-pubsub` | client | ✓ | — | — | — | — | — | `codec pubsub-{uadp,json}-{encode,decode}` (§14.9) |
+| `codec-pubsub` | client | ✓ | — | — | ✓ | — | — | `codec pubsub-{uadp,json}-{encode,decode}` (§14.9) |
 | `deadband` | server | ✓ | ✓ | ✓ | ✓ | ✓ | — | DataChangeFilter absolute deadband / trigger honoured |
 | `percent-deadband` | server | ✓ | ✓ | ✓ | ✓ | ✓ | — | percent deadband on AnalogItems with EURange (`Analog.*`) |
 | `reverse-connect` | server | ✓ | — | ✓ | — | ✓ | — | `--reverse-connect` |
@@ -1237,7 +1241,7 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `mdns` | server | ✓ | — | — | — | — | — | `--mdns-name`, FindServersOnNetwork |
 | `register-with` | server | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `--register-with` |
 | `node-management` | server | ✓ | — | ✓ | ✓ | — | — | AddNodes / DeleteNodes served |
-| `pubsub` | server | ✓ | — | — | — | — | — | `--pubsub-config`, PubSub information model, SKS (§14) |
+| `pubsub` | server | ✓ | — | — | ✓ | — | — | `--pubsub-config` (§14); open62541 also the PubSub information model and SKS, UA-.NETStandard static keys only (§14.13) |
 
 Eclipse Milo 1.1.8 has no ReverseHello in its transports
 (`opc-ua-stack/stack-core/.../channel/messages/MessageType.java` knows only
@@ -1272,8 +1276,9 @@ above), and its server serves AddNodes / DeleteNodes. The adapter does not wire
 the stack's ReverseConnectManager (`--reverse-listen` and `--reverse-connect`
 exit 2), and 2.0.1 does not accept the test PKI's RSA-CA-signed ECC
 certificates, so no `ecc-security` is declared and `--ecc-dir` is ignored with a
-warning. Its server runs no LDS, mDNS or PubSub (`--lds`, `--mdns-name`,
-`--mdns-capability` and `--pubsub-config` exit 2). The test PKI is copied into
+warning. Its server runs no LDS or mDNS (`--lds`, `--mdns-name` and
+`--mdns-capability` exit 2); since adapter 0.10.0 it runs PubSub on the stack's
+Opc.Ua.PubSub runtime (§14.13). The test PKI is copied into
 the stack's directory stores (own / trusted / issuer / rejected, DER);
 SHA-1-signed certificates are rejected. See "Reference stacks" in the README for
 the stack deviations the go-opcua suite found.
@@ -1316,9 +1321,12 @@ go-opcua suite found.
 
 ## 14. PubSub (OPC UA Part 14)
 
-Added in adapter **0.8.0**, open62541 adapter only (Eclipse Milo 1.1.8 has no
-PubSub implementation, §14.12). Declared in `print-capabilities` →
-`pubsub` (§14.11), `serverFeatures` `pubsub`, `clientFeatures` `codec-pubsub`.
+Added in adapter **0.8.0** for open62541 and in **0.10.0** for UA-.NETStandard
+2.0.1, whose differences are in §14.13 (Eclipse Milo 1.1.8 has no PubSub
+implementation, §14.12; async-opcua, node-opcua and asyncua refuse it).
+Declared in `print-capabilities` → `pubsub` (§14.11), `serverFeatures`
+`pubsub`, `clientFeatures` `codec-pubsub`. Unless a section says otherwise,
+§14.1–§14.12 describe the open62541 adapter.
 
 The open62541 image is built with `UA_ENABLE_PUBSUB`,
 `UA_ENABLE_PUBSUB_INFORMATIONMODEL` (with the configuration methods),
@@ -1358,6 +1366,7 @@ The file is one JSON object; unknown top-level members are an error:
 | `serveSks` | boolean | This server is the Security Key Service of every listed group: the groups are created under `PublishSubscribe.SecurityGroups` (i=15443) with keys generated by open62541, `GetSecurityKeys` serves them, local groups use them. Default `false` |
 | `sksClient` | object | Pull the keys of the listed groups that have no `keys` from a remote SKS with `GetSecurityKeys` (§14.5) |
 | `deltaFrames` | boolean | Let DataSetWriters send DeltaFrames between KeyFrames (open62541 `pubSubConfig.enableDeltaFrames`, server-wide). Default `false`, see §14.10 |
+| `mqtt` | object | UA-.NETStandard only: `{"protocolVersion": "5.0" \| "3.1.1" \| "3.1"}`, the MQTT version of every MQTT connection (default `"5.0"`, §14.13). open62541 refuses the member |
 
 `securityGroups[]`:
 
@@ -1494,7 +1503,8 @@ Verified on macOS / Docker Desktop with the exact addresses above (host
 listener on `0.0.0.0:5555` ← container `opc.udp://host.docker.internal:5555`;
 host sender → `127.0.0.1:4841` → container `opc.udp://0.0.0.0:4841` with
 `-p 4841:4841/udp`, also with `opc.udp://localhost:4841`), and container ↔
-container unicast and multicast by `scripts/pubsub-smoke.sh`.
+container unicast and multicast by `scripts/pubsub-smoke.sh` (`make smoke-pubsub`;
+`make smoke-pubsub-dotnet` runs the same scenarios on the dotnet adapter, §14.13).
 
 **MQTT** (v1.5.9 MQTT-C client): MQTT 3.1.1, clean session, empty client id
 (the broker assigns one), keep-alive 400 s, QoS 0 publish and subscribe, no
@@ -1861,6 +1871,44 @@ open62541:
 }
 ```
 
+UA-.NETStandard (adapter 0.10.0):
+
+```json
+"pubsub": {
+  "supported": true,
+  "serverFlag": "--pubsub-config",
+  "roles": ["publisher", "subscriber"],
+  "transports": ["udp-uadp", "mqtt-uadp", "mqtt-json"],
+  "transportProfiles": ["http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp", "…/pubsub-mqtt-uadp", "…/pubsub-mqtt-json"],
+  "udp": {"unicast": true, "multicast": true},
+  "mqttVersions": ["5.0", "3.1.1", "3.1"],
+  "encodings": ["uadp", "json"],
+  "fieldEncodings": ["Variant", "DataValue", "RawData"],
+  "dataSetMessageTypes": {"uadp": ["KeyFrame", "DeltaFrame", "KeepAlive"], "json": ["KeyFrame", "DeltaFrame", "KeepAlive"]},
+  "publishedDataSets": ["PublishedDataItems"],
+  "subscribedDataSets": ["TargetVariables"],
+  "securityPolicies": ["http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR", "…#PubSub-Aes256-CTR"],
+  "securityModes": ["None", "Sign", "SignAndEncrypt"],
+  "securityEncodings": ["uadp"],
+  "keySources": ["static"],
+  "sks": {"server": false, "pull": false, "push": false},
+  "informationModel": false,
+  "chunking": true,
+  "discovery": {"layout": "dotnet", "respond": ["DataSetMetaData", "DataSetWriterConfiguration"],
+                "probe": ["DataSetMetaData", "DataSetWriterConfiguration"], "clientOperation": "pubsub-discover"},
+  "codecOps": ["pubsub-uadp-encode", "pubsub-uadp-decode", "pubsub-json-encode", "pubsub-json-decode"],
+  "codecSecurity": false
+}
+```
+
+Members added in adapter 0.10.0 (absent = not offered): `mqttVersions` (the
+MQTT versions the MQTT transports connect with, the default first),
+`chunking` (a WriterGroup `MaxNetworkMessageSize` below the NetworkMessage
+size makes the publisher send chunk NetworkMessages, and subscribers
+reassemble them), `discovery` (UADP discovery, Part 14 §7.2.4.6: `layout`
+`spec` or `dotnet` (§14.13), the announcement types a publisher sends when
+probed (`respond`), the probe types `clientOperation` sends (`probe`)).
+
 Milo:
 
 ```json
@@ -1882,3 +1930,112 @@ no NetworkMessage encoder, no UDP / MQTT transport, no PublishSubscribe
 runtime, no SKS. The Milo adapter therefore refuses `--pubsub-config` and
 `codec pubsub-*` (exit 2, `error.category: "input"`) and declares
 `pubsub.supported: false`.
+
+### 14.13 UA-.NETStandard 2.0.1
+
+Added in adapter **0.10.0**. The dotnet server runs the stack's PubSub runtime
+(NuGet `OPCFoundation.NetStandard.Opc.Ua.PubSub`, `.PubSub.Udp`,
+`.PubSub.Mqtt` 2.0.1) next to the fixture server, from the same
+`--pubsub-config` file as open62541 (§14.1). `configuration` is decoded by the
+stack's JSON decoder with the conventions of §14.2, PublishedDataItems read the
+fixture variables at every publish, and TargetVariables write them. As for
+open62541, the configuration is applied before the ready file is written; an
+error is logged as `[dotnet] error: --pubsub-config: <reason>` and the server
+exits 1. Progress: `[dotnet] info: pubsub: configuration applied (…)`;
+`OPCUA_INTEROP_LOG_LEVEL=Debug` shows the stack's state machines and
+transports.
+
+**Adaptations.** Opc.Ua.PubSub 2.0.1 reads some members of the configuration
+differently from open62541; the adapter rewrites them so a file means the same
+on both adapters:
+
+| Contract | Opc.Ua.PubSub 2.0.1 | The adapter |
+|----------|---------------------|-------------|
+| `opc.mqtt://` broker URL | parses `mqtt://` only | rewrites `opc.mqtt://` to `mqtt://` |
+| `opc.udp://localhost:<p>` (receive-all) | binds the address | rewrites it to `opc.udp://0.0.0.0:<p>` |
+| WriterGroup unicast destination (DatagramWriterGroupTransport2DataType `Address`) | sends to the connection address only | moves the WriterGroup to a send-only connection `<connection>/<writer group>` of its own (same PublisherId) whose address is the destination |
+| A publisher connection on a receive-all or multicast address | a connection without ReaderGroups only sends | adds an empty ReaderGroup `<connection>/probes`, so it receives on its port (and joins the group) and answers discovery probes |
+| `MessageReceiveTimeout` 0 (no timeout) | rejected | one day |
+| `KeepAliveTime` below `PublishingInterval` | rejected | `PublishingInterval` |
+| Static keys (`securityGroups[].keys`) | a secured group needs a `SecurityKeyServices` entry | a placeholder endpoint that is never contacted; the first key is the current key of the group's key ring with its `tokenId` |
+| Security per ReaderGroup | per DataSetReader too | clears the DataSetReader `SecurityMode` / `SecurityGroupId` / `SecurityKeyServices` |
+| `deltaFrames` false (default) | DeltaFrames between KeyFrames per `KeyFrameCount` | `KeyFrameCount` 1 on every DataSetWriter |
+| WriterGroup `MaxNetworkMessageSize` | taken per connection, from a resolver `PubSubApplicationBuilder` cannot set | the smallest `MaxNetworkMessageSize` of a connection's WriterGroups; a larger NetworkMessage is sent as chunk NetworkMessages (Part 14 §7.2.4.4.4), each secured on its own |
+| MQTT DataSetReader / ReaderGroup `QueueName` | subscribes only the default discovery topics (`opcua/<encoding>/metadata/…`) | adds the QueueNames of the BrokerDataSetReaderTransportDataType (and ReaderGroup) to the subscriptions |
+| UDP TTL | `UdpTransportOptions.Ttl` (default 1) is applied to unicast datagrams too: a datagram to the Docker host through its gateway is dropped | `Ttl` 64 (unicast and multicast) |
+
+A publisher on a receive-all address (`opc.udp://0.0.0.0:<p>`) without a
+WriterGroup destination sends its NetworkMessages to the last address it
+received a datagram from (the stack's unicast behaviour).
+
+**MQTT.** MQTTnet client, clean session, keep-alive 60 s, QoS 1 (AtLeastOnce)
+unless the WriterGroup's BrokerWriterGroupTransportDataType
+`RequestedDeliveryGuarantee` asks for another, anonymous, no TLS, NetworkMessages
+up to 65535 bytes. The version is the top-level `mqtt.protocolVersion`:
+
+| `protocolVersion` | Subscribe | Publish |
+|-------------------|:---------:|:-------:|
+| `"5.0"` (default) | ✓ | ✓ (ContentType `application/opcua+uadp` / `application/json`) |
+| `"3.1.1"`, `"3.1"` | ✓ | — the stack sets the MQTT 5 ContentType on every publication and MQTTnet refuses it below 5.0; a WriterGroup on an MQTT connection is refused (exit 1) |
+
+**Not offered** (refused with exit 1, or absent): `serveSks` and `sksClient`
+(static keys only, `keySources: ["static"]`), SKS push (the server has no
+`PublishSubscribe` object: `informationModel: false`, no SetSecurityKeys),
+the PublishSubscribe information model, raw Ethernet and AMQP (not in the
+stack), PublishedEvents and SubscribedDataSetMirror, JSON message security.
+
+**Codec** (§14.9, with the stack's UadpEncoder / UadpDecoder and
+JsonEncoder / JsonDecoder; `codecSecurity: false`). The description format is
+the same; where the encoding differs from open62541 and go-opcua:
+
+| Case | Opc.Ua.PubSub 2.0.1 |
+|------|---------------------|
+| An empty String field | written with length 0 (`0c 00000000`); a null String with length −1 (`0c ffffffff`), as it was decoded |
+| A DataSetMessage with `valid: false` (DataSetFlags1 bit 0 clear) | dropped on decode (Part 14 §7.2.4.5.4: its content is invalid), so `reencoded` has no DataSetMessage; the encoder always sets the flag |
+| JSON encode with `--metadata` | fields whose type the metadata gives are written without `UaType` (`"Fa":1`, DataValue `{"Value":21.5,"SourceTimestamp":…}`); without `--metadata` the encoding stays self-describing (`UaType` on every field) |
+| JSON DataSetMessage `Status` | `{"Code":n,"Symbol":"…"}` |
+| JSON DataSetMessage types | KeyFrame, DeltaFrame and KeepAlive |
+
+**Discovery** (`discovery` in §14.11). Part 14 §7.2.4.6 discovery request /
+response over UDP in the layout of the .NET stack (`layout: "dotnet"`, the
+stack's UadpDiscoveryCoder): a probe carries one type byte (the
+InformationType, no ProbeType) and the DataSetWriterIds; every structure of an
+announcement is preceded by its length as a UInt32. A dotnet publisher answers
+DataSetMetaData and DataSetWriterConfiguration probes that reach its
+connection (the probe ReaderGroup above; probes for the other types are not
+answered), and announces its DataSetMetaData when it starts.
+
+```
+client pubsub-discover --url opc.udp://<host>:<port>
+       [--type DataSetMetaData|DataSetWriterConfiguration]   (default DataSetMetaData)
+       [--writer-ids <id>,…]          (DataSetWriterIds of the probe; default none)
+       [--publisher-id <UInt16>]      (PublisherId of the probing connection)
+       [--timeout-ms <n>]             (default 3000)
+```
+
+opens a UDP connection on `--url` (bound to its port; a multicast group is
+joined), sends the probe there and collects the announcements until
+`--timeout-ms`. Result (operation `pubsub-discover`):
+
+```json
+{"url":"opc.udp://224.0.0.22:4840","type":"DataSetMetaData","dataSetWriterIds":[],
+ "dataSetMetaData":[{"publisherId":{"type":"UInt16","value":2234},"writerGroupId":100,"dataSetWriterId":1,
+   "statusCode":{"name":"Good","code":0,"severity":"Good"},
+   "metaData":{"name":"InteropDataSet","configurationVersion":{"majorVersion":1,"minorVersion":1},
+     "fields":[{"name":"Boolean","builtInType":1,"dataType":"i=1","valueRank":-1}, …]}}],
+ "writerConfigurations":[]}
+```
+
+`writerConfigurations[]`: `publisherId`, `writerGroupId`, `dataSetWriterIds`,
+`statusCode`, `writerGroup` (`name`, `writerGroupId`, `publishingInterval`,
+`dataSetWriters[]` with `name`, `dataSetWriterId`, `dataSetName`). No
+announcement within the timeout: `success: false`, `serviceResult`
+`BadTimeout`, exit 7. The probe is the stack's; a peer must speak the .NET
+layout to answer it.
+
+**Smoke.** `make smoke-pubsub-dotnet` (`scripts/pubsub-smoke.sh` with the
+dotnet image) runs the scenarios `codec`, `udp-unicast`, `udp-multicast`,
+`mqtt-uadp`, `mqtt-json`, `udp-secure` and `discovery` (a
+`pubsub-discover` of both types against the multicast publisher) on the
+example files of `pubsub/examples/`; the SKS and information-model scenarios
+do not apply.
