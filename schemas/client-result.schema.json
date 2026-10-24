@@ -22,7 +22,7 @@
         "call", "subscribe", "subscription-lifecycle", "event-subscribe",
         "history-read", "republish", "transfer-subscriptions",
         "register-nodes", "node-management",
-        "find-servers-on-network", "register-server", "codec"
+        "find-servers-on-network", "register-server", "codec", "pubsub-discover"
       ]
     },
     "success": {

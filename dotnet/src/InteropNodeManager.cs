@@ -512,6 +512,70 @@ namespace OpcUaInterop
         }
 
         // ------------------------------------------------------------------
+        // PubSub (§14): published fields and TargetVariables
+        // ------------------------------------------------------------------
+
+        /// <summary>The fixture variable with this NodeId, or null.</summary>
+        public BaseDataVariableState FindVariable(NodeId id)
+        {
+            foreach (NodeState n in m_nodes.Values)
+            {
+                if (n is BaseDataVariableState v && v.NodeId == id)
+                {
+                    return v;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>The current Value attribute of a variable, as a PublishedVariable samples it.</summary>
+        public DataValue ReadValue(NodeId id)
+        {
+            BaseDataVariableState v = FindVariable(id);
+            if (v == null)
+            {
+                return new DataValue(Variant.Null, StatusCodes.BadNodeIdUnknown, DateTimeUtc.MinValue, DateTimeUtc.Now);
+            }
+            lock (v)
+            {
+                return new DataValue(v.Value, v.StatusCode, v.Timestamp, DateTimeUtc.Now);
+            }
+        }
+
+        /// <summary>
+        /// Writes a received field into a TargetVariable (Value attribute only). The value must have the
+        /// variable's built-in type and rank, as for a Write service call.
+        /// </summary>
+        public StatusCode WriteValue(NodeId id, uint attributeId, DataValue value)
+        {
+            if (attributeId != Attributes.Value)
+            {
+                return StatusCodes.BadAttributeIdInvalid;
+            }
+            BaseDataVariableState v = FindVariable(id);
+            if (v == null)
+            {
+                return StatusCodes.BadNodeIdUnknown;
+            }
+            Variant incoming = value.WrappedValue;
+            lock (v)
+            {
+                Variant current = v.Value;
+                if (!current.IsNull && !incoming.IsNull &&
+                    (current.TypeInfo.BuiltInType != incoming.TypeInfo.BuiltInType ||
+                     current.TypeInfo.IsScalar != incoming.TypeInfo.IsScalar))
+                {
+                    return StatusCodes.BadTypeMismatch;
+                }
+                v.Value = incoming;
+                v.StatusCode = value.StatusCode;
+                v.Timestamp = Canonical.HasTime(value.SourceTimestamp) ? value.SourceTimestamp : DateTimeUtc.Now;
+                v.ClearChangeMasks(SystemContext, false);
+            }
+            return StatusCodes.Good;
+        }
+
+        // ------------------------------------------------------------------
         // Events
         // ------------------------------------------------------------------
 

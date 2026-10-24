@@ -19,7 +19,8 @@ namespace OpcUaInterop
         [
             "endpoints", "find-servers", "read", "write", "browse", "translate", "call", "subscribe",
             "subscription-lifecycle", "event-subscribe", "history-read", "republish", "transfer-subscriptions",
-            "register-nodes", "node-management", "find-servers-on-network", "register-server", "codec"
+            "register-nodes", "node-management", "find-servers-on-network", "register-server", "codec",
+            "pubsub-discover"
         ];
 
         public static async Task<int> RunAsync(string[] args)
@@ -42,6 +43,10 @@ namespace OpcUaInterop
                 if (op == "codec")
                 {
                     return await CodecCommand.RunAsync(a).ConfigureAwait(false);
+                }
+                if (op == "pubsub-discover")
+                {
+                    return await PubSubDiscover.RunAsync(a).ConfigureAwait(false);
                 }
                 if (op == "history-read" && a.Get("--endpoint") == null)
                 {

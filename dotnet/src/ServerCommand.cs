@@ -85,7 +85,7 @@ namespace OpcUaInterop
     {
         private static readonly string[] s_refused =
         [
-            "--lds", "--lds-cleanup-timeout", "--mdns-name", "--mdns-capability", "--pubsub-config",
+            "--lds", "--lds-cleanup-timeout", "--mdns-name", "--mdns-capability",
             "--reverse-connect", "--reverse-connect-interval-ms"
         ];
 
@@ -135,6 +135,12 @@ namespace OpcUaInterop
             string pkiDir = a.Get("--pki-dir") ?? "/run/opcua-interop/pki";
             string certFile = a.Get("--certificate");
             string keyFile = a.Get("--private-key");
+            string pubsubConfig = a.Get("--pubsub-config");
+            if (pubsubConfig != null && !File.Exists(pubsubConfig))
+            {
+                Console.Error.WriteLine("[dotnet] error: --pubsub-config: " + pubsubConfig + ": no such file");
+                return 1;
+            }
             string eccDir = a.Get("--ecc-dir");
             if (eccDir != null && !EccEnabled)
             {
@@ -322,6 +328,23 @@ namespace OpcUaInterop
                 var server = new InteropServer(telemetry, fixture);
                 await app.StartAsync(server).ConfigureAwait(false);
 
+                // §14.1: the PubSub configuration is in place before the ready file is written.
+                PubSubServer pubsub = null;
+                if (pubsubConfig != null)
+                {
+                    try
+                    {
+                        pubsub = await PubSubServer.StartAsync(pubsubConfig, server, telemetry).ConfigureAwait(false);
+                    }
+                    catch (Exception e)
+                    {
+                        string reason = e is PubSubConfigException or ServiceResultException ? e.Message : e.GetType().Name + ": " + e.Message;
+                        Console.Error.WriteLine("[dotnet] error: --pubsub-config: " + reason);
+                        await server.StopAsync().ConfigureAwait(false);
+                        return 1;
+                    }
+                }
+
                 foreach (EndpointDescription ep in server.GetEndpoints())
                 {
                     Console.Error.WriteLine("[dotnet] info: endpoint " + ep.EndpointUrl + " " + Pki.PolicyName(ep.SecurityPolicyUri) + "/" + ep.SecurityMode);
@@ -372,6 +395,10 @@ namespace OpcUaInterop
                 {
                     await registrar.UnregisterAsync().ConfigureAwait(false);
                 }
+                if (pubsub != null)
+                {
+                    await pubsub.DisposeAsync().ConfigureAwait(false);
+                }
                 try
                 {
                     await server.StopAsync().ConfigureAwait(false);
@@ -394,7 +421,6 @@ namespace OpcUaInterop
         {
             "--lds" or "--lds-cleanup-timeout" => "the adapter server is not a Local Discovery Server",
             "--mdns-name" or "--mdns-capability" => "mDNS announcement is not implemented by the adapter",
-            "--pubsub-config" => "the adapter does not implement the --pubsub-config contract (§14)",
             "--reverse-connect" or "--reverse-connect-interval-ms" => "server reverse connect is not wired in this adapter",
             _ => "unsupported"
         };
