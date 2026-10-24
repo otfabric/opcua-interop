@@ -125,7 +125,9 @@ docker run --rm --network host \
 ```sh
 docker run --rm ghcr.io/otfabric/opcua-interop-open62541:latest print-capabilities
 docker run --rm ghcr.io/otfabric/opcua-interop-milo:latest print-capabilities
+docker run --rm ghcr.io/otfabric/opcua-interop-async-opcua:latest print-capabilities
 docker run --rm ghcr.io/otfabric/opcua-interop-dotnet:latest print-capabilities
+docker run --rm ghcr.io/otfabric/opcua-interop-node-opcua:latest print-capabilities
 docker run --rm ghcr.io/otfabric/opcua-interop-asyncua:latest print-capabilities
 ```
 
@@ -182,9 +184,9 @@ Each image supports the same command contract:
 |---|---|
 | `ghcr.io/otfabric/opcua-interop-open62541:<version>` | linux/amd64, linux/arm64 |
 | `ghcr.io/otfabric/opcua-interop-milo:<version>` | linux/amd64, linux/arm64 |
-| `ghcr.io/otfabric/opcua-interop-async-opcua:<version>` | linux/amd64, linux/arm64 |
+| `ghcr.io/otfabric/opcua-interop-async-opcua:<version>` (from v0.9.0) | linux/amd64, linux/arm64 |
 | `ghcr.io/otfabric/opcua-interop-dotnet:<version>` (from v0.9.0) | linux/amd64, linux/arm64 |
-| `ghcr.io/otfabric/opcua-interop-node-opcua:<version>` | linux/amd64, linux/arm64 |
+| `ghcr.io/otfabric/opcua-interop-node-opcua:<version>` (from v0.9.0) | linux/amd64, linux/arm64 |
 | `ghcr.io/otfabric/opcua-interop-asyncua:<version>` (from v0.9.0) | linux/amd64, linux/arm64 |
 
 ### Server command
@@ -548,13 +550,13 @@ make release-notes VERSION=v0.9.0  # Print the release notes of a version
 
 | Version type | Location |
 |---|---|
-| Repository release | Git tag and image tag — **`v0.9.0`** (latest published: `v0.8.2`) |
+| Repository release | Git tag and image tag — **`v0.9.0`** |
 | Adapter capabilities version | `print-capabilities` → `adapter.version` — **`0.9.0`**, the same for every adapter (must match the tag) |
 | Upstream stack version | Image label and `print-capabilities` → `stack.version` |
 | Fixture schema version | `schemaVersion` field in every fixture |
 
-Released tags: `v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.3.0`, `v0.4.0`, `v0.5.0`, `v0.6.0`,
-`v0.7.0` ([latest release](https://github.com/otfabric/opcua-interop/releases/tag/v0.7.0)).
+Released tags: `v0.1.0` … `v0.7.0`, `v0.8.0`, `v0.8.1`, `v0.8.2`, `v0.9.0`
+([releases](https://github.com/otfabric/opcua-interop/releases)).
 `v0.6.0` moved the reference stacks to open62541 v1.5.9 / Eclipse Milo 1.1.8 and added
 `register-nodes`, `node-management` and `--channel-lifetime-ms`. `v0.7.0` adds
 DataChangeFilter deadbands, reverse connect, the ECC security policies, LDS / mDNS
@@ -562,8 +564,9 @@ discovery and the JSON / XML `codec` command, and declares optional features in
 `print-capabilities` (`clientFeatures`, `serverFeatures`, `codec`). `v0.8.0` adds
 OPC UA PubSub (Part 14) to the open62541 adapter (`--pubsub-config`, UDP / MQTT,
 UADP / JSON, message security, SKS, `codec pubsub-*`, `print-capabilities` →
-`pubsub`), the baseline fixture's `PubSub` folder and an MQTT broker. `v0.9.0` adds the
-third reference stack, the OPC Foundation UA-.NETStandard adapter (`opcua-interop-dotnet`). Every change to the
+`pubsub`), the baseline fixture's `PubSub` folder and an MQTT broker. `v0.9.0` adds four
+reference stacks: async-opcua (Rust), the OPC Foundation UA-.NETStandard (C#), node-opcua
+(TypeScript) and opcua-asyncio (Python) (`opcua-interop-{async-opcua,dotnet,node-opcua,asyncua}`). Every change to the
 adapter surface gets a new tag; published tags are not moved. Release notes and the release procedure: [`RELEASE.md`](RELEASE.md).
 
 ## Reference stacks
