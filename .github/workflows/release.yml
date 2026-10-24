@@ -150,9 +150,25 @@ jobs:
           cache-from: type=gha,scope=milo-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=milo-${{ matrix.arch }}
 
+      - name: Build async-opcua (linux/${{ matrix.arch }})
+        uses: docker/build-push-action@v7
+        with:
+          context: async-opcua
+          file: async-opcua/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          tags: ${{ env.REGISTRY }}/opcua-interop-async-opcua:${{ env.VERSION }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+          cache-from: type=gha,scope=async-opcua-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=async-opcua-${{ matrix.arch }}
+
       - name: Images report the release version
         run: |
-          for a in open62541 milo; do
+          for a in open62541 milo async-opcua; do
             got=$(docker run --rm "${REGISTRY}/opcua-interop-${a}:${VERSION}" print-capabilities \
               | python3 -c 'import json,sys; print(json.load(sys.stdin)["adapter"]["version"])')
             [ "v${got}" = "${VERSION}" ] || { echo "::error::${a} reports adapter.version ${got}, not ${VERSION#v}"; exit 1; }
@@ -160,7 +176,7 @@ jobs:
 
       - name: Unit tests
         run: |
-          for a in open62541 milo; do
+          for a in open62541 milo async-opcua; do
             docker run --rm -v "${PWD}/fixtures:/fixtures:ro" "${REGISTRY}/opcua-interop-${a}:${VERSION}" test
           done
 
@@ -168,13 +184,15 @@ jobs:
         run: |
           scripts/smoke.sh open62541 "${REGISTRY}/opcua-interop-open62541:${VERSION}"
           scripts/smoke.sh milo "${REGISTRY}/opcua-interop-milo:${VERSION}"
-          scripts/smoke.sh cross "${REGISTRY}/opcua-interop-open62541:${VERSION}" "${REGISTRY}/opcua-interop-milo:${VERSION}"
+          scripts/smoke.sh async-opcua "${REGISTRY}/opcua-interop-async-opcua:${VERSION}"
+          scripts/smoke.sh cross "${REGISTRY}/opcua-interop-open62541:${VERSION}" "${REGISTRY}/opcua-interop-milo:${VERSION}" "${REGISTRY}/opcua-interop-async-opcua:${VERSION}"
           scripts/pubsub-smoke.sh "${REGISTRY}/opcua-interop-open62541:${VERSION}"
 
       - name: Graceful shutdown
         run: |
           scripts/shutdown-test.sh open62541 "${REGISTRY}/opcua-interop-open62541:${VERSION}"
           scripts/shutdown-test.sh milo "${REGISTRY}/opcua-interop-milo:${VERSION}"
+          scripts/shutdown-test.sh async-opcua "${REGISTRY}/opcua-interop-async-opcua:${VERSION}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -226,25 +244,29 @@ jobs:
         env:
           OPEN62541_DIGEST: ${{ steps.digests.outputs.open62541 }}
           MILO_DIGEST: ${{ steps.digests.outputs.milo }}
+          ASYNC_OPCUA_DIGEST: ${{ steps.digests.outputs['async-opcua'] }}
         run: |
           set -euo pipefail
           open62541_pin=$(sed -nE 's/^ARG OPEN62541_COMMIT=(.*)$/\1/p' open62541/Dockerfile | head -1)
           milo_pin=$(sed -nE 's|.*<milo.version>(.*)</milo.version>.*|\1|p' milo/pom.xml | head -1)
+          async_opcua_pin=$(sed -nE 's/^async-opcua = \{ version = "=([0-9.]+)".*/\1/p' async-opcua/Cargo.toml | head -1)
           mosquitto_pin=$(sed -nE 's/^MOSQUITTO_IMAGE \?= (.*)$/\1/p' Makefile | head -1)
           jq -n \
             --arg version "${VERSION}" \
             --arg commit "${GITHUB_SHA}" \
             --arg open62541 "${open62541_pin}" \
             --arg milo "${milo_pin}" \
+            --arg async_opcua "${async_opcua_pin}" \
             --arg mosquitto "${mosquitto_pin}" \
             --arg open62541_image "${REGISTRY}/opcua-interop-open62541@${OPEN62541_DIGEST}" \
             --arg milo_image "${REGISTRY}/opcua-interop-milo@${MILO_DIGEST}" \
+            --arg async_opcua_image "${REGISTRY}/opcua-interop-async-opcua@${ASYNC_OPCUA_DIGEST}" \
             '{
               version: $version,
               commit: $commit,
               platforms: ["linux/amd64", "linux/arm64"],
-              upstream: { open62541: $open62541, "eclipse-milo": $milo },
-              images: { open62541: $open62541_image, milo: $milo_image },
+              upstream: { open62541: $open62541, "eclipse-milo": $milo, "async-opcua": $async_opcua },
+              images: { open62541: $open62541_image, milo: $milo_image, "async-opcua": $async_opcua_image },
               broker: { mosquitto: $mosquitto }
             }' > manifest.json
           sha256sum manifest.json > checksums.txt
@@ -258,6 +280,7 @@ jobs:
             echo "|-------|--------|"
             echo "| \`${REGISTRY}/opcua-interop-open62541:${VERSION}\` | \`${OPEN62541_DIGEST}\` |"
             echo "| \`${REGISTRY}/opcua-interop-milo:${VERSION}\` | \`${MILO_DIGEST}\` |"
+            echo "| \`${REGISTRY}/opcua-interop-async-opcua:${VERSION}\` | \`${ASYNC_OPCUA_DIGEST}\` |"
             echo
             echo "Platforms: linux/amd64, linux/arm64. Also tagged \`${VERSION%.*}\` and \`${VERSION%%.*}\`."
             echo
@@ -266,9 +289,10 @@ jobs:
             echo '```text'
             echo "${REGISTRY}/opcua-interop-open62541@${OPEN62541_DIGEST}"
             echo "${REGISTRY}/opcua-interop-milo@${MILO_DIGEST}"
+            echo "${REGISTRY}/opcua-interop-async-opcua@${ASYNC_OPCUA_DIGEST}"
             echo '```'
             echo
-            echo "Upstream: open62541 ${open62541_pin}, Eclipse Milo ${milo_pin}; MQTT broker for the PubSub tests: \`${mosquitto_pin}\`. \`manifest.json\` records the same."
+            echo "Upstream: open62541 ${open62541_pin}, Eclipse Milo ${milo_pin}, async-opcua ${async_opcua_pin}; MQTT broker for the PubSub tests: \`${mosquitto_pin}\`. \`manifest.json\` records the same."
           } > release-body.md
           cat manifest.json release-body.md
 

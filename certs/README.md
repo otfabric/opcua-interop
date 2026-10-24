@@ -15,6 +15,8 @@ certs/
     ├── open62541-client/ # open62541 client certificate and key
     ├── milo-server/      # Milo server certificate and key
     ├── milo-client/      # Milo client certificate and key
+    ├── async-opcua-server/ # async-opcua server certificate and key
+    ├── async-opcua-client/ # async-opcua client certificate and key
     ├── go-server/        # Go OPC UA server certificate (consumer secure-server tests)
     ├── consumer/         # Certificate for use by consumer repositories (e.g. go-opcua)
     └── untrusted/        # Intentionally untrusted self-signed client certificate
@@ -87,6 +89,7 @@ All certificates include:
 | Go OPC UA server | `urn:otfabric:opcua-interop:server:go-opcua` |
 | open62541 client | `urn:otfabric:opcua-interop:client:open62541` |
 | Milo client | `urn:otfabric:opcua-interop:client:milo` |
+| async-opcua client | `urn:otfabric:opcua-interop:client:async-opcua` |
 | Consumer client | `urn:otfabric:opcua-interop:client:consumer` |
 | Untrusted client | `urn:otfabric:opcua-interop:client:untrusted` |
 
@@ -103,6 +106,11 @@ Each adapter image expects a PKI directory with:
 ```
 
 The `generate.sh` script populates these directories for all adapters.
+
+async-opcua 0.19 trusts a peer certificate only when that exact certificate
+is in its trust store; it does not validate a chain to a trusted CA. The
+`async-opcua-server/pki/trusted/certs` directory therefore lists the consumer
+and the adapter client certificates next to the CA.
 
 ## Security note
 

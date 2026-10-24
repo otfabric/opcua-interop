@@ -39,3 +39,24 @@ updates:
       milo-deps:
         patterns:
           - "org.eclipse.milo*"
+
+  - package-ecosystem: "docker"
+    directory: "/async-opcua"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+
+  # The async-opcua crate itself is pinned exactly (=X.Y.Z) and probed by the
+  # Upstream candidates workflow; Dependabot keeps the adapter's other crates
+  # current.
+  - package-ecosystem: "cargo"
+    directory: "/async-opcua"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+    ignore:
+      - dependency-name: "async-opcua"

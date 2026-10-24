@@ -5,6 +5,10 @@
 #   generate.sh             regenerate everything (CA, RSA identities, ECC certificates)
 #   generate.sh --add-ecc   keep the existing CA and RSA identities untouched and
 #                           only (re)generate the ecc-<curve>/ certificates
+#   generate.sh --add-async-opcua
+#                           keep the existing CA and identities untouched and only
+#                           (re)generate the async-opcua-server / async-opcua-client
+#                           identities (new in v0.9.0) and their trust list entries
 #
 # Requirements: openssl >= 1.1.1 (ECC: brainpool, Ed25519 and Ed448 support)
 # Output: certs/test-pki/
@@ -18,7 +22,8 @@ MODE="full"
 case "${1:-}" in
     "")        ;;
     --add-ecc) MODE="add-ecc" ;;
-    *) echo "usage: generate.sh [--add-ecc]" >&2; exit 2 ;;
+    --add-async-opcua) MODE="add-async-opcua" ;;
+    *) echo "usage: generate.sh [--add-ecc | --add-async-opcua]" >&2; exit 2 ;;
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,6 +36,7 @@ SERVER_APP_URI="urn:otfabric:opcua-interop:server"
 GO_SERVER_URI="urn:otfabric:opcua-interop:server:go-opcua"
 OPEN62541_CLIENT_URI="urn:otfabric:opcua-interop:client:open62541"
 MILO_CLIENT_URI="urn:otfabric:opcua-interop:client:milo"
+ASYNC_OPCUA_CLIENT_URI="urn:otfabric:opcua-interop:client:async-opcua"
 CONSUMER_CLIENT_URI="urn:otfabric:opcua-interop:client:consumer"
 
 log() { echo "[certs] $*" >&2; }
@@ -256,6 +262,34 @@ populate_trust_dir() {
     log "Trust dir populated: ${adapter_pki_dir}"
 }
 
+# The async-opcua identities (v0.9.0) and their trust list entries. async-opcua
+# 0.19 trusts a peer certificate only when that exact certificate is trusted
+# (no CA chain validation), so the async-opcua server lists every client
+# certificate; the other servers trust the async-opcua client certificate.
+gen_async_opcua() {
+    gen_cert "${PKI_DIR}/async-opcua-server" \
+        "async-opcua Server" \
+        "${SERVER_APP_URI}" \
+        "DNS:async-opcua"
+
+    gen_cert "${PKI_DIR}/async-opcua-client" \
+        "async-opcua Client" \
+        "${ASYNC_OPCUA_CLIENT_URI}" \
+        "DNS:async-opcua"
+
+    populate_trust_dir "${PKI_DIR}/async-opcua-server/pki"
+    populate_trust_dir "${PKI_DIR}/async-opcua-client/pki"
+
+    local client
+    for client in consumer open62541-client milo-client async-opcua-client; do
+        cp "${PKI_DIR}/${client}/cert.crt" "${PKI_DIR}/async-opcua-server/pki/trusted/certs/${client}.crt"
+    done
+    local server
+    for server in open62541-server milo-server go-server; do
+        cp "${PKI_DIR}/async-opcua-client/cert.crt" "${PKI_DIR}/${server}/pki/trusted/certs/async-opcua-client.crt"
+    done
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if [[ "${MODE}" == "add-ecc" ]]; then
@@ -267,6 +301,18 @@ if [[ "${MODE}" == "add-ecc" ]]; then
     gen_all_ecc
     log ""
     log "ECC certificates generated (CA and RSA identities left untouched)."
+    exit 0
+fi
+
+if [[ "${MODE}" == "add-async-opcua" ]]; then
+    if [[ ! -f "${PKI_DIR}/ca/ca.crt" || ! -f "${PKI_DIR}/ca/ca.key" ]]; then
+        echo "generate.sh --add-async-opcua: no existing CA in ${PKI_DIR}/ca (run generate.sh first)" >&2
+        exit 1
+    fi
+    log "Adding the async-opcua identities to the existing test PKI in ${PKI_DIR}"
+    gen_async_opcua
+    log ""
+    log "async-opcua identities generated (CA and other identities left untouched)."
     exit 0
 fi
 
@@ -334,6 +380,7 @@ cp "${PKI_DIR}/consumer/cert.crt"         "${PKI_DIR}/milo-server/pki/trusted/ce
 cp "${PKI_DIR}/open62541-client/cert.crt" "${PKI_DIR}/go-server/pki/trusted/certs/open62541-client.crt"
 cp "${PKI_DIR}/milo-client/cert.crt"      "${PKI_DIR}/go-server/pki/trusted/certs/milo-client.crt"
 cp "${PKI_DIR}/consumer/cert.crt"         "${PKI_DIR}/go-server/pki/trusted/certs/consumer.crt"
+gen_async_opcua
 
 log ""
 log "Test PKI generated:"

@@ -1,6 +1,7 @@
 # Build artifacts
 open62541/build/
 milo/target/
+async-opcua/target/
 
 # Generated test PKI (regenerate with make certs)
 certs/test-pki/

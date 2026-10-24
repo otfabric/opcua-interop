@@ -26,6 +26,8 @@ check() { # file, sed expression printing the version, what
 check open62541/src/main.c 's/.*"adapter\\": \{\\"name\\": \\"open62541\\", \\"version\\": \\"([0-9.]+)\\".*/\1/p' "open62541 adapter.version"
 check milo/src/main/java/io/otfabric/opcuainterop/CapabilitiesCommand.java 's/.*adapter\.put\("version", "([0-9.]+)"\).*/\1/p' "Milo adapter.version"
 check milo/src/main/java/io/otfabric/opcuainterop/ServerCommand.java 's/^ +"([0-9]+\.[0-9]+\.[0-9]+)",$/\1/p' "Milo server BuildInfo version"
+check async-opcua/src/common.rs 's/^pub const ADAPTER_VERSION: &str = "([0-9.]+)";$/\1/p' "async-opcua adapter.version"
+check async-opcua/Cargo.toml 's/^version = "([0-9.]+)"$/\1/p' "async-opcua crate version"
 
 notes="$("${ROOT}/scripts/release-notes.sh" "${TAG}")" || fail "RELEASE.md has no section \"## ${TAG}\""
 [[ -n "${notes//[[:space:]]/}" ]] || fail "RELEASE.md section \"## ${TAG}\" is empty"

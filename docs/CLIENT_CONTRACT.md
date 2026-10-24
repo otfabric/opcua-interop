@@ -57,8 +57,8 @@ refused with exit 2 / `error.category = "input"` — never silently ignored.
 | `--username <name>` | Username for UserName identity token | — |
 | `--password <secret>` | Password for UserName identity token | — |
 | `--channel-lifetime-ms <n>` | Requested SecureChannel lifetime in ms; small values force SecurityToken renewals during the command | stack default |
-| `--application-uri <uri>` | Client ApplicationUri sent in CreateSession (open62541 only) | URI SAN of `--certificate`, else stack default |
-| `--reverse-listen <port>` | Do not dial: listen on `<port>` and wait for the server's ReverseHello (open62541 only, see below) | — |
+| `--application-uri <uri>` | Client ApplicationUri sent in CreateSession (open62541, async-opcua) | URI SAN of `--certificate`, else stack default |
+| `--reverse-listen <port>` | Do not dial: listen on `<port>` and wait for the server's ReverseHello (open62541, async-opcua; see below) | — |
 | `--reverse-timeout-ms <n>` | How long to wait for the reverse connection | 30000 |
 | `--reverse-server-uri <uri>` | Fail (exit 3, `BadServerUriInvalid`) unless the reverse-connected server's `ServerArray[0]` equals `<uri>` | — |
 
@@ -385,7 +385,7 @@ when not applicable). `error` is always either `null` or an error object.
 
 ### `adapter`
 
-One of: `"open62541"`, `"milo"`. Never abbreviated or versioned in this field.
+One of: `"open62541"`, `"milo"`, `"async-opcua"`. Never abbreviated or versioned in this field.
 
 ### `serviceResult`
 
@@ -1218,26 +1218,26 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `codec` | `{formats, jsonVersion, jsonModes, xmlEncodeUnsupported, xmlDecodeUnsupported}` |
 | `pubsub` | PubSub (Part 14) support, §14.11. Milo: `{"supported": false, …}` with empty lists |
 
-| Feature string | In | open62541 | Milo | Meaning |
-|----------------|----|:---------:|:----:|---------|
-| `channel-lifetime` | client | ✓ | ✓ | `--channel-lifetime-ms` |
-| `deadband` | client | ✓ | ✓ | `subscribe --deadband-absolute/--deadband-percent/--trigger` |
-| `reverse-listen` | client | ✓ | — | `--reverse-listen` |
-| `ecc-security` | client, server | ✓ | — | ECC SecurityPolicies (`securityProfiles` lists them) |
-| `ecc-user-token` | client, server | ✓ | — | UserName token over an ECC endpoint (EccEncryptedSecret) |
-| `application-uri` | client | ✓ | — | `--application-uri`, ApplicationUri from the certificate |
-| `register-server2` | client | ✓ | ✓ | `register-server` can call RegisterServer2 |
-| `codec-json`, `codec-xml` | client | ✓ | ✓ | `codec` formats |
-| `codec-json-verbose` | client | — | ✓ | `codec --json-mode verbose` |
-| `codec-pubsub` | client | ✓ | — | `codec pubsub-{uadp,json}-{encode,decode}` (§14.9) |
-| `deadband` | server | ✓ | ✓ | DataChangeFilter absolute deadband / trigger honoured |
-| `percent-deadband` | server | ✓ | ✓ | percent deadband on AnalogItems with EURange (`Analog.*`) |
-| `reverse-connect` | server | ✓ | — | `--reverse-connect` |
-| `lds` | server | ✓ | — | `--lds` |
-| `mdns` | server | ✓ | — | `--mdns-name`, FindServersOnNetwork |
-| `register-with` | server | ✓ | ✓ | `--register-with` |
-| `node-management` | server | ✓ | — | AddNodes / DeleteNodes served |
-| `pubsub` | server | ✓ | — | `--pubsub-config`, PubSub information model, SKS (§14) |
+| Feature string | In | open62541 | Milo | async-opcua | Meaning |
+|----------------|----|:---------:|:----:|:-----------:|---------|
+| `channel-lifetime` | client | ✓ | ✓ | ✓ | `--channel-lifetime-ms` |
+| `deadband` | client | ✓ | ✓ | ✓ | `subscribe --deadband-absolute/--deadband-percent/--trigger` |
+| `reverse-listen` | client | ✓ | — | ✓ | `--reverse-listen` |
+| `ecc-security` | client, server | ✓ | — | — | ECC SecurityPolicies (`securityProfiles` lists them) |
+| `ecc-user-token` | client, server | ✓ | — | — | UserName token over an ECC endpoint (EccEncryptedSecret) |
+| `application-uri` | client | ✓ | — | ✓ | `--application-uri`, ApplicationUri from the certificate |
+| `register-server2` | client | ✓ | ✓ | ✓ | `register-server` can call RegisterServer2 |
+| `codec-json`, `codec-xml` | client | ✓ | ✓ | — | `codec` formats |
+| `codec-json-verbose` | client | — | ✓ | — | `codec --json-mode verbose` |
+| `codec-pubsub` | client | ✓ | — | — | `codec pubsub-{uadp,json}-{encode,decode}` (§14.9) |
+| `deadband` | server | ✓ | ✓ | ✓ | DataChangeFilter absolute deadband / trigger honoured |
+| `percent-deadband` | server | ✓ | ✓ | ✓ | percent deadband on AnalogItems with EURange (`Analog.*`) |
+| `reverse-connect` | server | ✓ | — | ✓ | `--reverse-connect` |
+| `lds` | server | ✓ | — | — | `--lds` |
+| `mdns` | server | ✓ | — | — | `--mdns-name`, FindServersOnNetwork |
+| `register-with` | server | ✓ | ✓ | ✓ | `--register-with` |
+| `node-management` | server | ✓ | — | ✓ | AddNodes / DeleteNodes served |
+| `pubsub` | server | ✓ | — | — | `--pubsub-config`, PubSub information model, SKS (§14) |
 
 Eclipse Milo 1.1.8 has no ReverseHello in its transports
 (`opc-ua-stack/stack-core/.../channel/messages/MessageType.java` knows only
@@ -1247,6 +1247,23 @@ Hello / Acknowledge / Error), no ECC `SecurityPolicy`
 and FindServersOnNetwork with `Bad_ServiceUnsupported`
 (`opc-ua-sdk/sdk-server/.../servicesets/impl/DefaultDiscoveryServiceSet.java`).
 It has no PubSub implementation either (§14.12).
+
+async-opcua 0.19.0 (added in adapter 0.9.0) implements no ECC
+`SecurityPolicy` (`async-opcua-crypto/src/security_policy.rs` ends at
+`Aes256Sha256RsaPss`), its server answers FindServersOnNetwork,
+RegisterServer and RegisterServer2 with `BadServiceUnsupported`
+(`docs/compatibility.md`: "stub"), and it has no PubSub; the adapter refuses
+`--lds`, `--mdns-name` and `--pubsub-config` (exit 2) and ignores `--ecc-dir`
+with a warning. Its JSON encoding of a Variant is the 1.04 form
+(`{"Type":…,"Body":…}`), not the 1.05 encoding of `codec`, and its XML
+encoding of a Variant is the NodeSet2 value form (`<Int32>5</Int32>` directly
+inside `<Variant>`, without the Part 6 §5.3.1.17 `<Value>` element), so the
+adapter has no `codec` operation (exit 2, not listed in `clientOperations`). Trust is by exact certificate: the server
+trusts the certificates in `<pki-dir>/trusted/certs` (a client certificate
+that is only signed by a listed CA is rejected); the client validates the
+server certificate against `--trust-list` itself (exact match or issued by a
+listed certificate). See `async-opcua/README.md` for the stack deviations the
+go-opcua suite found.
 
 ---
 

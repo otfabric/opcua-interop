@@ -2,7 +2,7 @@
 # Test graceful shutdown (SIGTERM → exit 0) for a single adapter.
 #
 # Usage:
-#   shutdown-test.sh <open62541|milo> <image>
+#   shutdown-test.sh <open62541|milo|async-opcua> <image>
 #
 # Exit codes:
 #   0  — container exited with code 0 after SIGTERM
@@ -13,8 +13,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-ADAPTER="${1:?Usage: shutdown-test.sh <open62541|milo> <image>}"
-IMAGE="${2:?Usage: shutdown-test.sh <open62541|milo> <image>}"
+ADAPTER="${1:?Usage: shutdown-test.sh <open62541|milo|async-opcua> <image>}"
+IMAGE="${2:?Usage: shutdown-test.sh <open62541|milo|async-opcua> <image>}"
 
 echo "[shutdown] Testing ${ADAPTER} graceful shutdown (SIGTERM → exit 0)..."
 

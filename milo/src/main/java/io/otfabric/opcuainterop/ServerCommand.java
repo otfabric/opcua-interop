@@ -8,6 +8,7 @@ import org.eclipse.milo.opcua.sdk.server.EndpointConfig;
 import org.eclipse.milo.opcua.sdk.server.identity.AnonymousIdentityValidator;
 import org.eclipse.milo.opcua.sdk.server.identity.CompositeValidator;
 import org.eclipse.milo.opcua.sdk.server.identity.UsernameIdentityValidator;
+import org.eclipse.milo.opcua.stack.core.Stack;
 import org.eclipse.milo.opcua.stack.core.security.DefaultApplicationGroup;
 import org.eclipse.milo.opcua.stack.core.security.DefaultCertificateManager;
 import org.eclipse.milo.opcua.stack.core.security.DefaultServerCertificateValidator;
@@ -320,6 +321,16 @@ public class ServerCommand {
         }
 
         OpcUaServerConfig config = serverConfigBuilder.build();
+
+        // Milo rejects more than 4 connection attempts per second from one
+        // remote address (Stack.ConnectionLimits, RateLimitingHandler). Test
+        // clients reach the server through the Docker gateway, all from the
+        // same address, and a fast client (async-opcua: GetEndpoints and the
+        // session on separate connections) got its connections closed before
+        // the Acknowledge. A reference server for interop tests must not
+        // reject a client for its connection rate; the limit is off. It is
+        // read once, when the first transport binds, so it is set here.
+        Stack.ConnectionLimits.RATE_LIMIT_ENABLED = false;
 
         OpcUaServer server = new OpcUaServer(config, transportProfile -> {
             OpcTcpServerTransportConfig transportConfig =

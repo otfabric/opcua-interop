@@ -27,6 +27,7 @@ concurrency:
 env:
   OPEN62541_IMAGE: ghcr.io/otfabric/opcua-interop-open62541:ci
   MILO_IMAGE: ghcr.io/otfabric/opcua-interop-milo:ci
+  ASYNC_OPCUA_IMAGE: ghcr.io/otfabric/opcua-interop-async-opcua:ci
 
 jobs:
   validate:
@@ -63,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo]
+        adapter: [open62541, milo, async-opcua]
     steps:
       - uses: actions/checkout@v7
 
@@ -100,7 +101,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo]
+        adapter: [open62541, milo, async-opcua]
     steps:
       - uses: actions/checkout@v7
 
@@ -158,9 +159,10 @@ jobs:
         run: |
           docker load < /tmp/open62541.tar.gz
           docker load < /tmp/milo.tar.gz
+          docker load < /tmp/async-opcua.tar.gz
 
       - name: Cross-stack smoke
-        run: scripts/smoke.sh cross "${OPEN62541_IMAGE}" "${MILO_IMAGE}"
+        run: scripts/smoke.sh cross "${OPEN62541_IMAGE}" "${MILO_IMAGE}" "${ASYNC_OPCUA_IMAGE}"
 
   # ── main only: the arm64 images build natively (no QEMU) ──────────────────
   arm64:
@@ -171,7 +173,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo]
+        adapter: [open62541, milo, async-opcua]
     steps:
       - uses: actions/checkout@v7
 

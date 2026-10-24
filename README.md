@@ -5,13 +5,15 @@ interoperability testing infrastructure providing Dockerized
 reference clients and servers based on independent OPC UA
 protocol implementations.**
 
-Test OPC UA client and server implementations against two established
+Test OPC UA client and server implementations against three independent
 reference stacks:
 
 - **open62541 (C)** — Open-source OPC UA implementation for
   embedded, industrial and native applications.
 - **Eclipse Milo (Java)** — Independent OPC UA implementation
   for Java and JVM-based industrial applications.
+- **async-opcua (Rust)** — Asynchronous OPC UA client and server
+  library for Rust (FreeOpcUa) with pure-Rust crypto (since v0.9.0).
 
 The infrastructure provides deterministic test fixtures, simulated
 OPC UA servers, reference client operations, secure communication,
@@ -20,8 +22,8 @@ data and automated protocol compatibility testing.
 
 ## Key features
 
-- **Independent reference implementations** — Two independently
-  implemented OPC UA stacks written in C and Java.
+- **Independent reference implementations** — Three independently
+  implemented OPC UA stacks written in C, Java and Rust.
 - **Dockerized clients and servers** — Reproducible OPC UA
   test environments without installing native protocol libraries.
 - **Deterministic fixtures** — Shared OPC UA address spaces,
@@ -128,6 +130,7 @@ opcua-interop/
 │   └── test-pki/       # Generated certificates (git-ignored; `make certs`)
 ├── open62541/          # C adapter (Dockerfile, CMakeLists, source)
 ├── milo/               # Java adapter (Dockerfile, pom.xml, source)
+├── async-opcua/        # Rust adapter (Dockerfile, Cargo.toml, source)
 ├── schemas/            # JSON Schemas for client results and print-capabilities
 ├── docs/               # Client command contract (CLIENT_CONTRACT.md)
 ├── pubsub/examples/    # PubSub configurations (--pubsub-config) used by the PubSub smoke
@@ -139,7 +142,7 @@ opcua-interop/
 
 ### Fixture format
 
-Fixtures are stack-neutral JSON documents validated against `fixtures/schema/opcua-fixture.schema.json`. Each fixture describes a deterministic OPC UA address space including nodes, behaviors, security profiles, and user credentials. Both adapters construct an equivalent namespace from the same fixture file.
+Fixtures are stack-neutral JSON documents validated against `fixtures/schema/opcua-fixture.schema.json`. Each fixture describes a deterministic OPC UA address space including nodes, behaviors, security profiles, and user credentials. Every adapter constructs an equivalent namespace from the same fixture file.
 
 See [`fixtures/baseline/README.md`](fixtures/baseline/README.md) for the baseline fixture documentation.
 
@@ -161,6 +164,7 @@ Each image supports the same command contract:
 |---|---|
 | `ghcr.io/otfabric/opcua-interop-open62541:<version>` | linux/amd64, linux/arm64 |
 | `ghcr.io/otfabric/opcua-interop-milo:<version>` | linux/amd64, linux/arm64 |
+| `ghcr.io/otfabric/opcua-interop-async-opcua:<version>` | linux/amd64, linux/arm64 |
 
 ### Server command
 
@@ -201,7 +205,7 @@ server ... --reverse-connect opc.tcp://client-host:4855
 server ... --lds
 server ... --mdns-name my-server            # announce a plain server via mDNS
 
-# both adapters: register with an LDS (RegisterServer2, fallback RegisterServer)
+# all adapters: register with an LDS (RegisterServer2, fallback RegisterServer)
 server ... --register-with opc.tcp://lds:4840/opcua-interop
 
 # open62541 (v0.8.0): OPC UA PubSub configuration, see "PubSub" below
@@ -395,6 +399,8 @@ certs/test-pki/
 ├── open62541-client/      # open62541 client identity
 ├── milo-server/           # Milo server identity
 ├── milo-client/           # Milo client identity
+├── async-opcua-server/    # async-opcua server identity (pki/trusted/certs also lists the client certificates)
+├── async-opcua-client/    # async-opcua client identity
 ├── consumer/              # Consumer client identity (used by go-opcua test client)
 ├── go-server/             # go-opcua server identity (DNS:host.docker.internal SAN)
 └── untrusted/             # Self-signed cert for trust-rejection tests
@@ -434,7 +440,7 @@ go-opcua
     └── publishes compatibility claims
 ```
 
-Four test directions:
+Test directions:
 
 | Direction | Owner |
 |---|---|
@@ -442,27 +448,33 @@ Four test directions:
 | Go client → Milo server | go-opcua |
 | open62541 client → Go server | go-opcua |
 | Milo client → Go server | go-opcua |
+| Go client → async-opcua server | go-opcua |
+| async-opcua client → Go server | go-opcua |
 
 ## Make targets
 
 ```sh
 make ci                  # Full local CI gate: validate → build → test → smoke → shutdown
-make image               # Build both images for host architecture
+make image               # Build all adapter images for host architecture
 make image-open62541     # Build open62541 image (host arch)
 make image-milo          # Build Milo image (host arch)
+make image-async-opcua   # Build async-opcua image (host arch)
 make validate            # Validate fixtures and schema
 make validate-fixtures   # Validate all fixture files
-make test                # Run unit tests for both adapters
+make test                # Run unit tests for all adapters
 make test-open62541      # Run open62541 unit tests
 make test-milo           # Run Milo unit tests
+make test-async-opcua    # Run async-opcua unit tests
 make smoke               # Run all smoke tests (images must be built)
 make smoke-open62541     # Smoke test open62541 only
 make smoke-milo          # Smoke test Milo only
+make smoke-async-opcua   # Smoke test async-opcua only (no codec checks)
 make smoke-cross-stack   # Cross-stack interop self-check
 make smoke-pubsub        # PubSub smoke (open62541 publisher/subscriber containers, Mosquitto)
-make shutdown            # Test graceful shutdown for both adapters
+make shutdown            # Test graceful shutdown for all adapters
 make run-open62541       # Start open62541 server (foreground, port 4840)
 make run-milo            # Start Milo server (foreground, port 4841)
+make run-async-opcua     # Start async-opcua server (foreground, port 4842)
 make run-mosquitto       # Start the MQTT broker for PubSub tests (foreground, port 1883)
 make certs               # Generate test PKI (requires openssl >= 1.1)
 make clean               # Remove build artifacts and containers
@@ -497,20 +509,22 @@ adapter surface gets a new tag; published tags are not moved. Release notes and 
 |---|---|---|---|
 | open62541 | C | open62541 v1.5.9 (OpenSSL crypto backend, mDNS via mdnsd, PubSub with MQTT and SKS) | Native/embedded diversity, OPC UA Binary, certified example-server history |
 | Eclipse Milo | Java | Eclipse Milo v1.1.8 (+ `milo-encoding-json`, `milo-encoding-xml`) | JVM/enterprise diversity, independent serialization and security code paths |
+| async-opcua | Rust | async-opcua 0.19.0 (crates.io, RustCrypto) | Memory-safe Rust stack, independent encoder/decoder and crypto (no OpenSSL); see [`async-opcua/README.md`](async-opcua/README.md) |
 
 Feature support differs per stack and is declared by `print-capabilities`:
 
-| Feature | open62541 | Eclipse Milo |
-|---|:---:|:---:|
-| DataChangeFilter (absolute / percent deadband, trigger) — client and server | ✓ | ✓ |
-| Reverse connect (server `--reverse-connect`, client `--reverse-listen`) | ✓ | — (no ReverseHello in Milo 1.1.8) |
-| ECC security policies | ✓ | — (no ECC `SecurityPolicy` in Milo 1.1.8) |
-| LDS server (`--lds`), mDNS | ✓ | — (Milo answers `Bad_ServiceUnsupported`) |
-| `--register-with`, `register-server`, `find-servers-on-network` | ✓ | ✓ |
-| `codec` JSON (OPC UA 1.05) | ✓ compact | ✓ compact + verbose |
-| `codec` XML | ✓ (no DataValue / DiagnosticInfo / matrices) | ✓ |
-| PubSub (Part 14): UDP / MQTT, UADP / JSON, security, SKS, information model (v0.8.0) | ✓ | — (no PubSub in Milo 1.1.8) |
-| `codec pubsub-*` (UADP / JSON NetworkMessages) | ✓ | — |
+| Feature | open62541 | Eclipse Milo | async-opcua |
+|---|:---:|:---:|:---:|
+| DataChangeFilter (absolute / percent deadband, trigger) — client and server | ✓ | ✓ | ✓ |
+| Reverse connect (server `--reverse-connect`, client `--reverse-listen`) | ✓ | — (no ReverseHello in Milo 1.1.8) | ✓ |
+| ECC security policies | ✓ | — (no ECC `SecurityPolicy` in Milo 1.1.8) | — (none in async-opcua 0.19) |
+| LDS server (`--lds`), mDNS | ✓ | — (Milo answers `Bad_ServiceUnsupported`) | — (stubs answer `BadServiceUnsupported`) |
+| `--register-with`, `register-server`, `find-servers-on-network` | ✓ | ✓ | ✓ |
+| AddNodes / DeleteNodes served (`node-management`) | ✓ | — | ✓ |
+| `codec` JSON (OPC UA 1.05) | ✓ compact | ✓ compact + verbose | — (the stack's JSON is the 1.04 `Type` / `Body` form) |
+| `codec` XML | ✓ (no DataValue / DiagnosticInfo / matrices) | ✓ | — (the stack's Variant XML is the NodeSet2 value form, without the Part 6 `<Value>` element) |
+| PubSub (Part 14): UDP / MQTT, UADP / JSON, security, SKS, information model (v0.8.0) | ✓ | — (no PubSub in Milo 1.1.8) | — (no PubSub in async-opcua 0.19) |
+| `codec pubsub-*` (UADP / JSON NetworkMessages) | ✓ | — | — |
 
 ## Security
 
@@ -520,17 +534,18 @@ completed in v0.2.0; Aes128 / Aes256 profiles followed in v0.2.1; SecureChannel 
 open62541 adapter to the OpenSSL crypto backend and adds the ECC security policies.
 
 **What is implemented and verified:**
-- Full test PKI with CA, seven identities (including go-server), and OPC UA PKI directory layout
-- Server `--certificate`, `--private-key`, `--pki-dir` flags on both adapters
+- Full test PKI with CA, nine identities (including go-server and, since v0.9.0, async-opcua-server / async-opcua-client), and OPC UA PKI directory layout
+- Server `--certificate`, `--private-key`, `--pki-dir` flags on all adapters
 - Secure endpoint advertisement driven by fixture `securityProfiles`
 - Trust list validation via open62541 `UA_ServerConfig_setDefaultWithSecurityPolicies`
 - Trust list validation via Milo `FileBasedTrustListManager` + `DefaultServerCertificateValidator`
+- async-opcua (v0.9.0): the stack trusts exact certificates only, so the server trusts the certificates listed in `<pki-dir>/trusted/certs` and the client checks the server certificate against `--trust-list` itself (exact match or issued by a listed CA); RSA profiles and UserName tokens verified in both directions against go-opcua, ECC not available in async-opcua 0.19
 - Username/password authentication on both None/None and secure endpoints
 - Basic256Sha256 / Sign — all four directions: go-opcua client ↔ adapter servers; adapter clients ↔ go-opcua server
 - Basic256Sha256 / SignAndEncrypt — all four directions
 - Aes128_Sha256_RsaOaep / SignAndEncrypt — all four directions
 - Aes256_Sha256_RsaPss / SignAndEncrypt — all four directions
-- Untrusted certificate rejection — go-opcua client vs. both adapter servers
+- Untrusted certificate rejection — go-opcua client vs. all adapter servers
 - Username valid/invalid — all four directions (go-opcua client ↔ adapter servers; adapter clients ↔ go-opcua server)
 - go-opcua server OPN asymmetric decryption (Part 6 §6.7.4 conformance fix)
 - open62541 client `UA_ExtensionObject_setValueCopy` argument-order fix (data first, type second)

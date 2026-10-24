@@ -2,7 +2,7 @@
 
 ## How a release is made
 
-1. `make ci` on the commit to release (validates fixtures, builds both images,
+1. `make ci` on the commit to release (validates fixtures, builds the adapter images,
    runs the adapter unit tests, the single-adapter, cross-stack and PubSub
    smoke tests and the graceful-shutdown checks). The `CI` workflow runs
    the same gate on every push and pull request.
@@ -13,6 +13,8 @@
      (`adapter.version`)
    - `milo/src/main/java/io/otfabric/opcuainterop/ServerCommand.java`
      (`BuildInfo` software version)
+   - `async-opcua/src/common.rs` (`ADAPTER_VERSION`) and
+     `async-opcua/Cargo.toml` (crate `version`)
 3. Write the section `## vX.Y.Z` below, with its **Date**; `make release-notes
    VERSION=vX.Y.Z` prints what the GitHub release will say. Commit and push
    to `main`.
@@ -28,7 +30,7 @@
      stops if that tag exists, if the adapters report another version, or if
      this file has no dated section for it (`scripts/check-release.sh`); it
      validates the fixtures,
-   - builds both images natively on an amd64 and an arm64 runner, runs the
+   - builds the adapter images natively on an amd64 and an arm64 runner, runs the
      adapter unit tests, the smoke tests (single-adapter, cross-stack, PubSub)
      and the shutdown checks on exactly those images, and pushes them as
      `<image>:vX.Y.Z-amd64` / `-arm64`,
@@ -39,7 +41,8 @@
 
    The tag is created last: a failed run leaves no tag, fix and run again.
 5. Consumers pin the digests from the release (`manifest.json`). For go-opcua:
-   update `defaultOpen62541Image` / `defaultMiloImage` in
+   update `defaultOpen62541Image` / `defaultMiloImage` (and, from v0.9.0,
+   `defaultAsyncOpcuaImage` in `interop/asyncopcua_harness_test.go`) in
    `interop/harness_test.go`, `.github/workflows/interop.yml`, `INTEROP.md` and
    `interop/BUCKET_B.md`, then run its interop suite against the published
    images:
@@ -58,8 +61,31 @@ Tags are immutable. A fix is a new version; a published tag is never moved
 | Upstream pin, base image or bug fix with unchanged contract | patch |
 
 Upstream pins: `open62541/Dockerfile` (`ARG OPEN62541_COMMIT`),
-`milo/pom.xml` (`milo.version`), the MQTT broker `eclipse-mosquitto:2.0.22` by
+`milo/pom.xml` (`milo.version`), `async-opcua/Cargo.toml` (`async-opcua =
+"=X.Y.Z"`, with `Cargo.lock`), the MQTT broker `eclipse-mosquitto:2.0.22` by
 digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
+
+---
+
+## v0.9.0
+
+**Date:** 2026-10-24
+**Previous release:** v0.8.2
+
+### Added
+
+- **async-opcua (Rust) adapter** (`async-opcua/`, image `ghcr.io/otfabric/opcua-interop-async-opcua`), on the [async-opcua](https://github.com/FreeOpcUa/async-opcua) crate 0.19.0 (pinned with `=` in `Cargo.toml` and `Cargo.lock`; RustCrypto, no OpenSSL; linux/amd64 and linux/arm64). Server mode with the baseline fixture: dynamic values, the six methods, events, raw HistoryRead with continuation points, AddNodes / DeleteNodes, DataChangeFilter (absolute and percent deadband, trigger), `--reverse-connect`, `--register-with`, ready file, SIGTERM → exit 0. Client operations `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`, `subscribe`, `subscription-lifecycle`, `event-subscribe`, `history-read`, `republish`, `transfer-subscriptions`, `register-nodes`, `node-management`, `register-server`, `find-servers-on-network`, with `--reverse-listen`, `--channel-lifetime-ms` and `--application-uri`. Security profiles declared: None, Basic256Sha256 (Sign, SignAndEncrypt), Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss (SignAndEncrypt); Anonymous and UserName tokens.
+- Declared as not provided in `print-capabilities` and refused with exit 2: ECC security policies (none in async-opcua 0.19), the LDS / mDNS server (`--lds`, `--mdns-name`: the stack answers RegisterServer / FindServersOnNetwork with `BadServiceUnsupported`), PubSub (`--pubsub-config`, `pubsub.supported: false`) and `codec` (the stack's JSON Variant encoding is the 1.04 `Type` / `Body` form, its XML Variant encoding the NodeSet2 value form without the Part 6 `<Value>` element).
+- The adapter's unit tests (`cargo test`) run in the image build; `docker run <image> test` checks every mounted fixture against what the server builds and the capabilities against the dispatched operations.
+- Stack deviations found by the go-opcua suite and the cross-stack smoke are listed in `async-opcua/README.md`. One affects other stacks: over SecurityPolicy None async-opcua answers ActivateSession with a null ServerNonce, which the open62541 1.5.9 client rejects (`BadSecurityChecksFailed`); open62541 ↔ async-opcua is verified over secured channels.
+- Test PKI: `async-opcua-server` / `async-opcua-client` identities. async-opcua trusts certificates by exact match only, so `async-opcua-server/pki/trusted/certs` lists the consumer and adapter client certificates; the other servers trust the async-opcua client certificate. `certs/generate.sh --add-async-opcua` adds them to an existing PKI.
+- `make image-async-opcua`, `test-async-opcua`, `smoke-async-opcua`, `shutdown-async-opcua`, `run-async-opcua` (port 4842), `compose.yaml` service `async-opcua`; CI and Release build, test and publish the third image (manifest.json records the async-opcua pin). `scripts/smoke.sh async-opcua <image>`; `smoke.sh cross` takes the async-opcua image as an optional third argument and then also runs the open62541 and Milo clients against it, the async-opcua client against all three servers, and secured channels (Basic256Sha256, Aes128 / Aes256, UserName, untrusted certificate).
+- `Upstream candidates` workflow: an async-opcua job compares the `Cargo.toml` pin with the latest crates.io release, builds the adapter at that release (Cargo.toml / Cargo.lock edited in the job checkout only) and runs the smoke; Dependabot covers the `async-opcua/` Dockerfile and the adapter's other crates (the `async-opcua` crate itself is ignored there, its pin is exact).
+- `schemas/client-result.schema.json`: `adapter` may be `async-opcua`.
+
+### Changed
+
+- **Milo adapter:** the server no longer applies Milo's per-address connection rate limit (`Stack.ConnectionLimits`: at most 4 connection attempts per second per remote address). Test clients reach the server through the Docker gateway, all from one address; the async-opcua client, which opens GetEndpoints and the session on separate connections, had connections closed before the Acknowledge.
 
 ---
 
