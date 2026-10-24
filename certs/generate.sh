@@ -13,6 +13,10 @@
 #                           keep the existing CA and identities untouched and only
 #                           (re)generate the dotnet-server / dotnet-client identities
 #                           (new in v0.9.0) and their trust list entries
+#   generate.sh --add-node-opcua
+#                           keep the existing CA and identities untouched and only
+#                           (re)generate the node-opcua-server / node-opcua-client
+#                           identities (new in v0.9.0)
 #
 # Requirements: openssl >= 1.1.1 (ECC: brainpool, Ed25519 and Ed448 support)
 # Output: certs/test-pki/
@@ -28,7 +32,8 @@ case "${1:-}" in
     --add-ecc) MODE="add-ecc" ;;
     --add-async-opcua) MODE="add-async-opcua" ;;
     --add-dotnet) MODE="add-dotnet" ;;
-    *) echo "usage: generate.sh [--add-ecc | --add-async-opcua | --add-dotnet]" >&2; exit 2 ;;
+    --add-node-opcua) MODE="add-node-opcua" ;;
+    *) echo "usage: generate.sh [--add-ecc | --add-async-opcua | --add-dotnet | --add-node-opcua]" >&2; exit 2 ;;
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,6 +48,7 @@ OPEN62541_CLIENT_URI="urn:otfabric:opcua-interop:client:open62541"
 MILO_CLIENT_URI="urn:otfabric:opcua-interop:client:milo"
 ASYNC_OPCUA_CLIENT_URI="urn:otfabric:opcua-interop:client:async-opcua"
 DOTNET_CLIENT_URI="urn:otfabric:opcua-interop:client:dotnet"
+NODE_OPCUA_CLIENT_URI="urn:otfabric:opcua-interop:client:node-opcua"
 CONSUMER_CLIENT_URI="urn:otfabric:opcua-interop:client:consumer"
 
 log() { echo "[certs] $*" >&2; }
@@ -334,6 +340,44 @@ link_async_opcua_dotnet() {
     if [[ -d "${PKI_DIR}/dotnet-server/pki" && -f "${PKI_DIR}/async-opcua-client/cert.crt" ]]; then
         cp "${PKI_DIR}/async-opcua-client/cert.crt" "${PKI_DIR}/dotnet-server/pki/trusted/certs/async-opcua-client.crt"
     fi
+    link_node_opcua
+}
+
+# The node-opcua identities (v0.9.0). node-opcua validates a peer certificate
+# against the trusted CA (and its CRL), so its own trust dirs need nothing
+# else; the other servers get the node-opcua client certificate like the
+# other adapter clients (async-opcua and dotnet by exact certificate).
+gen_node_opcua() {
+    gen_cert "${PKI_DIR}/node-opcua-server" \
+        "node-opcua Server" \
+        "${SERVER_APP_URI}" \
+        "DNS:node-opcua"
+
+    gen_cert "${PKI_DIR}/node-opcua-client" \
+        "node-opcua Client" \
+        "${NODE_OPCUA_CLIENT_URI}" \
+        "DNS:node-opcua"
+
+    populate_trust_dir "${PKI_DIR}/node-opcua-server/pki"
+    populate_trust_dir "${PKI_DIR}/node-opcua-client/pki"
+
+    local server
+    for server in open62541-server milo-server go-server; do
+        cp "${PKI_DIR}/node-opcua-client/cert.crt" "${PKI_DIR}/${server}/pki/trusted/certs/node-opcua-client.crt"
+    done
+    link_node_opcua
+}
+
+# The async-opcua and dotnet servers trust the exact node-opcua client
+# certificate, whichever of them was generated last.
+link_node_opcua() {
+    [[ -f "${PKI_DIR}/node-opcua-client/cert.crt" ]] || return 0
+    local server
+    for server in async-opcua-server dotnet-server; do
+        if [[ -d "${PKI_DIR}/${server}/pki/trusted/certs" ]]; then
+            cp "${PKI_DIR}/node-opcua-client/cert.crt" "${PKI_DIR}/${server}/pki/trusted/certs/node-opcua-client.crt"
+        fi
+    done
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -347,6 +391,18 @@ if [[ "${MODE}" == "add-ecc" ]]; then
     gen_all_ecc
     log ""
     log "ECC certificates generated (CA and RSA identities left untouched)."
+    exit 0
+fi
+
+if [[ "${MODE}" == "add-node-opcua" ]]; then
+    if [[ ! -f "${PKI_DIR}/ca/ca.crt" || ! -f "${PKI_DIR}/ca/ca.key" ]]; then
+        echo "generate.sh --add-node-opcua: no existing CA in ${PKI_DIR}/ca (run generate.sh first)" >&2
+        exit 1
+    fi
+    log "Adding the node-opcua identities to the existing test PKI in ${PKI_DIR}"
+    gen_node_opcua
+    log ""
+    log "node-opcua identities generated (CA and other identities left untouched)."
     exit 0
 fi
 
@@ -439,6 +495,7 @@ cp "${PKI_DIR}/open62541-client/cert.crt" "${PKI_DIR}/go-server/pki/trusted/cert
 cp "${PKI_DIR}/milo-client/cert.crt"      "${PKI_DIR}/go-server/pki/trusted/certs/milo-client.crt"
 cp "${PKI_DIR}/consumer/cert.crt"         "${PKI_DIR}/go-server/pki/trusted/certs/consumer.crt"
 gen_async_opcua
+gen_node_opcua
 
 gen_dotnet
 

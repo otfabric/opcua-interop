@@ -6,7 +6,8 @@
 #   smoke.sh milo <image>                             # single-adapter smoke
 #   smoke.sh async-opcua <image>                      # single-adapter smoke
 #   smoke.sh dotnet <image>                           # single-adapter smoke
-#   smoke.sh cross <image-open62541> <image-milo> [image-async-opcua]
+#   smoke.sh node-opcua <image>                       # single-adapter smoke
+#   smoke.sh cross <image-open62541> <image-milo> [image-async-opcua] [image-node-opcua]
 #                                                     # cross-stack self-check
 #   smoke.sh cross-dotnet <image-dotnet> <image-open62541> <image-milo>
 #                                                     # dotnet against both reference stacks
@@ -22,7 +23,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENDPOINT_PATH="/opcua-interop"
 WAIT_TIMEOUT=60
 
-MODE="${1:?Usage: smoke.sh <open62541|milo|async-opcua|dotnet|cross|cross-dotnet> <image> [images...]}"
+MODE="${1:?Usage: smoke.sh <open62541|milo|async-opcua|dotnet|node-opcua|cross|cross-dotnet> <image> [images...]}"
 shift
 
 PASS=0
@@ -637,6 +638,36 @@ check_o62541_none_deviation() {
     fi
 }
 
+# open62541 client → node-opcua server across SecureChannel renewals. node-opcua
+# 2.187 secures every response with the token of its request
+# (ServerSecureChannelLayer.send_response), so a Publish request sent before a
+# renewal is answered under the old token after the client has switched to
+# the new one (Part 6 §6.7.4: the server switches once it receives a message
+# with the new token). Once the old token's lifetime has passed, the open62541
+# 1.5.9 client drops such a response ("SecurityToken timed out") and the
+# subscription stalls. Whether a late response lands after the expiry depends
+# on publish timing, so both outcomes are reported; anything else fails.
+check_o62541_node_renewal_deviation() {
+    local client_image="$1" endpoint="$2"
+    local node="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter"
+    local output
+    output=$(run_client_op "${client_image}" subscribe \
+            --endpoint "${endpoint}" \
+            --node "${node}" \
+            --publishing-interval-ms 500 \
+            --notifications 24 \
+            --timeout-ms 40000 \
+            --channel-lifetime-ms 6000) || true
+    validate_envelope "${output}" "o62541→node-opcua:channel-renewal" || return
+    if echo "${output}" | jq -e '.success == true and (.results[0].notifications | length) == 24' >/dev/null 2>&1; then
+        ok "o62541→node-opcua: subscribe across SecureChannel renewals (lifetime 6s)"
+    elif echo "${output}" | jq -e '.success == false and .error.category == "timeout" and (.results[0].notifications | length) > 0' >/dev/null 2>&1; then
+        ok "o62541→node-opcua: subscription stalled after a SecureChannel renewal (known node-opcua 2.187 deviation: responses keep the request's old token)"
+    else
+        fail "o62541→node-opcua: channel renewal — unexpected result: ${output}"
+    fi
+}
+
 # Secured channels to an async-opcua server on the feature network, with the
 # test PKI identities: open62541 (whose None/None sessions fail, see above)
 # and Milo clients, Basic256Sha256 and the Aes policies, a UserName token, and
@@ -711,6 +742,101 @@ run_async_opcua_secure_cross() {
     feature_cleanup
 }
 
+# ── node-opcua cross-stack checks ─────────────────────────────────────────────
+
+# Secured channels with a node-opcua server and a node-opcua client on the
+# feature network, with the test PKI identities: open62541 and Milo clients
+# against the node-opcua server (Basic256Sha256 Sign / SignAndEncrypt, the
+# Aes policies, a UserName token, an untrusted client certificate), and the
+# node-opcua client against the open62541 and Milo servers.
+run_node_opcua_secure_cross() {
+    local img_open62541="$1" img_milo="$2" img_node_opcua="$3"
+    local model="nsu=urn:otfabric:opcua-interop:model;s="
+
+    prepare_pki
+    if [[ ! -f "${FEAT_TMP}/pki/node-opcua-server/cert.crt" ]]; then
+        fail "node-opcua secure cross-stack: the test PKI has no node-opcua-server identity (certs/generate.sh --add-node-opcua)"
+        feature_cleanup
+        return
+    fi
+    FEAT_NET="smoke-net-$$"
+    docker network create "${FEAT_NET}" >/dev/null
+
+    local srv="smoke-node-opcua-sec-$$"
+    local url="opc.tcp://${srv}:4840${ENDPOINT_PATH}"
+    FEAT_CONTAINERS+=("${srv}")
+    log "Starting node-opcua server with certificate (secure endpoints)..."
+    docker run -d --name "${srv}" --network "${FEAT_NET}" \
+        -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+        "${img_node_opcua}" server --fixture /fixtures/baseline/fixture.json \
+        --advertised-host "${srv}" --endpoint-path "${ENDPOINT_PATH}" \
+        --certificate /pki/node-opcua-server/cert.crt --private-key /pki/node-opcua-server/cert.key \
+        --pki-dir /pki/node-opcua-server/pki >/dev/null
+    wait_ready "${srv}"
+
+    local o62541=(--certificate /pki/open62541-client/cert.crt --private-key /pki/open62541-client/cert.key
+                  --trust-list /pki/ca/ca.crt)
+    local milo=(--certificate /pki/milo-client/cert.crt --private-key /pki/milo-client/cert.key
+                --trust-list /pki/ca/ca.crt)
+    local b256=(--security-policy Basic256Sha256 --security-mode SignAndEncrypt)
+    local out
+    out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+            "${b256[@]}" "${o62541[@]}") || true
+    feat_expect "o62541→node-opcua: Basic256Sha256/SignAndEncrypt read" \
+        '.success == true and .results[0].value == -123456789' "${out}"
+    out=$(feat_client "${img_open62541}" - call --endpoint "${url}" --object "${model}Methods" \
+            --method "${model}Methods.Add" --input Int32:10 --input Int32:20 "${b256[@]}" "${o62541[@]}") || true
+    feat_expect "o62541→node-opcua: Basic256Sha256/SignAndEncrypt call Methods.Add(10,20)=30" \
+        '.success == true and .results[0].outputArguments[0] == 30' "${out}"
+    out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+            --security-policy Basic256Sha256 --security-mode Sign "${o62541[@]}" \
+            --username test-user --password test-password) || true
+    feat_expect "o62541→node-opcua: Basic256Sha256/Sign + username" \
+        '.success == true and .results[0].value == -123456789' "${out}"
+    out=$(feat_client "${img_milo}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+            --security-policy Aes128_Sha256_RsaOaep --security-mode SignAndEncrypt "${milo[@]}") || true
+    feat_expect "milo→node-opcua: Aes128_Sha256_RsaOaep/SignAndEncrypt read" \
+        '.success == true and .results[0].value == -123456789' "${out}"
+    out=$(feat_client "${img_milo}" - subscribe --endpoint "${url}" --node "${model}Dynamic.Counter" \
+            --publishing-interval-ms 500 --notifications 3 --timeout-ms 15000 \
+            --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt "${milo[@]}") || true
+    feat_expect "milo→node-opcua: Aes256_Sha256_RsaPss/SignAndEncrypt subscribe Dynamic.Counter" \
+        '.success == true and (.results[0].notifications | length) >= 3' "${out}"
+    out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+            "${b256[@]}" --certificate /pki/untrusted/cert.crt --private-key /pki/untrusted/cert.key \
+            --trust-list /pki/ca/ca.crt) || true
+    feat_expect "o62541→node-opcua: untrusted client certificate is rejected" \
+        '.success == false' "${out}"
+
+    # The node-opcua client over secured channels to the open62541 and Milo servers.
+    local node=(--certificate /pki/node-opcua-client/cert.crt --private-key /pki/node-opcua-client/cert.key
+                --trust-list /pki/ca/ca.crt)
+    local peer
+    for peer in open62541 milo; do
+        local psrv="smoke-${peer}-sec-node-$$" pimg
+        [[ "${peer}" == "open62541" ]] && pimg="${img_open62541}" || pimg="${img_milo}"
+        FEAT_CONTAINERS+=("${psrv}")
+        docker run -d --name "${psrv}" --network "${FEAT_NET}" \
+            -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+            "${pimg}" server --fixture /fixtures/baseline/fixture.json \
+            --advertised-host "${psrv}" --endpoint-path "${ENDPOINT_PATH}" \
+            --certificate "/pki/${peer}-server/cert.crt" --private-key "/pki/${peer}-server/cert.key" \
+            --pki-dir "/pki/${peer}-server/pki" >/dev/null
+        wait_ready "${psrv}"
+        out=$(feat_client "${img_node_opcua}" - read --endpoint "opc.tcp://${psrv}:4840${ENDPOINT_PATH}" \
+                --node "${model}Scalar.Int32" "${b256[@]}" "${node[@]}") || true
+        feat_expect "node-opcua→${peer}: Basic256Sha256/SignAndEncrypt read" \
+            '.success == true and .results[0].value == -123456789' "${out}"
+        out=$(feat_client "${img_node_opcua}" - read --endpoint "opc.tcp://${psrv}:4840${ENDPOINT_PATH}" \
+                --node "${model}Scalar.Int32" --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt \
+                "${node[@]}" --username test-user --password test-password) || true
+        feat_expect "node-opcua→${peer}: Aes256_Sha256_RsaPss/SignAndEncrypt + username" \
+            '.success == true and .results[0].value == -123456789' "${out}"
+    done
+
+    feature_cleanup
+}
+
 # ── Mode: single adapter ──────────────────────────────────────────────────────
 
 # The client/server checks every adapter pair runs (no codec: the async-opcua
@@ -751,7 +877,7 @@ run_single_smoke() {
     check_register_nodes "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_channel_renewal "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_deadband "${image}" "${endpoint}" "${adapter}→${adapter}"
-    if [[ "${adapter}" != "async-opcua" ]]; then
+    if [[ "${adapter}" != "async-opcua" && "${adapter}" != "node-opcua" ]]; then
         check_codec_node "${image}" "${endpoint}" "${adapter}→${adapter}"
         check_codec_roundtrip "${image}" "${image}" "${adapter}→${adapter}"
     fi
@@ -769,9 +895,11 @@ run_cross_smoke() {
     local img_open62541="$1"
     local img_milo="$2"
     local img_async_opcua="${3:-}"
+    local img_node_opcua="${4:-}"
     local port_open62541=14840
     local port_milo=14841
     local port_async_opcua=14842
+    local port_node_opcua=14844
 
     local cname_open62541 cname_milo
     cname_open62541=$(start_server "open62541" "${img_open62541}" "${port_open62541}")
@@ -850,6 +978,40 @@ run_cross_smoke() {
         stop_server "${cname_async_opcua}"
         trap "stop_server ${cname_open62541}; stop_server ${cname_milo}; feature_cleanup" EXIT
         run_async_opcua_secure_cross "${img_open62541}" "${img_milo}" "${img_async_opcua}"
+    fi
+
+    if [[ -n "${img_node_opcua}" ]]; then
+        local cname_node_opcua
+        cname_node_opcua=$(start_server "node-opcua" "${img_node_opcua}" "${port_node_opcua}")
+        trap "stop_server ${cname_open62541}; stop_server ${cname_milo}; stop_server ${cname_node_opcua}; feature_cleanup" EXIT
+        wait_ready "${cname_node_opcua}"
+        local ep_node_opcua="opc.tcp://localhost:${port_node_opcua}${ENDPOINT_PATH}"
+
+        log "Cross-stack: open62541 / milo clients → node-opcua-server"
+        local check
+        for check in check_endpoints check_browse check_read_scalar check_write check_call \
+                     check_subscribe check_register_nodes check_deadband; do
+            "${check}" "${img_open62541}" "${ep_node_opcua}" "o62541→node-opcua"
+        done
+        check_o62541_node_renewal_deviation "${img_open62541}" "${ep_node_opcua}"
+        check_interop_set "${img_milo}" "${ep_node_opcua}" "milo→node-opcua"
+        log "Cross-stack: node-opcua-client → open62541 / milo / node-opcua servers"
+        check_interop_set "${img_node_opcua}" "${ep_open62541}" "node-opcua→o62541"
+        check_interop_set "${img_node_opcua}" "${ep_milo}" "node-opcua→milo"
+        check_interop_set "${img_node_opcua}" "${ep_node_opcua}" "node-opcua→node-opcua"
+        if [[ -n "${img_async_opcua}" ]]; then
+            local cname_async_opcua2
+            cname_async_opcua2=$(start_server "async-opcua" "${img_async_opcua}" "${port_async_opcua}")
+            trap "stop_server ${cname_open62541}; stop_server ${cname_milo}; stop_server ${cname_node_opcua}; stop_server ${cname_async_opcua2}; feature_cleanup" EXIT
+            wait_ready "${cname_async_opcua2}"
+            log "Cross-stack: async-opcua ↔ node-opcua"
+            check_interop_set "${img_async_opcua}" "${ep_node_opcua}" "async-opcua→node-opcua"
+            check_interop_set "${img_node_opcua}" "opc.tcp://localhost:${port_async_opcua}${ENDPOINT_PATH}" "node-opcua→async-opcua"
+            stop_server "${cname_async_opcua2}"
+        fi
+        stop_server "${cname_node_opcua}"
+        trap "stop_server ${cname_open62541}; stop_server ${cname_milo}; feature_cleanup" EXIT
+        run_node_opcua_secure_cross "${img_open62541}" "${img_milo}" "${img_node_opcua}"
     fi
 
     log "Cross-stack: codec documents of one stack decoded by the other"
@@ -936,14 +1098,17 @@ case "${MODE}" in
     dotnet)
         run_single_smoke "dotnet" "${1:?image required}"
         ;;
+    node-opcua)
+        run_single_smoke "node-opcua" "${1:?image required}"
+        ;;
     cross)
-        run_cross_smoke "${1:?open62541 image required}" "${2:?milo image required}" "${3:-}"
+        run_cross_smoke "${1:?open62541 image required}" "${2:?milo image required}" "${3:-}" "${4:-}"
         ;;
     cross-dotnet)
         run_cross_dotnet_smoke "${1:?dotnet image required}" "${2:?open62541 image required}" "${3:?milo image required}"
         ;;
     *)
-        echo "Unknown mode: ${MODE}. Use open62541, milo, async-opcua, dotnet, cross or cross-dotnet." >&2
+        echo "Unknown mode: ${MODE}. Use open62541, milo, async-opcua, dotnet, node-opcua, cross or cross-dotnet." >&2
         exit 1
         ;;
 esac

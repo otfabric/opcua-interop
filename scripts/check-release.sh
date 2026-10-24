@@ -30,6 +30,8 @@ check milo/src/main/java/io/otfabric/opcuainterop/ServerCommand.java 's/^ +"([0-
 check async-opcua/src/common.rs 's/^pub const ADAPTER_VERSION: &str = "([0-9.]+)";$/\1/p' "async-opcua adapter.version"
 check async-opcua/Cargo.toml 's/^version = "([0-9.]+)"$/\1/p' "async-opcua crate version"
 check dotnet/src/Capabilities.cs 's/.*const string AdapterVersion = "([0-9.]+)";.*/\1/p' "dotnet adapter.version (also its BuildInfo version)"
+check node-opcua/src/util.ts 's/^export const ADAPTER_VERSION = "([0-9.]+)";$/\1/p' "node-opcua adapter.version"
+check node-opcua/package.json 's/^  "version": "([0-9.]+)",$/\1/p' "node-opcua package version"
 
 notes="$("${ROOT}/scripts/release-notes.sh" "${TAG}")" || fail "RELEASE.md has no section \"## ${TAG}\""
 [[ -n "${notes//[[:space:]]/}" ]] || fail "RELEASE.md section \"## ${TAG}\" is empty"

@@ -3,8 +3,9 @@ run-name: "Candidate upstream probe by @${{ github.actor }}"
 
 # Resolves newer upstreams, builds candidate images, runs smoke, and publishes a
 # pin-vs-latest decision table in the workflow Job Summary.
-# Release pins in Dockerfiles / pom.xml / Cargo.toml are never mutated (the
-# async-opcua candidate edits Cargo.toml / Cargo.lock in the job's checkout only).
+# Release pins in Dockerfiles / pom.xml / Cargo.toml / package.json are never mutated (the
+# async-opcua and node-opcua candidates edit Cargo.toml / Cargo.lock and
+# package.json / package-lock.json in the job's checkout only).
 on:
   schedule:
     - cron: "0 6 * * 1"
@@ -289,10 +290,82 @@ jobs:
           docker run --rm -v "$PWD/fixtures:/fixtures:ro" opcua-interop-dotnet:candidate test
           bash scripts/smoke.sh dotnet opcua-interop-dotnet:candidate
 
+  candidate-node-opcua:
+    name: node-opcua
+    runs-on: ubuntu-latest
+    outputs:
+      pin: ${{ steps.resolve.outputs.pin }}
+      latest: ${{ steps.resolve.outputs.latest }}
+      update: ${{ steps.resolve.outputs.update }}
+      build: ${{ steps.build.outcome }}
+      smoke: ${{ steps.smoke.outcome }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Resolve node-opcua pin vs latest npm release
+        id: resolve
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import sys
+          import urllib.request
+          from pathlib import Path
+
+          pin = json.loads(Path("node-opcua/package.json").read_text())["dependencies"]["node-opcua"]
+          req = urllib.request.Request(
+              "https://registry.npmjs.org/node-opcua/latest",
+              headers={"User-Agent": "otfabric/opcua-interop candidate probe"},
+          )
+          latest = json.load(urllib.request.urlopen(req))["version"]
+          update = "yes" if pin != latest else "no"
+
+          print(f"pin={pin}")
+          print(f"latest={latest}")
+          print(f"update={update}")
+          print(f"resolved pin={pin} latest={latest} update={update}", file=sys.stderr)
+          PY
+
+      # The pin is exact and the build is `npm ci`: point the job's checkout at
+      # the latest release (node-opcua-types moves with it) and refresh the
+      # lock file for it.
+      - name: Point package.json / package-lock.json at the latest release
+        id: bump
+        if: steps.resolve.outputs.update == 'yes'
+        continue-on-error: true
+        env:
+          LATEST: ${{ steps.resolve.outputs.latest }}
+        working-directory: node-opcua
+        run: |
+          types=$(npm view "node-opcua@${LATEST}" dependencies.node-opcua-types)
+          npm install --package-lock-only --save-exact --no-audit --no-fund \
+            "node-opcua@${LATEST}" "node-opcua-types@${types}"
+          git diff --stat
+
+      - name: Build node-opcua adapter at latest release
+        id: build
+        if: steps.bump.outcome != 'failure'
+        continue-on-error: true
+        uses: docker/build-push-action@v7
+        with:
+          context: node-opcua
+          file: node-opcua/Dockerfile
+          push: false
+          load: true
+          tags: opcua-interop-node-opcua:candidate
+
+      - name: Run node-opcua smoke against candidate image
+        id: smoke
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: bash scripts/smoke.sh node-opcua opcua-interop-node-opcua:candidate
+
   summary:
     name: Decision table
     runs-on: ubuntu-latest
-    needs: [candidate-open62541, candidate-milo, candidate-async-opcua, candidate-dotnet]
+    needs: [candidate-open62541, candidate-milo, candidate-async-opcua, candidate-dotnet, candidate-node-opcua]
     if: always()
     steps:
       - name: Write pin-vs-latest summary
@@ -317,6 +390,11 @@ jobs:
           DOTNET_UPDATE: ${{ needs.candidate-dotnet.outputs.update }}
           DOTNET_BUILD: ${{ needs.candidate-dotnet.outputs.build }}
           DOTNET_SMOKE: ${{ needs.candidate-dotnet.outputs.smoke }}
+          NO_PIN: ${{ needs.candidate-node-opcua.outputs.pin }}
+          NO_LATEST: ${{ needs.candidate-node-opcua.outputs.latest }}
+          NO_UPDATE: ${{ needs.candidate-node-opcua.outputs.update }}
+          NO_BUILD: ${{ needs.candidate-node-opcua.outputs.build }}
+          NO_SMOKE: ${{ needs.candidate-node-opcua.outputs.smoke }}
         run: |
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import os
@@ -350,6 +428,12 @@ jobs:
           dotnet_build = os.environ.get("DOTNET_BUILD", "?")
           dotnet_smoke = smoke_label(dotnet_build, os.environ.get("DOTNET_SMOKE", ""))
 
+          no_pin = os.environ.get("NO_PIN", "")
+          no_latest = os.environ.get("NO_LATEST", "")
+          no_update = os.environ.get("NO_UPDATE", "?")
+          no_build = os.environ.get("NO_BUILD", "?")
+          no_smoke = smoke_label(no_build, os.environ.get("NO_SMOKE", ""))
+
           print("## Upstream candidate report")
           print()
           print("Release pins were **not** modified. Use this table to decide whether to bump.")
@@ -372,6 +456,10 @@ jobs:
               f"| [UA-.NETStandard](https://github.com/OPCFoundation/UA-.NETStandard) | NuGet semver | "
               f"`{dotnet_pin}` | `{dotnet_latest}` | `{dotnet_build}` | `{dotnet_smoke}` | **{dotnet_update}** |"
           )
+          print(
+              f"| [node-opcua](https://github.com/node-opcua/node-opcua) | npm semver | "
+              f"`{no_pin}` | `{no_latest}` | `{no_build}` | `{no_smoke}` | **{no_update}** |"
+          )
           print()
           print("### Pin locations")
           print()
@@ -379,6 +467,7 @@ jobs:
           print("- Milo: `milo/pom.xml` (`milo.version`)")
           print('- async-opcua: `async-opcua/Cargo.toml` (`async-opcua = "=X.Y.Z"`), `Cargo.lock`, `STACK_VERSION` in `src/common.rs`')
           print("- UA-.NETStandard: `dotnet/Dockerfile` (`ARG OPCUA_VERSION`)")
+          print('- node-opcua: `node-opcua/package.json` (`node-opcua`, `node-opcua-types`, exact), `package-lock.json`')
           print()
           print("### How to read this")
           print()

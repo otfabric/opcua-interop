@@ -14,11 +14,13 @@ IMAGE_OPEN62541 = $(REGISTRY)/opcua-interop-open62541
 IMAGE_MILO      = $(REGISTRY)/opcua-interop-milo
 IMAGE_ASYNC_OPCUA = $(REGISTRY)/opcua-interop-async-opcua
 IMAGE_DOTNET    = $(REGISTRY)/opcua-interop-dotnet
+IMAGE_NODE_OPCUA = $(REGISTRY)/opcua-interop-node-opcua
 
 OPEN62541_PORT ?= 4840
 MILO_PORT      ?= 4841
 ASYNC_OPCUA_PORT ?= 4842
 DOTNET_PORT    ?= 4843
+NODE_OPCUA_PORT ?= 4844
 MQTT_PORT      ?= 1883
 
 # MQTT broker for the PubSub tests (multi-arch index digest of eclipse-mosquitto:2.0.22)
@@ -28,13 +30,13 @@ FIXTURE_SCHEMA = fixtures/schema/opcua-fixture.schema.json
 FIXTURE_DIRS   = $(wildcard fixtures/*/fixture.json)
 
 .PHONY: help all ci \
-        image image-open62541 image-milo image-async-opcua image-dotnet \
-        buildx buildx-open62541 buildx-milo buildx-async-opcua buildx-dotnet \
+        image image-open62541 image-milo image-async-opcua image-dotnet image-node-opcua \
+        buildx buildx-open62541 buildx-milo buildx-async-opcua buildx-dotnet buildx-node-opcua \
         validate validate-fixtures \
-        test test-open62541 test-milo test-async-opcua test-dotnet \
-        smoke smoke-open62541 smoke-milo smoke-async-opcua smoke-dotnet smoke-cross-stack smoke-cross-dotnet smoke-pubsub \
-        shutdown shutdown-open62541 shutdown-milo shutdown-async-opcua shutdown-dotnet \
-        run-open62541 run-milo run-async-opcua run-dotnet run-mosquitto \
+        test test-open62541 test-milo test-async-opcua test-dotnet test-node-opcua \
+        smoke smoke-open62541 smoke-milo smoke-async-opcua smoke-dotnet smoke-node-opcua smoke-cross-stack smoke-cross-dotnet smoke-pubsub \
+        shutdown shutdown-open62541 shutdown-milo shutdown-async-opcua shutdown-dotnet shutdown-node-opcua \
+        run-open62541 run-milo run-async-opcua run-dotnet run-node-opcua run-mosquitto \
         certs check-release release-notes publish publish-arch publish-manifest digests clean
 
 help: ## Show this help
@@ -50,7 +52,7 @@ ci: validate image test smoke shutdown ## Full local CI: validate → build → 
 
 # ── Local single-arch images (loaded into Docker, used for smoke/dev) ─────────
 
-image: image-open62541 image-milo image-async-opcua image-dotnet ## Build all adapter images for host architecture
+image: image-open62541 image-milo image-async-opcua image-dotnet image-node-opcua ## Build all adapter images for host architecture
 
 image-open62541: ## Build open62541 image (host arch, loaded into Docker)
 	@echo "Building open62541 image (host arch)..."
@@ -80,9 +82,16 @@ image-dotnet: ## Build UA-.NETStandard image (host arch, loaded into Docker)
 		--file dotnet/Dockerfile \
 		dotnet/
 
+image-node-opcua: ## Build node-opcua (TypeScript) image (host arch, loaded into Docker)
+	@echo "Building node-opcua image (host arch)..."
+	docker build \
+		--tag $(IMAGE_NODE_OPCUA):$(VERSION) \
+		--file node-opcua/Dockerfile \
+		node-opcua/
+
 # ── Multi-arch buildx (pushes to registry; requires --push or --output) ───────
 
-buildx: buildx-open62541 buildx-milo buildx-async-opcua buildx-dotnet ## Build and push all adapter images (multi-arch)
+buildx: buildx-open62541 buildx-milo buildx-async-opcua buildx-dotnet buildx-node-opcua ## Build and push all adapter images (multi-arch)
 
 buildx-open62541: ## Build and push open62541 image (multi-arch)
 	@echo "Building open62541 image (multi-arch, push)..."
@@ -120,6 +129,15 @@ buildx-dotnet: ## Build and push UA-.NETStandard image (multi-arch)
 		--file dotnet/Dockerfile \
 		dotnet/
 
+buildx-node-opcua: ## Build and push node-opcua image (multi-arch)
+	@echo "Building node-opcua image (multi-arch, push)..."
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		--push \
+		--tag $(IMAGE_NODE_OPCUA):$(VERSION) \
+		--file node-opcua/Dockerfile \
+		node-opcua/
+
 # ── Validation ───────────────────────────────────────────────────────────────
 
 validate: validate-fixtures ## Run all validation checks
@@ -130,7 +148,7 @@ validate-fixtures: ## Validate all fixture files against schema
 
 # ── Unit tests (requires images to be built) ──────────────────────────────────
 
-test: test-open62541 test-milo test-async-opcua test-dotnet ## Run unit tests for all adapters
+test: test-open62541 test-milo test-async-opcua test-dotnet test-node-opcua ## Run unit tests for all adapters
 
 test-open62541: image-open62541 ## Build open62541 image and run unit tests
 	@echo "Running open62541 unit tests..."
@@ -160,9 +178,16 @@ test-dotnet: image-dotnet ## Build UA-.NETStandard image and run unit tests
 		$(IMAGE_DOTNET):$(VERSION) \
 		test
 
+test-node-opcua: image-node-opcua ## Build node-opcua image (runs its unit tests) and run the fixture self-test
+	@echo "Running node-opcua unit tests..."
+	docker run --rm \
+		-v "$(PWD)/fixtures:/fixtures:ro" \
+		$(IMAGE_NODE_OPCUA):$(VERSION) \
+		test
+
 # ── Smoke tests ──────────────────────────────────────────────────────────────
 
-smoke: smoke-open62541 smoke-milo smoke-async-opcua smoke-dotnet smoke-cross-stack smoke-cross-dotnet smoke-pubsub ## Run all smoke tests (images must be built)
+smoke: smoke-open62541 smoke-milo smoke-async-opcua smoke-dotnet smoke-node-opcua smoke-cross-stack smoke-cross-dotnet smoke-pubsub ## Run all smoke tests (images must be built)
 
 smoke-open62541: ## Smoke test open62541 adapter (run 'make image-open62541' first)
 	@echo "Smoking open62541 adapter..."
@@ -180,9 +205,13 @@ smoke-dotnet: ## Smoke test UA-.NETStandard adapter (run 'make image-dotnet' fir
 	@echo "Smoking UA-.NETStandard (dotnet) adapter..."
 	@scripts/smoke.sh dotnet $(IMAGE_DOTNET):$(VERSION)
 
+smoke-node-opcua: ## Smoke test node-opcua adapter (run 'make image-node-opcua' first)
+	@echo "Smoking node-opcua adapter..."
+	@scripts/smoke.sh node-opcua $(IMAGE_NODE_OPCUA):$(VERSION)
+
 smoke-cross-stack: ## Cross-stack interop self-check (run 'make image' first)
 	@echo "Smoking cross-stack interop self-check..."
-	@scripts/smoke.sh cross $(IMAGE_OPEN62541):$(VERSION) $(IMAGE_MILO):$(VERSION) $(IMAGE_ASYNC_OPCUA):$(VERSION)
+	@scripts/smoke.sh cross $(IMAGE_OPEN62541):$(VERSION) $(IMAGE_MILO):$(VERSION) $(IMAGE_ASYNC_OPCUA):$(VERSION) $(IMAGE_NODE_OPCUA):$(VERSION)
 
 smoke-cross-dotnet: ## Cross-stack smoke: dotnet client/server against open62541 and Milo (run 'make image' first)
 	@echo "Smoking cross-stack interop of the dotnet adapter..."
@@ -194,7 +223,7 @@ smoke-pubsub: ## PubSub smoke: UDP / MQTT / security / SKS / codec / information
 
 # ── Graceful shutdown tests ───────────────────────────────────────────────────
 
-shutdown: shutdown-open62541 shutdown-milo shutdown-async-opcua shutdown-dotnet ## Test graceful shutdown for all adapters
+shutdown: shutdown-open62541 shutdown-milo shutdown-async-opcua shutdown-dotnet shutdown-node-opcua ## Test graceful shutdown for all adapters
 
 shutdown-open62541: ## Test open62541 graceful shutdown: SIGTERM must produce exit 0
 	@echo "Testing open62541 graceful shutdown..."
@@ -211,6 +240,10 @@ shutdown-async-opcua: ## Test async-opcua graceful shutdown: SIGTERM must produc
 shutdown-dotnet: ## Test UA-.NETStandard graceful shutdown: SIGTERM must produce exit 0
 	@echo "Testing UA-.NETStandard (dotnet) graceful shutdown..."
 	@scripts/shutdown-test.sh dotnet $(IMAGE_DOTNET):$(VERSION)
+
+shutdown-node-opcua: ## Test node-opcua graceful shutdown: SIGTERM must produce exit 0
+	@echo "Testing node-opcua graceful shutdown..."
+	@scripts/shutdown-test.sh node-opcua $(IMAGE_NODE_OPCUA):$(VERSION)
 
 # ── Run ──────────────────────────────────────────────────────────────────────
 
@@ -264,6 +297,19 @@ run-dotnet: ## Start UA-.NETStandard server on port $(DOTNET_PORT)
 		--advertised-host localhost \
 		--ready-file /run/opcua-interop/ready
 
+run-node-opcua: ## Start node-opcua server on port $(NODE_OPCUA_PORT)
+	@echo "Starting node-opcua server on port $(NODE_OPCUA_PORT)..."
+	docker run --rm \
+		-p $(NODE_OPCUA_PORT):4840 \
+		-v "$(PWD)/fixtures:/fixtures:ro" \
+		-v "$(PWD)/certs/test-pki:/pki:ro" \
+		$(IMAGE_NODE_OPCUA):$(VERSION) \
+		server \
+		--fixture /fixtures/baseline/fixture.json \
+		--advertised-host localhost \
+		--pki-dir /pki \
+		--ready-file /run/opcua-interop/ready
+
 run-mosquitto: ## Start the MQTT broker for PubSub tests on port $(MQTT_PORT)
 	@echo "Starting Eclipse Mosquitto on port $(MQTT_PORT)..."
 	docker run --rm \
@@ -284,7 +330,7 @@ certs: ## Generate test PKI
 # images natively per architecture, then publish-arch, publish-manifest and
 # digests. `publish` is a manual fallback that builds under emulation.
 
-ADAPTERS = open62541 milo async-opcua dotnet
+ADAPTERS = open62541 milo async-opcua dotnet node-opcua
 ARCHS    = amd64 arm64
 
 define require_release_version
@@ -355,4 +401,5 @@ clean: ## Remove containers and local build artifacts
 	docker rmi $(IMAGE_MILO):$(VERSION) 2>/dev/null || true
 	docker rmi $(IMAGE_ASYNC_OPCUA):$(VERSION) 2>/dev/null || true
 	docker rmi $(IMAGE_DOTNET):$(VERSION) 2>/dev/null || true
-	rm -rf open62541/build/ milo/target/ async-opcua/target/ dotnet/src/bin/ dotnet/src/obj/
+	docker rmi $(IMAGE_NODE_OPCUA):$(VERSION) 2>/dev/null || true
+	rm -rf open62541/build/ milo/target/ async-opcua/target/ dotnet/src/bin/ dotnet/src/obj/ node-opcua/dist/ node-opcua/node_modules/

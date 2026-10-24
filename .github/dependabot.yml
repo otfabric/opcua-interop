@@ -81,3 +81,25 @@ updates:
     groups:
       rustcrypto:
         patterns: ["x509-cert", "spki", "sha2", "const-oid", "der", "rsa"]
+
+  - package-ecosystem: "docker"
+    directory: "/node-opcua"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+
+  # node-opcua itself is pinned exactly (all node-opcua* packages move
+  # together) and probed by the Upstream candidates workflow; Dependabot keeps
+  # the adapter's dev dependencies (TypeScript, @types/node) current.
+  - package-ecosystem: "npm"
+    directory: "/node-opcua"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+    ignore:
+      - dependency-name: "node-opcua"
+      - dependency-name: "node-opcua-*"

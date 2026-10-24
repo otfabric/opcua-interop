@@ -30,6 +30,7 @@ env:
   MILO_IMAGE: ghcr.io/otfabric/opcua-interop-milo:ci
   ASYNC_OPCUA_IMAGE: ghcr.io/otfabric/opcua-interop-async-opcua:ci
   DOTNET_IMAGE: ghcr.io/otfabric/opcua-interop-dotnet:ci
+  NODE_OPCUA_IMAGE: ghcr.io/otfabric/opcua-interop-node-opcua:ci
 
 jobs:
   validate:
@@ -66,7 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo, async-opcua, dotnet]
+        adapter: [open62541, milo, async-opcua, dotnet, node-opcua]
     steps:
       - uses: actions/checkout@v7
 
@@ -103,7 +104,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo, async-opcua, dotnet]
+        adapter: [open62541, milo, async-opcua, dotnet, node-opcua]
     steps:
       - uses: actions/checkout@v7
 
@@ -162,9 +163,10 @@ jobs:
           docker load < /tmp/open62541.tar.gz
           docker load < /tmp/milo.tar.gz
           docker load < /tmp/async-opcua.tar.gz
+          docker load < /tmp/node-opcua.tar.gz
 
       - name: Cross-stack smoke
-        run: scripts/smoke.sh cross "${OPEN62541_IMAGE}" "${MILO_IMAGE}" "${ASYNC_OPCUA_IMAGE}"
+        run: scripts/smoke.sh cross "${OPEN62541_IMAGE}" "${MILO_IMAGE}" "${ASYNC_OPCUA_IMAGE}" "${NODE_OPCUA_IMAGE}"
 
   cross-stack-dotnet:
     name: Cross-stack smoke (dotnet)
@@ -198,7 +200,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo, async-opcua, dotnet]
+        adapter: [open62541, milo, async-opcua, dotnet, node-opcua]
     steps:
       - uses: actions/checkout@v7
 
