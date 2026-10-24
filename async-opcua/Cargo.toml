@@ -30,7 +30,7 @@ x509-cert = "0.2"
 der = "0.7"
 rsa = { version = "0.9", features = ["sha2"] }
 sha2 = { version = "0.10", features = ["oid"] }
-spki = "0.7"
+spki = "0.8"
 const-oid = { version = "0.9", features = ["db"] }
 arc-swap = "1"
 
