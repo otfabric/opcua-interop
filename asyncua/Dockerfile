@@ -14,7 +14,7 @@
 # image is only produced when they pass. `docker run <image> test` checks the
 # mounted fixtures.
 # ---------------------------------------------------------------------------
-FROM python:3.14.9-slim-trixie@sha256:b347e2dcbc7f0b6f9fb7182e9da6a187fb10ae715e0692518c1aed0eec94a700 AS builder
+FROM python:3.15.0-slim-trixie@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58 AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -36,7 +36,7 @@ RUN cd /opt/test && PYTHONPATH=/opt/app /opt/venv/bin/python -m unittest discove
 # ---------------------------------------------------------------------------
 # Stage 2: runtime (no tests, no pip, non-root)
 # ---------------------------------------------------------------------------
-FROM python:3.14.9-slim-trixie@sha256:b347e2dcbc7f0b6f9fb7182e9da6a187fb10ae715e0692518c1aed0eec94a700 AS runtime
+FROM python:3.15.0-slim-trixie@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58 AS runtime
 
 RUN groupadd --system --gid 10001 opcua \
  && useradd --system --uid 10001 --gid opcua --home-dir /nonexistent --shell /usr/sbin/nologin opcua \
