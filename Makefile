@@ -34,7 +34,7 @@ FIXTURE_DIRS   = $(wildcard fixtures/*/fixture.json)
         buildx buildx-open62541 buildx-milo buildx-async-opcua buildx-dotnet buildx-node-opcua \
         validate validate-fixtures \
         test test-open62541 test-milo test-async-opcua test-dotnet test-node-opcua \
-        smoke smoke-open62541 smoke-milo smoke-async-opcua smoke-dotnet smoke-node-opcua smoke-cross-stack smoke-cross-dotnet smoke-pubsub \
+        smoke smoke-open62541 smoke-milo smoke-async-opcua smoke-dotnet smoke-node-opcua smoke-cross-stack smoke-cross-dotnet smoke-pubsub smoke-pubsub-dotnet \
         shutdown shutdown-open62541 shutdown-milo shutdown-async-opcua shutdown-dotnet shutdown-node-opcua \
         run-open62541 run-milo run-async-opcua run-dotnet run-node-opcua run-mosquitto \
         certs check-release release-notes publish publish-arch publish-manifest digests clean
@@ -187,7 +187,7 @@ test-node-opcua: image-node-opcua ## Build node-opcua image (runs its unit tests
 
 # ── Smoke tests ──────────────────────────────────────────────────────────────
 
-smoke: smoke-open62541 smoke-milo smoke-async-opcua smoke-dotnet smoke-node-opcua smoke-cross-stack smoke-cross-dotnet smoke-pubsub ## Run all smoke tests (images must be built)
+smoke: smoke-open62541 smoke-milo smoke-async-opcua smoke-dotnet smoke-node-opcua smoke-cross-stack smoke-cross-dotnet smoke-pubsub smoke-pubsub-dotnet ## Run all smoke tests (images must be built)
 
 smoke-open62541: ## Smoke test open62541 adapter (run 'make image-open62541' first)
 	@echo "Smoking open62541 adapter..."
@@ -220,6 +220,10 @@ smoke-cross-dotnet: ## Cross-stack smoke: dotnet client/server against open62541
 smoke-pubsub: ## PubSub smoke: UDP / MQTT / security / SKS / codec / information model (open62541)
 	@echo "Smoking PubSub (open62541)..."
 	@scripts/pubsub-smoke.sh $(IMAGE_OPEN62541):$(VERSION)
+
+smoke-pubsub-dotnet: ## PubSub smoke: UDP / MQTT / security / codec / discovery (UA-.NETStandard)
+	@echo "Smoking PubSub (dotnet)..."
+	@scripts/pubsub-smoke.sh $(IMAGE_DOTNET):$(VERSION) codec udp-unicast udp-multicast mqtt-uadp mqtt-json udp-secure discovery
 
 # ── Graceful shutdown tests ───────────────────────────────────────────────────
 

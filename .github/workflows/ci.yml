@@ -145,6 +145,27 @@ jobs:
       - name: PubSub smoke
         run: scripts/pubsub-smoke.sh "${OPEN62541_IMAGE}"
 
+  pubsub-dotnet:
+    name: PubSub smoke (dotnet)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: image-dotnet
+          path: /tmp
+
+      - name: Load image
+        run: docker load < /tmp/dotnet.tar.gz
+
+      - name: PubSub smoke
+        run: >-
+          scripts/pubsub-smoke.sh "${DOTNET_IMAGE}"
+          codec udp-unicast udp-multicast mqtt-uadp mqtt-json udp-secure discovery
+
   cross-stack:
     name: Cross-stack smoke
     needs: build

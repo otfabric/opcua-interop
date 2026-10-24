@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# PubSub (OPC UA Part 14) smoke test for the open62541 adapter.
+# PubSub (OPC UA Part 14) smoke test of an adapter image.
 #
 # Usage:
-#   pubsub-smoke.sh <open62541-image> [scenario ...]
+#   pubsub-smoke.sh <adapter-image> [scenario ...]
 #
-# Scenarios (default: all):
+# Scenarios (default: all but discovery, the open62541 set; `make
+# smoke-pubsub-dotnet` runs the UA-.NETStandard set):
 #   codec          UADP / JSON NetworkMessage encode → decode round trips (no transport)
 #   udp-unicast    UADP over opc.udp:// unicast, container → container
 #   udp-multicast  UADP over opc.udp:// multicast (224.0.0.22), container → container
@@ -18,6 +19,9 @@
 #   sks-push       the subscriber starts without keys; SetSecurityKeys pushes them
 #   infomodel      PubSub information model methods: GetSecurityKeys,
 #                  AddSecurityGroup, AddConnection / RemoveConnection, Disable / Enable
+#   discovery      UADP discovery: `client pubsub-discover` probes the multicast
+#                  publisher for DataSetMetaData and DataSetWriterConfiguration
+#                  (adapters whose capabilities declare pubsub.discovery)
 #
 # Every transport scenario starts a subscriber and a publisher container (the
 # configurations in pubsub/examples/) on a dedicated Docker network, writes
@@ -32,7 +36,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 EXAMPLES="${REPO_ROOT}/pubsub/examples"
-IMG="${1:?Usage: pubsub-smoke.sh <open62541-image> [scenario ...]}"
+IMG="${1:?Usage: pubsub-smoke.sh <adapter-image> [scenario ...]}"
 shift
 SCENARIOS=("$@")
 if [[ ${#SCENARIOS[@]} -eq 0 ]]; then
@@ -371,6 +375,25 @@ scenario_infomodel() {
     stop_servers "${pubc}" "${subc}"
 }
 
+# discovery: probe the multicast publisher (its connection address is the
+# group 224.0.0.22:4840) and check the announcements describe its DataSet.
+scenario_discovery() {
+    local pubc="pubsub-smoke-pub-$$" out
+    log "Scenario discovery: pubsub-discover <- udp-multicast-publisher.json"
+    start_server "${pubc}" pubsub-publisher udp-multicast-publisher.json || return
+    out=$(client pubsub-discover --url opc.udp://224.0.0.22:4840 --type DataSetMetaData --timeout-ms 5000) || true
+    expect "discovery: DataSetMetaData announcement" \
+        '.success == true and .results[0].dataSetMetaData[0].publisherId == {"type":"UInt16","value":2234}
+         and .results[0].dataSetMetaData[0].dataSetWriterId == 1
+         and .results[0].dataSetMetaData[0].metaData.name == "InteropDataSet"
+         and (.results[0].dataSetMetaData[0].metaData.fields | map(.name) | index("Counter")) != null' "${out}"
+    out=$(client pubsub-discover --url opc.udp://224.0.0.22:4840 --type DataSetWriterConfiguration --writer-ids 1 --timeout-ms 5000) || true
+    expect "discovery: DataSetWriterConfiguration announcement" \
+        '.success == true and .results[0].writerConfigurations[0].writerGroup.writerGroupId == 100
+         and .results[0].writerConfigurations[0].writerGroup.dataSetWriters[0].dataSetWriterId == 1' "${out}"
+    stop_servers "${pubc}"
+}
+
 for sc in "${SCENARIOS[@]}"; do
     case "${sc}" in
         codec)         scenario_codec ;;
@@ -390,6 +413,7 @@ for sc in "${SCENARIOS[@]}"; do
             ;;
         sks-push)      scenario_sks_push ;;
         infomodel)     scenario_infomodel ;;
+        discovery)     scenario_discovery ;;
         *) echo "unknown scenario: ${sc}" >&2; exit 1 ;;
     esac
 done
