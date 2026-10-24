@@ -16,7 +16,7 @@ from asyncua import ua
 from asyncua.ua import status_codes
 
 ADAPTER = "asyncua"
-ADAPTER_VERSION = "0.9.0"
+ADAPTER_VERSION = "0.10.0"
 SCHEMA_VERSION = "1.0"
 
 # OPC UA DateTime "zero" (1601-01-01) as decoded by asyncua.

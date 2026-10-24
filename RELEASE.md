@@ -72,6 +72,29 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.10.0
+
+**Date:** 2026-10-24
+**Previous release:** v0.9.0
+
+### Summary
+
+PubSub on the UA-.NETStandard adapter: the second reference stack with PubSub, after open62541, and the first one with chunked NetworkMessages and UADP discovery.
+
+### Added
+
+- **PubSub on the UA-.NETStandard adapter** (`dotnet/`): `server --pubsub-config` runs the Opc.Ua.PubSub runtime of UA-.NETStandard 2.0.1 (NuGet `OPCFoundation.NetStandard.Opc.Ua.PubSub`, `.PubSub.Udp`, `.PubSub.Mqtt`) from the same file as the open62541 adapter: PublishedDataItems read the fixture `PubSub.*` variables, TargetVariables write them. UDP unicast and multicast, MQTT (top-level `mqtt.protocolVersion` `"5.0"` (default), `"3.1.1"` or `"3.1"`; publishing needs 5.0), UADP and JSON, Variant / DataValue / RawData, Sign and SignAndEncrypt (PubSub-Aes128-CTR / -Aes256-CTR) with static keys, chunked NetworkMessages from the WriterGroup `MaxNetworkMessageSize`, and answers to UADP discovery probes (DataSetMetaData, DataSetWriterConfiguration) in the .NET layout. `serveSks` and `sksClient` are refused; there is no PublishSubscribe information model. Contract §14.13 lists the adaptations and limits.
+- `codec pubsub-uadp-encode` / `-decode` / `pubsub-json-encode` / `-decode` on the dotnet adapter (stack coders; differences from open62541 in §14.13), and the client operation `pubsub-discover` (UADP discovery probe).
+- `print-capabilities`: the dotnet adapter declares `pubsub` (`serverFeatures` `pubsub`, `clientFeatures` `codec-pubsub`); the schema gains `pubsub.mqttVersions`, `pubsub.chunking` and `pubsub.discovery`. `schemas/client-result.schema.json`: operation `pubsub-discover`.
+- `make smoke-pubsub-dotnet` (part of `make smoke`) and the CI job `pubsub-dotnet`: `scripts/pubsub-smoke.sh` takes any adapter image and gains a `discovery` scenario.
+- `docker run <dotnet image> test` checks the PubSub capabilities and re-encodes the §14.9 UADP example byte for byte.
+
+### Fixed
+
+- dotnet: UDP datagrams of the Opc.Ua.PubSub transport carried TTL 1 (the stack's `UdpTransportOptions.Ttl` also applies to unicast) and were dropped on the way to the Docker host; the adapter uses 64.
+
+---
+
 ## v0.9.0
 
 **Date:** 2026-10-24
