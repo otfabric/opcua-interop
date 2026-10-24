@@ -57,7 +57,7 @@ refused with exit 2 / `error.category = "input"` — never silently ignored.
 | `--username <name>` | Username for UserName identity token | — |
 | `--password <secret>` | Password for UserName identity token | — |
 | `--channel-lifetime-ms <n>` | Requested SecureChannel lifetime in ms; small values force SecurityToken renewals during the command | stack default |
-| `--application-uri <uri>` | Client ApplicationUri sent in CreateSession (open62541, async-opcua, node-opcua) | URI SAN of `--certificate`, else stack default |
+| `--application-uri <uri>` | Client ApplicationUri sent in CreateSession (open62541, async-opcua, node-opcua, asyncua) | URI SAN of `--certificate`, else stack default |
 | `--reverse-listen <port>` | Do not dial: listen on `<port>` and wait for the server's ReverseHello (open62541, async-opcua, node-opcua; see below) | — |
 | `--reverse-timeout-ms <n>` | How long to wait for the reverse connection | 30000 |
 | `--reverse-server-uri <uri>` | Fail (exit 3, `BadServerUriInvalid`) unless the reverse-connected server's `ServerArray[0]` equals `<uri>` | — |
@@ -385,7 +385,7 @@ when not applicable). `error` is always either `null` or an error object.
 
 ### `adapter`
 
-One of: `"open62541"`, `"milo"`, `"async-opcua"`, `"node-opcua"`. Never abbreviated or versioned in this field.
+One of: `"open62541"`, `"milo"`, `"async-opcua"`, `"dotnet"`, `"node-opcua"`, `"asyncua"`. Never abbreviated or versioned in this field.
 
 ### `serviceResult`
 
@@ -1280,6 +1280,24 @@ has an OPC UA 1.05 JSON encoder (`node-opcua-json`) but no Part 6 XML
 encoding of Variants, and the JSON half is not wired into the adapter. Trust is by the
 CA of `<pki-dir>/trusted/certs` with its CRL, as for open62541 and Milo. See
 `node-opcua/README.md` for the stack deviations the go-opcua suite found.
+
+opcua-asyncio (PyPI `asyncua` 2.1.0, adapter name `asyncua`, added in adapter
+0.9.0) declares `channel-lifetime`, `deadband`, `application-uri` and
+`register-server2` on the client side and only `register-with` on the
+server side. It has no ECC `SecurityPolicy`, no ReverseHello, no LDS / mDNS
+server and no PubSub: the client refuses `ECC_*` policies and
+`--reverse-listen` (exit 2), the server refuses `--reverse-connect`, `--lds`,
+`--mdns-name`, `--mdns-capability` and `--pubsub-config` (exit 2), and AddNodes
+/ DeleteNodes are not served (`BadUserAccessDenied`). The adapter has no
+`codec` operation (exit 2, not listed in `clientOperations`). The server does
+not declare `deadband` / `percent-deadband`: asyncua 2.1.0 compares an absolute
+deadband with the previous sample instead of the last reported value, and
+accepts a percent deadband (also without EURange) without applying it. Trust:
+`<pki-dir>/trusted/certs` are the anchors, `issuers/certs` only completes a
+chain, CRLs of `trusted/crl` and `issuers/crl` are honoured; the client checks
+the server certificate against `--trust-list` with the stack's
+`CertificateValidator`. See `asyncua/README.md` for the stack deviations the
+go-opcua suite found.
 
 ---
 

@@ -32,6 +32,7 @@ check async-opcua/Cargo.toml 's/^version = "([0-9.]+)"$/\1/p' "async-opcua crate
 check dotnet/src/Capabilities.cs 's/.*const string AdapterVersion = "([0-9.]+)";.*/\1/p' "dotnet adapter.version (also its BuildInfo version)"
 check node-opcua/src/util.ts 's/^export const ADAPTER_VERSION = "([0-9.]+)";$/\1/p' "node-opcua adapter.version"
 check node-opcua/package.json 's/^  "version": "([0-9.]+)",$/\1/p' "node-opcua package version"
+check asyncua/src/opcua_interop_asyncua/common.py 's/^ADAPTER_VERSION = "([0-9.]+)"$/\1/p' "asyncua adapter.version (also its BuildInfo version)"
 
 notes="$("${ROOT}/scripts/release-notes.sh" "${TAG}")" || fail "RELEASE.md has no section \"## ${TAG}\""
 [[ -n "${notes//[[:space:]]/}" ]] || fail "RELEASE.md section \"## ${TAG}\" is empty"

@@ -103,3 +103,24 @@ updates:
     ignore:
       - dependency-name: "node-opcua"
       - dependency-name: "node-opcua-*"
+
+  - package-ecosystem: "docker"
+    directory: "/asyncua"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+
+  # asyncua itself is pinned exactly (asyncua==X.Y.Z in requirements.in) and
+  # probed by the Upstream candidates workflow; Dependabot keeps the other
+  # locked wheels of the adapter (requirements.txt) current.
+  - package-ecosystem: "pip"
+    directory: "/asyncua"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+    ignore:
+      - dependency-name: "asyncua"

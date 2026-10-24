@@ -17,6 +17,10 @@
 #                           keep the existing CA and identities untouched and only
 #                           (re)generate the node-opcua-server / node-opcua-client
 #                           identities (new in v0.9.0)
+#   generate.sh --add-asyncua
+#                           keep the existing CA and identities untouched and only
+#                           (re)generate the asyncua-server / asyncua-client identities
+#                           (opcua-asyncio, new in v0.9.0) and their trust list entries
 #
 # Requirements: openssl >= 1.1.1 (ECC: brainpool, Ed25519 and Ed448 support)
 # Output: certs/test-pki/
@@ -33,7 +37,8 @@ case "${1:-}" in
     --add-async-opcua) MODE="add-async-opcua" ;;
     --add-dotnet) MODE="add-dotnet" ;;
     --add-node-opcua) MODE="add-node-opcua" ;;
-    *) echo "usage: generate.sh [--add-ecc | --add-async-opcua | --add-dotnet | --add-node-opcua]" >&2; exit 2 ;;
+    --add-asyncua) MODE="add-asyncua" ;;
+    *) echo "usage: generate.sh [--add-ecc | --add-async-opcua | --add-dotnet | --add-node-opcua | --add-asyncua]" >&2; exit 2 ;;
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,6 +54,7 @@ MILO_CLIENT_URI="urn:otfabric:opcua-interop:client:milo"
 ASYNC_OPCUA_CLIENT_URI="urn:otfabric:opcua-interop:client:async-opcua"
 DOTNET_CLIENT_URI="urn:otfabric:opcua-interop:client:dotnet"
 NODE_OPCUA_CLIENT_URI="urn:otfabric:opcua-interop:client:node-opcua"
+ASYNCUA_CLIENT_URI="urn:otfabric:opcua-interop:client:asyncua"
 CONSUMER_CLIENT_URI="urn:otfabric:opcua-interop:client:consumer"
 
 log() { echo "[certs] $*" >&2; }
@@ -378,6 +384,45 @@ link_node_opcua() {
             cp "${PKI_DIR}/node-opcua-client/cert.crt" "${PKI_DIR}/${server}/pki/trusted/certs/node-opcua-client.crt"
         fi
     done
+    link_asyncua
+}
+
+# opcua-asyncio (asyncua adapter) identities, RSA only (asyncua has no ECC
+# SecurityPolicy). The asyncua server validates client certificates against
+# the CA in its trust list and also lists the other client certificates, as
+# the other servers do; every other server trusts the asyncua client
+# certificate (async-opcua's by exact certificate).
+gen_asyncua() {
+    rm -rf "${PKI_DIR}/asyncua-server" "${PKI_DIR}/asyncua-client"
+    gen_cert "${PKI_DIR}/asyncua-server" \
+        "opcua-asyncio Server" \
+        "${SERVER_APP_URI}" \
+        "DNS:asyncua"
+    gen_cert "${PKI_DIR}/asyncua-client" \
+        "opcua-asyncio Client" \
+        "${ASYNCUA_CLIENT_URI}" \
+        "DNS:asyncua"
+    populate_trust_dir "${PKI_DIR}/asyncua-server/pki"
+    populate_trust_dir "${PKI_DIR}/asyncua-client/pki"
+    link_asyncua
+}
+
+# Cross trust of the asyncua identities with every other identity present,
+# whichever was generated last (link_node_opcua calls it too, so gen_async_opcua,
+# gen_dotnet and gen_node_opcua link the asyncua identities).
+link_asyncua() {
+    [[ -f "${PKI_DIR}/asyncua-client/cert.crt" && -d "${PKI_DIR}/asyncua-server/pki" ]] || return 0
+    local id
+    for id in consumer open62541-client milo-client async-opcua-client dotnet-client node-opcua-client asyncua-client; do
+        if [[ -f "${PKI_DIR}/${id}/cert.crt" ]]; then
+            cp "${PKI_DIR}/${id}/cert.crt" "${PKI_DIR}/asyncua-server/pki/trusted/certs/${id}.crt"
+        fi
+    done
+    for id in open62541-server milo-server go-server async-opcua-server dotnet-server node-opcua-server; do
+        if [[ -d "${PKI_DIR}/${id}/pki/trusted/certs" ]]; then
+            cp "${PKI_DIR}/asyncua-client/cert.crt" "${PKI_DIR}/${id}/pki/trusted/certs/asyncua-client.crt"
+        fi
+    done
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -427,6 +472,18 @@ if [[ "${MODE}" == "add-dotnet" ]]; then
     gen_dotnet
     log ""
     log "dotnet identities generated (CA and the other certificates unchanged; dotnet-client.crt added to their trust lists)."
+    exit 0
+fi
+
+if [[ "${MODE}" == "add-asyncua" ]]; then
+    if [[ ! -f "${PKI_DIR}/ca/ca.crt" || ! -f "${PKI_DIR}/ca/ca.key" || ! -f "${PKI_DIR}/ca/ca.crl" ]]; then
+        echo "generate.sh --add-asyncua: no existing CA in ${PKI_DIR}/ca (run generate.sh first)" >&2
+        exit 1
+    fi
+    log "Adding the asyncua identities to the existing test PKI in ${PKI_DIR}"
+    gen_asyncua
+    log ""
+    log "asyncua identities generated (CA and the other certificates unchanged; asyncua-client.crt added to their trust lists)."
     exit 0
 fi
 
@@ -498,6 +555,8 @@ gen_async_opcua
 gen_node_opcua
 
 gen_dotnet
+
+gen_asyncua
 
 log ""
 log "Test PKI generated:"

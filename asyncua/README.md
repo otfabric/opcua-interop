@@ -1,136 +1,175 @@
-# asyncua adapter (opcua-asyncio)
+# asyncua adapter (opcua-asyncio, Python)
 
-Third adapter of opcua-interop: [opcua-asyncio](https://github.com/FreeOpcUa/opcua-asyncio)
-(PyPI `asyncua`) **2.1.0** on CPython **3.14.9** (`python:3.14.9-slim-trixie`),
-adapter version **0.9.0**, image `ghcr.io/otfabric/opcua-interop-asyncua`.
-It implements the same CLI contract as `open62541/` and `milo/`
-(`docs/CLIENT_CONTRACT.md`): `server`, `client <subcmd>`, `print-capabilities`,
-`validate-fixture`, `test`. Result envelopes carry `"adapter": "asyncua"`.
+[opcua-asyncio](https://github.com/FreeOpcUa/opcua-asyncio) (PyPI `asyncua`)
+**2.1.0** on CPython **3.14.9** (`python:3.14.9-slim-trixie`, pinned by
+digest), adapter version **0.9.0**, image `ghcr.io/otfabric/opcua-interop-asyncua`.
+It implements the CLI contract of `docs/CLIENT_CONTRACT.md` (`server`,
+`client <subcmd>`, `print-capabilities`, `validate-fixture`, `test`); result
+envelopes carry `"adapter": "asyncua"`.
 
 ```
 asyncua/
-├── Dockerfile            # 2 stages: venv with the locked wheels → slim runtime, non-root (uid 10001)
+├── Dockerfile            # venv with the locked wheels → slim runtime, non-root (uid 10001); runs the unit tests
 ├── requirements.in       # direct dependency: asyncua==2.1.0
 ├── requirements.txt      # lock with hashes (uv pip compile --universal --generate-hashes)
 ├── src/opcua_interop_asyncua/
 │   ├── __main__.py       # subcommand dispatch
-│   ├── server.py         # server mode: endpoints, security, PKI, users, ready file, --register-with
+│   ├── server.py         # server mode: endpoints, security, users, ready file, --register-with
 │   ├── fixture.py        # fixture → asyncua address space, behaviours, events, history
 │   ├── methods.py        # fixture methods (Add, Multiply, Echo, NoArguments, MultipleOutputs, Fail)
 │   ├── client.py         # client subcommands
-│   ├── common.py         # envelope, status codes, NodeId / value encoding, literals
+│   ├── pki.py            # test PKI loading, chain / CRL validation on asyncua's validator
+│   ├── common.py         # envelope, status codes, NodeId / value encoding
 │   ├── capabilities.py   # print-capabilities
 │   └── selftest.py       # `test`
-├── WIRING.patch          # changes to shared files (Makefile, smoke.sh, CI, docs …)
-└── README.md
+├── tests/                # unittest suite (run during the image build)
+└── testdata/             # fixture and test certificates (no private keys)
 ```
 
-Refreshing the lock (same Python as the image):
+Every dependency is a pure-Python or manylinux / abi3 wheel
+(`--only-binary=:all:`), so the image builds for linux/amd64 and linux/arm64
+without a compiler. Refreshing the lock (same Python as the image):
 
 ```sh
 docker run --rm -v "$PWD:/w" -w /w python:3.14.9-slim-trixie sh -c \
   'pip install -q uv==0.9.5 && uv pip compile requirements.in --universal --python-version 3.14 --generate-hashes -o requirements.txt'
 ```
 
-Every dependency is a pure-Python or manylinux/abi3 wheel (`--only-binary=:all:`),
-so the image builds for linux/amd64 and linux/arm64 without a compiler.
+## Build and run
 
-## Capabilities
+```sh
+make image-asyncua                     # ghcr.io/otfabric/opcua-interop-asyncua:dev
+make run-asyncua                       # server with the baseline fixture on port 4845
+docker run --rm ghcr.io/otfabric/opcua-interop-asyncua:dev print-capabilities
+docker run --rm ghcr.io/otfabric/opcua-interop-asyncua:dev \
+    client read --endpoint opc.tcp://host.docker.internal:4840 --node 'ns=0;i=2259'
+```
+
+## What it provides
 
 `print-capabilities` lists only what works:
 
 | | |
 |---|---|
-| `clientOperations` | `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`, `subscribe`, `subscription-lifecycle`, `event-subscribe`, `history-read`, `republish`, `transfer-subscriptions`, `register-nodes`, `node-management`, `find-servers-on-network`, `register-server` — everything except `codec` |
-| `clientFeatures` | `channel-lifetime`, `deadband` (the client sends DataChangeFilters), `register-server2` |
-| `serverFeatures` | `register-with` |
-| `securityProfiles` | None; Basic128Rsa15, Basic256, Basic256Sha256, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss — Sign and SignAndEncrypt (the server offers the fixture's RSA profiles) |
+| `clientOperations` | `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`, `subscribe`, `subscription-lifecycle`, `event-subscribe`, `history-read`, `republish`, `transfer-subscriptions`, `register-nodes`, `node-management`, `find-servers-on-network`, `register-server` (everything except `codec`) |
+| `clientFeatures` | `channel-lifetime`, `deadband` (the client sends DataChangeFilters), `application-uri`, `register-server2` |
+| `serverFeatures` | `register-with` (RegisterServer / RegisterServer2 with an LDS) |
+| `securityProfiles` | None; Basic128Rsa15, Basic256, Basic256Sha256, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss, Sign and SignAndEncrypt |
 | `userTokenTypes` | Anonymous, UserName |
 | `pubsub` | `supported: false` |
 
-Refused with exit 2 / `error.category: "input"` (never ignored):
-`client codec`, `--reverse-listen` (and the reverse flags), ECC
-`--security-policy` names; server `--reverse-connect`, `--lds`, `--mdns-name`,
-`--mdns-capability`, `--pubsub-config`. `--ecc-dir` is accepted and ignored
-with a warning (as Milo does).
+The server serves the full baseline fixture. Some of it is adapter code,
+because an asyncua server has to supply that logic itself:
 
-### Not provided by asyncua 2.1.0
+- **Access.WriteOnly**: asyncua's Read does not check `AccessLevel.CurrentRead`,
+  so a value callback answers `BadNotReadable` and a setter keeps the written values.
+- **Methods**: asyncua passes the raw input Variants to the callback, so the
+  methods check the count and types themselves (`BadArgumentsMissing`,
+  `BadTooManyArguments`, `BadInvalidArgument` with `BadTypeMismatch`).
+- **History.Temperature**: the five fixed samples sit in asyncua's own
+  `HistoryDict` backend, so HistoryRead is asyncua's.
+- **AnalogItems**: the adapter adds the EURange property, because asyncua's
+  AddNodes does not instantiate type children.
+- **Discovery URLs**: `set_match_discovery_endpoint_url(False)` and
+  `set_match_discovery_client_ip(False)`, so endpoints advertise exactly
+  `--advertised-host` / `--advertised-port`, as the other adapters do.
 
-| Feature | Why |
+## Not provided (declared, refused with exit 2)
+
+| What | Why |
 |---|---|
-| ECC security policies | `asyncua.crypto.security_policies` ends at the RSA policies |
-| Reverse connect | no ReverseHello in the transports |
-| `codec` (JSON / XML DataEncoding) | asyncua has the Binary encoding only (NodeSet2 XML import/export is not the Part 6 XML DataEncoding) |
-| LDS / mDNS, FindServersOnNetwork | no mDNS; FindServersOnNetwork is not dispatched (the server answers `BadUserAccessDenied`, the request has no session) |
-| PubSub | `asyncua.pubsub` (UADP over UDP) is marked experimental and has no JSON encoding, MQTT, security / SKS or JSON configuration loader; wiring it to `--pubsub-config` (a PubSubConfigurationDataType in OPC UA JSON) and `codec pubsub-*` would mean writing those parts in the adapter. Declared unsupported |
-| Server `node-management` | AddNodes / DeleteNodes are only served to asyncua's `Admin` role, which also skips the AccessLevel check on Write. The adapter gives every session the `User` role (AccessLevel enforced), so AddNodes is refused (`BadUserAccessDenied`) |
+| ECC security policies (`ECC_*`), `--ecc-dir` | `asyncua.crypto.security_policies` implements only the RSA policies. `--ecc-dir` is ignored with a warning (as Milo does), the fixture's ECC profiles are skipped, and an `ECC_*` client policy is an input error |
+| Reverse connect (`--reverse-connect`, `--reverse-listen`) | asyncua has no ReverseHello in its transports |
+| `codec` | asyncua has only the Binary encoding: there is no Part 6 JSON, and its NodeSet2 XML import / export is not the Part 6 XML DataEncoding |
+| `--lds`, `--mdns-name`, `--mdns-capability`; FindServersOnNetwork on the server | asyncua has no mDNS and does not dispatch FindServersOnNetwork. The server does accept RegisterServer / RegisterServer2 (see deviation 13) |
+| `--pubsub-config`, `codec pubsub-*` | `asyncua.pubsub` (UADP over UDP) is experimental and has no JSON encoding, MQTT, security / SKS or JSON configuration loader, so it is not wired to the adapter |
+| Server node management (AddNodes / DeleteNodes / AddReferences / DeleteReferences) | asyncua serves these only to its `Admin` role, which also skips the AccessLevel check on Write. The adapter gives every session the `User` role (AccessLevel enforced), so they are refused with `BadUserAccessDenied`. The client operation `node-management` is provided |
+| `deadband` / `percent-deadband` server features | see deviations 6 and 7 |
 
-## Server behaviour and deviations
+## PKI and trust
 
-The adapter does not patch asyncua. Where asyncua does not behave as OPC UA
-specifies, the go-opcua suite records it (test skip with the reason, ledger
-row `unsupported`) instead of the adapter hiding it:
+The test PKI has `asyncua-server` and `asyncua-client` identities, new in
+v0.9.0 (`certs/generate.sh`, or `certs/generate.sh --add-asyncua` for an
+existing PKI). The ApplicationUri of a certificate is the first URI of its
+SubjectAlternativeName. Certificates and keys may be PEM or DER (detected by
+content).
 
-| Area | asyncua 2.1.0 behaviour |
-|---|---|
-| Absolute deadband | compared with the previous *sample*, not the last reported value (`MonitoredItemService._is_deadband_exceeded`): a ramp of step 2 with deadband 10 is only reported at its reset. `deadband` not declared |
-| Percent deadband | accepted on any node and ignored (logs "not implemented"); no `BadMonitoredItemFilterUnsupported` without EURange. `percent-deadband` not declared |
-| ModifySubscription | requested values ignored, the create-time values are returned (source comment says so) |
-| ModifyMonitoredItems | new ClientHandle not applied |
-| MonitoringMode Sampling | still reports notifications |
-| HistoryRead paging | `NumValuesPerNode` truncates without a ContinuationPoint (`HistoryDict`); ReleaseContinuationPoints ignored |
-| Browse paging | `RequestedMaxReferencesPerNode` ignored: no ContinuationPoint, BrowseNext cannot be exercised |
-| Read IndexRange | ignored (whole value returned, also for scalars) |
-| Error codes | Write to an unknown node → `BadUserAccessDenied` (want `BadNodeIdUnknown`); Browse of an unknown node → `BadNodeIdInvalid` (want `BadNodeIdUnknown`) |
-| Republish | unknown sequence number → Good with an empty NotificationMessage (want `BadMessageNotAvailable`) |
-| CreateSubscription revision | `subscription-lifecycle --scenario revise` against the asyncua server: PublishingInterval 1 ms and LifetimeCount 5 < 3 × MaxKeepAliveCount are accepted unrevised |
-| RegisterServer | IsOnline=false is stored like a registration (the server stays in FindServers) |
-| Event queue | no EventQueueOverflowEventType |
+asyncua's own TrustStore reads only `*.der` / `*.pem` files, so it would skip
+the PKI's `*.crt` certificates and `*.crl` lists. It also has no issuer list,
+and cryptography cannot build an empty store, so a server with an empty trust
+list would stop. `pki.py` loads the files itself and hands them to asyncua's
+`CertificateValidator`:
 
-Adapter-side code (application logic an asyncua server has to supply itself):
+- **Server:** a client certificate must chain to a certificate in
+  `<pki-dir>/trusted/certs`, with `issuers/certs` as intermediates only. It is
+  also checked for its validity period, URI SAN = ApplicationUri, and the CRLs
+  in `trusted/crl` and `issuers/crl`. asyncua matches a revoked certificate by
+  serial number. A rejected certificate is copied to `<pki-dir>/rejected/`
+  (best effort), and the client gets `BadCertificateUntrusted` at CreateSession.
+- **Client:** the `--trust-list` files (the CA or the server certificate) are
+  the only trust anchors (chain, validity, revocation). Without `--trust-list`
+  every server certificate is accepted (as Milo does).
 
-- **Access.WriteOnly**: asyncua's Read does not check `AccessLevel.CurrentRead`;
-  the node is served by a value callback answering `BadNotReadable` and a
-  setter that keeps written values.
-- **Methods**: asyncua passes raw input Variants to the callback; the
-  methods check count and types (`BadArgumentsMissing`, `BadTooManyArguments`,
-  `BadInvalidArgument` + `BadTypeMismatch`).
-- **History.Temperature**: the five fixed samples are stored in asyncua's own
-  `HistoryDict` backend (no live historizing), so HistoryRead is asyncua's.
-- **AnalogItems**: the EURange property is added by the adapter (asyncua
-  AddNodes does not instantiate type children).
-- **Discovery URLs**: `set_match_discovery_endpoint_url(False)` /
-  `set_match_discovery_client_ip(False)`: endpoints advertise exactly
-  `--advertised-host` / `--advertised-port` like the other adapters.
+## Stack deviations found by the go-opcua interop suite
 
-## Security and PKI
+The adapter does not patch asyncua. Each deviation below is a go-opcua test
+that skips with the reason (`asyncuaDeviation`), backed by an `unsupported` row
+in `interop/testdata/ledger-asyncua.json`, or a smoke check that pins it. None
+is hidden.
 
-- PEM or DER certificates / keys (detected by content; asyncua itself goes by
-  the file suffix).
-- Server: the fixture's RSA `securityProfiles` get endpoints when
-  `--certificate` / `--private-key` are given; ECC profiles are skipped with a
-  log line. Client certificates are validated against `<pki-dir>/trusted/certs`
-  + `issuers/certs` (CA chain, `*.crt` accepted), validity period, URI SAN =
-  ApplicationUri and `trusted/crl`; rejected certificates are copied to
-  `<pki-dir>/rejected/`. An untrusted client gets `BadCertificateUntrusted`
-  at CreateSession.
-- Client: ApplicationUri = URI SAN of `--certificate`; `--trust-list` files
-  validate the server certificate (chain, validity, CRL).
-- The test PKI has no asyncua identities yet: the go-opcua suite uses
-  `milo-server` / `milo-client` for the asyncua server / client (same
-  ApplicationUris). Adding `asyncua-server` / `asyncua-client` to
-  `certs/generate.sh` is a possible follow-up.
+| # | Deviation (asyncua 2.1.0) | Where | Pinned by |
+|---|---|---|---|
+| 1 | TimestampsToReturn is ignored: Read and monitored items always return both timestamps | `asyncua/server` never reads it | `TestAsyncuaServer_TimestampsToReturn`, `TestAsyncuaServer_SubscribeTimestampsToReturn` |
+| 2 | ReadValueId.IndexRange is ignored: on a scalar the answer is `Good` (want `BadIndexRangeInvalid` / `BadIndexRangeNoData`), and a subset returns the whole array | `AttributeService.read` | `TestAsyncuaServer_IndexRange`, `TestAsyncuaServer_IndexRangeSubset` |
+| 3 | A Write that carries a SourceTimestamp is accepted (`Good`) instead of `BadWriteNotSupported`, as Milo, async-opcua and node-opcua do | server write | `TestAsyncuaServer_WriteEncodingMask` |
+| 4 | Write to an unknown node answers `BadUserAccessDenied`, and Browse of an unknown node `BadNodeIdInvalid` (want `BadNodeIdUnknown`) | `AttributeService.write` checks the AccessLevel of the missing node first | `TestAsyncuaServer_InvalidNodeId`, `TestAsyncuaServer_BatchWrite` |
+| 5 | Browse ignores RequestedMaxReferencesPerNode: there is never a ContinuationPoint, so BrowseNext and its release cannot be exercised | `ViewService.browse` | `TestAsyncuaServer_BrowseNext`, `TestAsyncuaServer_BrowseNextRelease` |
+| 6 | The absolute deadband is compared with the previous *sample*, not the last reported value, so a slow ramp is reported only at its reset | `MonitoredItemService._is_deadband_exceeded` | `TestAsyncuaServer_DataChangeFilter` (deadband case) |
+| 7 | A PercentDeadband is accepted on any node (also without EURange) and not applied | `MonitoredItemService` | smoke `check_asyncua_deadband_deviation` |
+| 8 | No sampling: the RevisedSamplingInterval is the publishing interval and every write of the value is reported | `MonitoredItemService` | `TestAsyncuaServer_DataChangeFilter` (sampling-interval case) |
+| 9 | MonitoringMode Sampling still reports notifications, so SetTriggering cannot be asserted either | `MonitoredItemService.datachange_callback` checks only for Disabled | `TestAsyncuaServer_SetMonitoringMode`, `TestAsyncuaServer_SetTriggering` |
+| 10 | ModifySubscription ignores the requested values and returns the create-time ones; ModifyMonitoredItems does not apply a new ClientHandle | `SubscriptionService.modify_subscription`, `MonitoredItemService._modify_monitored_item` | `TestAsyncuaServer_ModifySubscription`, `TestAsyncuaServer_ModifyMonitoredItems` |
+| 11 | HistoryRead with NumValuesPerNode truncates without a ContinuationPoint | `HistoryDict` | `TestAsyncuaServer_HistoryReadContinuation` |
+| 12 | No EventQueueOverflowEventType when an event queue overflows: the oldest event is dropped silently | `InternalSubscription._enqueue_event` | `TestAsyncuaServer_EventQueueOverflow` |
+| 13 | RegisterServer with IsOnline=false is stored like a registration, so the unregistered server stays in FindServers | `InternalServer.register_server` | `TestAsyncuaServer_DiscoveryServer` |
+| 14 | Republish of a sequence number the server does not hold answers `Good` with an empty NotificationMessage (want `BadMessageNotAvailable`) | `InternalSubscription.republish` | `TestAsyncuaServer_ClientRepublish` |
+| 15 | TransferSubscriptions checks no identity: a subscription of a user moves to an anonymous session (Part 4 §5.14.7 requires `BadUserAccessDenied`) | `SubscriptionService.transfer_subscriptions` | `TestAsyncuaServer_TransferSubscriptionsIdentity` |
+| 16 | No server diagnostics: `ServerDiagnostics.EnabledFlag` has a null value, and ReturnDiagnostics yields no DiagnosticInfos | server | `TestAsyncuaServer_Diagnostics` |
+| 17 | CreateSession revises MaxRequestMessageSize to 65536, so a request fits into one chunk and multi-chunk messages cannot be provoked | server | `TestAsyncuaServer_ChunkedSecureMessages` |
+| 18 | `subscription-lifecycle --scenario revise`: a PublishingInterval of 1 ms and a LifetimeCount of 5 (< 3 × MaxKeepAliveCount) are accepted unrevised | `SubscriptionService.create_subscription` | not asserted (`subscription.lifecycle.revise` against the asyncua server is not-applicable in the ledger) |
 
-## Local checks
+The suite also found two go-opcua bugs, both fixed in go-opcua v1.8.1:
+
+- A token replaced by `Renew` was renewed again from an already used sequence
+  number. asyncua closes the channel on that, which open62541 and Milo tolerate.
+- A Republish answered without the requested message rewound the subscription's
+  sequence numbers (deviation 14).
+
+go-opcua encodes an empty Go string as a null String, which the asyncua
+client reads as `None`.
+
+## Testing
 
 ```sh
-docker build -t ghcr.io/otfabric/opcua-interop-asyncua:dev asyncua/
-docker run --rm -v "$PWD/fixtures:/fixtures:ro" ghcr.io/otfabric/opcua-interop-asyncua:dev test
-scripts/smoke.sh asyncua ghcr.io/otfabric/opcua-interop-asyncua:dev \
-    ghcr.io/otfabric/opcua-interop-open62541:dev ghcr.io/otfabric/opcua-interop-milo:dev   # with WIRING.patch
-scripts/shutdown-test.sh asyncua ghcr.io/otfabric/opcua-interop-asyncua:dev
+make test-asyncua          # image build runs the unittest suite; `test` checks the fixtures
+make smoke-asyncua         # single-adapter smoke
+make shutdown-asyncua      # SIGTERM → exit 0
+make smoke-cross-asyncua   # with open62541 and Milo (and async-opcua / dotnet), both directions
 ```
 
-The smoke `asyncua` mode (WIRING.patch) runs the self checks except
-`check_deadband` / `check_codec_*`, then asyncua client → open62541 / Milo
-server (with `check_deadband`) and open62541 / Milo client → asyncua server.
+The unit tests (`tests/`, with certificates without private keys in
+`testdata/pki/`) run while the image is built. `docker run <image> test` loads
+every `fixture.json` under the mounted `/fixtures` (or `--fixture <path>`),
+builds its address space, and checks that `print-capabilities` declares
+exactly the client operations the adapter dispatches.
+
+The single-adapter smoke runs every check of `scripts/smoke.sh` except the
+codec checks; `check_deadband` is replaced by `check_asyncua_deadband_deviation`
+(deviation 7). `smoke.sh cross-asyncua` runs the
+asyncua client against the open62541 and Milo servers and their clients
+against the asyncua server. It adds secured channels on a Docker network
+(Basic256Sha256 SignAndEncrypt, Sign with UserName, Basic256, Aes128 / Aes256,
+untrusted certificates in both directions) and registration with an
+open62541 LDS (`--register-with`, find-servers-on-network, RegisterServer2).
+`go-opcua/interop` runs the adapter in both directions with `ASYNCUA_IMAGE`
+(`asyncua_*_test.go`, ledger `interop/testdata/ledger-asyncua.json`).

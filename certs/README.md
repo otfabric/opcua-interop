@@ -19,6 +19,8 @@ certs/
     ├── async-opcua-client/ # async-opcua client certificate and key
     ├── node-opcua-server/  # node-opcua server certificate and key
     ├── node-opcua-client/  # node-opcua client certificate and key
+    ├── asyncua-server/     # opcua-asyncio (asyncua) server certificate and key
+    ├── asyncua-client/     # opcua-asyncio (asyncua) client certificate and key
     ├── go-server/        # Go OPC UA server certificate (consumer secure-server tests)
     ├── consumer/         # Certificate for use by consumer repositories (e.g. go-opcua)
     └── untrusted/        # Intentionally untrusted self-signed client certificate
@@ -93,6 +95,7 @@ All certificates include:
 | Milo client | `urn:otfabric:opcua-interop:client:milo` |
 | async-opcua client | `urn:otfabric:opcua-interop:client:async-opcua` |
 | node-opcua client | `urn:otfabric:opcua-interop:client:node-opcua` |
+| asyncua (opcua-asyncio) client | `urn:otfabric:opcua-interop:client:asyncua` |
 | Consumer client | `urn:otfabric:opcua-interop:client:consumer` |
 | Untrusted client | `urn:otfabric:opcua-interop:client:untrusted` |
 
@@ -119,6 +122,12 @@ node-opcua validates a peer certificate against the CA in `trusted/certs`
 and its CRL in `trusted/crl`, like open62541 and Milo; its identities
 (`node-opcua-server`, `node-opcua-client`, new in v0.9.0) are added to an
 existing PKI with `generate.sh --add-node-opcua`.
+
+The `asyncua-server` / `asyncua-client` identities (opcua-asyncio, v0.9.0,
+RSA only) are trusted by every other server identity (async-opcua's by exact
+certificate) and trust the other clients; `certs/generate.sh --add-asyncua`
+adds them to an existing PKI without regenerating the CA or the other
+certificates.
 
 ## Security note
 

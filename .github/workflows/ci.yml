@@ -4,7 +4,7 @@ name: CI
 # checked, each adapter image is built once (amd64) and shared with the unit
 # tests, the single-adapter smoke tests (with the graceful-shutdown checks),
 # the PubSub smoke and the cross-stack smokes (open62541 ↔ Milo, and the
-# dotnet adapter against both), which all run in parallel. On
+# dotnet and asyncua adapters against both), which all run in parallel. On
 # main the arm64 images are built natively as well, in parallel with the rest.
 #
 # Docker layer caches are scoped per adapter and architecture
@@ -31,6 +31,7 @@ env:
   ASYNC_OPCUA_IMAGE: ghcr.io/otfabric/opcua-interop-async-opcua:ci
   DOTNET_IMAGE: ghcr.io/otfabric/opcua-interop-dotnet:ci
   NODE_OPCUA_IMAGE: ghcr.io/otfabric/opcua-interop-node-opcua:ci
+  ASYNCUA_IMAGE: ghcr.io/otfabric/opcua-interop-asyncua:ci
 
 jobs:
   validate:
@@ -67,7 +68,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo, async-opcua, dotnet, node-opcua]
+        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua]
     steps:
       - uses: actions/checkout@v7
 
@@ -104,7 +105,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo, async-opcua, dotnet, node-opcua]
+        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua]
     steps:
       - uses: actions/checkout@v7
 
@@ -191,6 +192,29 @@ jobs:
       - name: Cross-stack smoke (dotnet against open62541 and Milo)
         run: scripts/smoke.sh cross-dotnet "${DOTNET_IMAGE}" "${OPEN62541_IMAGE}" "${MILO_IMAGE}"
 
+  cross-stack-asyncua:
+    name: Cross-stack smoke (asyncua)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: image-*
+          path: /tmp
+          merge-multiple: true
+
+      - name: Load images
+        run: |
+          docker load < /tmp/open62541.tar.gz
+          docker load < /tmp/milo.tar.gz
+          docker load < /tmp/asyncua.tar.gz
+
+      - name: Cross-stack smoke (asyncua against open62541 and Milo)
+        run: scripts/smoke.sh cross-asyncua "${ASYNCUA_IMAGE}" "${OPEN62541_IMAGE}" "${MILO_IMAGE}"
+
   # ── main only: the arm64 images build natively (no QEMU) ──────────────────
   arm64:
     name: Build ${{ matrix.adapter }} (arm64)
@@ -200,7 +224,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo, async-opcua, dotnet, node-opcua]
+        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua]
     steps:
       - uses: actions/checkout@v7
 

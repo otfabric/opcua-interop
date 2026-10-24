@@ -11,6 +11,9 @@
 #                                                     # cross-stack self-check
 #   smoke.sh cross-dotnet <image-dotnet> <image-open62541> <image-milo>
 #                                                     # dotnet against both reference stacks
+#   smoke.sh asyncua <image>                          # single-adapter smoke
+#   smoke.sh cross-asyncua <image-asyncua> <image-open62541> <image-milo> [image-async-opcua] [image-dotnet]
+#                                                     # asyncua against the reference stacks
 #
 # Exit codes:
 #   0  — all checks passed
@@ -23,7 +26,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENDPOINT_PATH="/opcua-interop"
 WAIT_TIMEOUT=60
 
-MODE="${1:?Usage: smoke.sh <open62541|milo|async-opcua|dotnet|node-opcua|cross|cross-dotnet> <image> [images...]}"
+MODE="${1:?Usage: smoke.sh <open62541|milo|async-opcua|dotnet|node-opcua|asyncua|cross|cross-dotnet|cross-asyncua> <image> [images...]}"
 shift
 
 PASS=0
@@ -876,8 +879,13 @@ run_single_smoke() {
     check_subscribe   "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_register_nodes "${image}" "${endpoint}" "${adapter}→${adapter}"
     check_channel_renewal "${image}" "${endpoint}" "${adapter}→${adapter}"
-    check_deadband "${image}" "${endpoint}" "${adapter}→${adapter}"
-    if [[ "${adapter}" != "async-opcua" && "${adapter}" != "node-opcua" ]]; then
+    if [[ "${adapter}" == "asyncua" ]]; then
+        # No codec, and the asyncua server's deadband deviation instead of check_deadband.
+        check_asyncua_deadband_deviation "${image}" "${endpoint}" "${adapter}→${adapter}"
+    else
+        check_deadband "${image}" "${endpoint}" "${adapter}→${adapter}"
+    fi
+    if [[ "${adapter}" != "async-opcua" && "${adapter}" != "node-opcua" && "${adapter}" != "asyncua" ]]; then
         check_codec_node "${image}" "${endpoint}" "${adapter}→${adapter}"
         check_codec_roundtrip "${image}" "${image}" "${adapter}→${adapter}"
     fi
@@ -1083,6 +1091,230 @@ run_cross_dotnet_smoke() {
     trap - EXIT
 }
 
+# ── Mode: asyncua (opcua-asyncio) against the reference stacks ─────────────────
+
+# The client-contract checks of a direction that involves the asyncua adapter:
+# no codec (the adapter has none, asyncua/README.md). The absolute / percent
+# deadband check only runs against servers other than asyncua (its own
+# deadband handling does not conform: check_asyncua_deadband_deviation).
+run_asyncua_pair_checks() {
+    local image="$1" endpoint="$2" label="$3" deadband="${4:-yes}"
+    local check
+    for check in check_endpoints check_browse check_read_scalar check_write check_call \
+                 check_subscribe check_register_nodes check_channel_renewal; do
+        "${check}" "${image}" "${endpoint}" "${label}"
+    done
+    if [[ "${deadband}" == "yes" ]]; then
+        check_deadband "${image}" "${endpoint}" "${label}"
+    fi
+}
+
+# asyncua 2.1.0 accepts a percent deadband on a node without EURange
+# (MonitoredItemService logs "not implemented" and reports every change)
+# instead of BadMonitoredItemFilterUnsupported / BadFilterNotAllowed. The check
+# fails when the deviation is gone, so check_deadband gets enabled again.
+check_asyncua_deadband_deviation() {
+    local client_image="$1" endpoint="$2" label="$3"
+    local ramp="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Ramp"
+    local output
+    output=$(run_client_op "${client_image}" subscribe --endpoint "${endpoint}" --node "${ramp}" \
+            --notifications 1 --timeout-ms 15000 --deadband-percent 10) || true
+    validate_envelope "${output}" "${label}:percent-deadband" || return
+    if echo "${output}" | jq -e '.success == true and .results[0].monitoredItemStatusCode.code == 0' >/dev/null 2>&1; then
+        ok "${label}: percent deadband without EURange accepted (known asyncua 2.1.0 deviation, asyncua/README.md)"
+    elif echo "${output}" | jq -e '.results[0].monitoredItemStatusCode.severity == "Bad"' >/dev/null 2>&1; then
+        fail "${label}: percent deadband without EURange is rejected now — the asyncua deviation is gone; run check_deadband for this server"
+    else
+        fail "${label}: percent deadband — unexpected result: ${output}"
+    fi
+}
+
+# Secured channels with the asyncua-server / asyncua-client identities of the
+# test PKI on a feature network: the open62541 and Milo clients against the
+# asyncua server (Basic256Sha256, the Aes policies, UserName, untrusted client
+# certificate) and the asyncua client against the open62541 and Milo servers.
+# Then discovery: the asyncua server registers with an open62541 LDS, the
+# asyncua client calls FindServersOnNetwork and RegisterServer2 there.
+run_asyncua_secure_cross() {
+    local img_asyncua="$1" img_open62541="$2" img_milo="$3"
+    local model="nsu=urn:otfabric:opcua-interop:model;s="
+
+    prepare_pki
+    if [[ ! -f "${FEAT_TMP}/pki/asyncua-server/cert.crt" ]]; then
+        fail "asyncua secure cross-stack: the test PKI has no asyncua-server identity (certs/generate.sh --add-asyncua)"
+        feature_cleanup
+        return
+    fi
+    FEAT_NET="smoke-net-$$"
+    docker network create "${FEAT_NET}" >/dev/null
+
+    local srv="smoke-asyncua-sec-$$" o_srv="smoke-o62541-sec-$$" m_srv="smoke-milo-sec-$$"
+    FEAT_CONTAINERS+=("${srv}" "${o_srv}" "${m_srv}")
+    local url="opc.tcp://${srv}:4840${ENDPOINT_PATH}"
+    log "Starting asyncua, open62541 (LDS) and Milo servers with certificates..."
+    docker run -d --name "${o_srv}" --network "${FEAT_NET}" \
+        -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+        "${img_open62541}" server --fixture /fixtures/baseline/fixture.json \
+        --advertised-host "${o_srv}" --endpoint-path "${ENDPOINT_PATH}" \
+        --certificate /pki/open62541-server/cert.crt --private-key /pki/open62541-server/cert.key \
+        --pki-dir /pki/open62541-server/pki --lds >/dev/null
+    docker run -d --name "${m_srv}" --network "${FEAT_NET}" \
+        -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+        "${img_milo}" server --fixture /fixtures/baseline/fixture.json \
+        --advertised-host "${m_srv}" --endpoint-path "${ENDPOINT_PATH}" \
+        --certificate /pki/milo-server/cert.crt --private-key /pki/milo-server/cert.key \
+        --pki-dir /pki/milo-server/pki >/dev/null
+    wait_ready "${o_srv}"
+    local lds_url="opc.tcp://${o_srv}:4840${ENDPOINT_PATH}"
+    docker run -d --name "${srv}" --network "${FEAT_NET}" \
+        -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+        "${img_asyncua}" server --fixture /fixtures/baseline/fixture.json \
+        --advertised-host "${srv}" --endpoint-path "${ENDPOINT_PATH}" \
+        --certificate /pki/asyncua-server/cert.crt --private-key /pki/asyncua-server/cert.key \
+        --pki-dir /pki/asyncua-server/pki \
+        --register-with "${lds_url}" --register-interval-ms 2000 >/dev/null
+    wait_ready "${m_srv}"
+    wait_ready "${srv}"
+
+    local o62541=(--certificate /pki/open62541-client/cert.crt --private-key /pki/open62541-client/cert.key
+                  --trust-list /pki/ca/ca.crt)
+    local milo=(--certificate /pki/milo-client/cert.crt --private-key /pki/milo-client/cert.key
+                --trust-list /pki/ca/ca.crt)
+    local aua=(--certificate /pki/asyncua-client/cert.crt --private-key /pki/asyncua-client/cert.key
+               --trust-list /pki/ca/ca.crt)
+    local b256=(--security-policy Basic256Sha256 --security-mode SignAndEncrypt)
+    local out
+
+    out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+            "${b256[@]}" "${o62541[@]}") || true
+    feat_expect "o62541→asyncua: Basic256Sha256/SignAndEncrypt read" \
+        '.success == true and .results[0].value == -123456789' "${out}"
+    out=$(feat_client "${img_open62541}" - call --endpoint "${url}" --object "${model}Methods" \
+            --method "${model}Methods.Add" --input Int32:10 --input Int32:20 "${b256[@]}" "${o62541[@]}") || true
+    feat_expect "o62541→asyncua: Basic256Sha256/SignAndEncrypt call Methods.Add(10,20)=30" \
+        '.success == true and .results[0].outputArguments[0] == 30' "${out}"
+    out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+            --security-policy Basic256Sha256 --security-mode Sign "${o62541[@]}" \
+            --username test-user --password test-password) || true
+    feat_expect "o62541→asyncua: Basic256Sha256/Sign + username" \
+        '.success == true and .results[0].value == -123456789' "${out}"
+    out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+            --security-policy Aes128_Sha256_RsaOaep --security-mode SignAndEncrypt "${o62541[@]}") || true
+    feat_expect "o62541→asyncua: Aes128_Sha256_RsaOaep/SignAndEncrypt read" \
+        '.success == true and .results[0].value == -123456789' "${out}"
+    out=$(feat_client "${img_milo}" - subscribe --endpoint "${url}" --node "${model}Dynamic.Counter" \
+            --publishing-interval-ms 500 --notifications 3 --timeout-ms 15000 \
+            --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt "${milo[@]}") || true
+    feat_expect "milo→asyncua: Aes256_Sha256_RsaPss/SignAndEncrypt subscribe Dynamic.Counter" \
+        '.success == true and (.results[0].notifications | length) >= 3' "${out}"
+    out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+            "${b256[@]}" --certificate /pki/untrusted/cert.crt --private-key /pki/untrusted/cert.key \
+            --trust-list /pki/ca/ca.crt) || true
+    feat_expect "o62541→asyncua: untrusted client certificate is rejected" \
+        '.success == false' "${out}"
+
+    local target name
+    for target in "${o_srv}:o62541" "${m_srv}:milo"; do
+        name="${target#*:}"; target="${target%%:*}"
+        out=$(feat_client "${img_asyncua}" - read --endpoint "opc.tcp://${target}:4840${ENDPOINT_PATH}" \
+                --node "${model}Scalar.Int32" "${b256[@]}" "${aua[@]}" \
+                --username test-user --password test-password) || true
+        feat_expect "asyncua→${name}: Basic256Sha256/SignAndEncrypt + username" \
+            '.success == true and .results[0].value == -123456789' "${out}"
+        out=$(feat_client "${img_asyncua}" - write --endpoint "opc.tcp://${target}:4840${ENDPOINT_PATH}" \
+                --node "${model}Access.ReadWrite" --type Int32 --value 4242 \
+                --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt "${aua[@]}") || true
+        feat_expect "asyncua→${name}: Aes256_Sha256_RsaPss/SignAndEncrypt write" \
+            '.success == true and .results[0].statusCode.name == "Good"' "${out}"
+    done
+    # The client checks the server certificate against --trust-list.
+    out=$(feat_client "${img_asyncua}" - read --endpoint "opc.tcp://${m_srv}:4840${ENDPOINT_PATH}" \
+            --node "${model}Scalar.Int32" "${b256[@]}" \
+            --certificate /pki/asyncua-client/cert.crt --private-key /pki/asyncua-client/cert.key \
+            --trust-list /pki/untrusted/cert.crt) || true
+    feat_expect "asyncua→milo: server certificate not issued by a --trust-list entry is rejected" \
+        '.success == false' "${out}"
+
+    # Discovery against the open62541 LDS.
+    local registered=0 i
+    for i in $(seq 1 30); do
+        out=$(feat_client "${img_open62541}" - find-servers --endpoint "${lds_url}") || true
+        if echo "${out}" | jq -e "[.results[].discoveryUrls[]] | index(\"${url}\") != null" >/dev/null 2>&1; then
+            registered=1; break
+        fi
+        sleep 1
+    done
+    if [[ "${registered}" == 1 ]]; then
+        ok "asyncua server registered with the open62541 LDS (--register-with, RegisterServer)"
+    else
+        fail "asyncua server is not listed by the open62541 LDS after 30 polls: ${out}"
+    fi
+    out=$(feat_client "${img_asyncua}" - find-servers-on-network --endpoint "${lds_url}") || true
+    feat_expect "asyncua→LDS: FindServersOnNetwork (LDS record)" \
+        '.success == true and ([.results[] | select(.serverCapabilities | index("LDS"))] | length) >= 1' "${out}"
+    out=$(feat_client "${img_asyncua}" - register-server --endpoint "${lds_url}" \
+            --server-uri urn:smoke:asyncua --server-name "smoke asyncua" \
+            --discovery-url opc.tcp://smoke-asyncua:4999 --mdns-name smoke-asyncua) || true
+    feat_expect "asyncua→LDS: register-server (RegisterServer2)" \
+        '.success == true and .results[0].service == "RegisterServer2"' "${out}"
+    out=$(feat_client "${img_open62541}" - find-servers --endpoint "${lds_url}") || true
+    feat_expect "asyncua→LDS: registration visible in FindServers" \
+        '[.results[].applicationUri] | index("urn:smoke:asyncua") != null' "${out}"
+
+    feature_cleanup
+}
+
+# cross-asyncua <asyncua> <open62541> <milo> [async-opcua] [dotnet]: the
+# asyncua client against the open62541 and Milo servers (and, when given, the
+# async-opcua and dotnet servers), those clients against the asyncua server,
+# then secured channels and discovery (run_asyncua_secure_cross).
+run_cross_asyncua_smoke() {
+    local img_asyncua="$1" img_open62541="$2" img_milo="$3" img_async_opcua="${4:-}" img_dotnet="${5:-}"
+    local port_asyncua=14845 port_open62541=14840 port_milo=14841 port_async_opcua=14842 port_dotnet=14843
+
+    local servers=() cname
+    cname=$(start_server "asyncua" "${img_asyncua}" "${port_asyncua}"); servers+=("${cname}")
+    cname=$(start_server "open62541" "${img_open62541}" "${port_open62541}"); servers+=("${cname}")
+    cname=$(start_server "milo" "${img_milo}" "${port_milo}"); servers+=("${cname}")
+    if [[ -n "${img_async_opcua}" ]]; then
+        cname=$(start_server "async-opcua" "${img_async_opcua}" "${port_async_opcua}"); servers+=("${cname}")
+    fi
+    if [[ -n "${img_dotnet}" ]]; then
+        cname=$(start_server "dotnet" "${img_dotnet}" "${port_dotnet}"); servers+=("${cname}")
+    fi
+    trap "for c in ${servers[*]}; do stop_server \${c}; done; feature_cleanup" EXIT
+    for cname in "${servers[@]}"; do wait_ready "${cname}"; done
+
+    local ep_asyncua="opc.tcp://localhost:${port_asyncua}${ENDPOINT_PATH}"
+    local ep_open62541="opc.tcp://localhost:${port_open62541}${ENDPOINT_PATH}"
+    local ep_milo="opc.tcp://localhost:${port_milo}${ENDPOINT_PATH}"
+
+    log "Cross-stack: asyncua-client → open62541 / milo servers"
+    run_asyncua_pair_checks "${img_asyncua}" "${ep_open62541}" "asyncua→o62541"
+    run_asyncua_pair_checks "${img_asyncua}" "${ep_milo}" "asyncua→milo"
+    log "Cross-stack: open62541 / milo clients → asyncua-server"
+    run_asyncua_pair_checks "${img_open62541}" "${ep_asyncua}" "o62541→asyncua" no
+    check_asyncua_deadband_deviation "${img_open62541}" "${ep_asyncua}" "o62541→asyncua"
+    run_asyncua_pair_checks "${img_milo}" "${ep_asyncua}" "milo→asyncua" no
+    if [[ -n "${img_async_opcua}" ]]; then
+        local ep_async_opcua="opc.tcp://localhost:${port_async_opcua}${ENDPOINT_PATH}"
+        log "Cross-stack: asyncua ↔ async-opcua"
+        run_asyncua_pair_checks "${img_asyncua}" "${ep_async_opcua}" "asyncua→async-opcua"
+        run_asyncua_pair_checks "${img_async_opcua}" "${ep_asyncua}" "async-opcua→asyncua" no
+    fi
+    if [[ -n "${img_dotnet}" ]]; then
+        local ep_dotnet="opc.tcp://localhost:${port_dotnet}${ENDPOINT_PATH}"
+        log "Cross-stack: asyncua ↔ dotnet"
+        run_asyncua_pair_checks "${img_asyncua}" "${ep_dotnet}" "asyncua→dotnet"
+        run_asyncua_pair_checks "${img_dotnet}" "${ep_asyncua}" "dotnet→asyncua" no
+    fi
+
+    for cname in "${servers[@]}"; do stop_server "${cname}"; done
+    trap "feature_cleanup" EXIT
+    run_asyncua_secure_cross "${img_asyncua}" "${img_open62541}" "${img_milo}"
+    trap - EXIT
+}
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 case "${MODE}" in
@@ -1107,8 +1339,14 @@ case "${MODE}" in
     cross-dotnet)
         run_cross_dotnet_smoke "${1:?dotnet image required}" "${2:?open62541 image required}" "${3:?milo image required}"
         ;;
+    asyncua)
+        run_single_smoke "asyncua" "${1:?image required}"
+        ;;
+    cross-asyncua)
+        run_cross_asyncua_smoke "${1:?asyncua image required}" "${2:?open62541 image required}" "${3:?milo image required}" "${4:-}" "${5:-}"
+        ;;
     *)
-        echo "Unknown mode: ${MODE}. Use open62541, milo, async-opcua, dotnet, node-opcua, cross or cross-dotnet." >&2
+        echo "Unknown mode: ${MODE}. Use open62541, milo, async-opcua, dotnet, node-opcua, asyncua, cross, cross-dotnet or cross-asyncua." >&2
         exit 1
         ;;
 esac

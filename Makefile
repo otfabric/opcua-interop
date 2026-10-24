@@ -318,6 +318,75 @@ run-mosquitto: ## Start the MQTT broker for PubSub tests on port $(MQTT_PORT)
 		$(MOSQUITTO_IMAGE) \
 		mosquitto -c /mosquitto-interop.conf
 
+# ── opcua-asyncio (asyncua, Python) adapter ──────────────────────────────────
+#
+# Its own block: the aggregate targets (image, buildx, test, smoke, shutdown,
+# clean) get the asyncua targets as extra prerequisites below.
+
+IMAGE_ASYNCUA = $(REGISTRY)/opcua-interop-asyncua
+ASYNCUA_PORT ?= 4845
+
+.PHONY: image-asyncua buildx-asyncua test-asyncua smoke-asyncua smoke-cross-asyncua \
+        shutdown-asyncua run-asyncua clean-asyncua
+
+image: image-asyncua
+buildx: buildx-asyncua
+test: test-asyncua
+smoke: smoke-asyncua smoke-cross-asyncua
+shutdown: shutdown-asyncua
+clean: clean-asyncua
+
+image-asyncua: ## Build opcua-asyncio (asyncua) image (host arch, loaded into Docker; runs its unit tests)
+	@echo "Building asyncua image (host arch)..."
+	docker build \
+		--tag $(IMAGE_ASYNCUA):$(VERSION) \
+		--file asyncua/Dockerfile \
+		asyncua/
+
+buildx-asyncua: ## Build and push asyncua image (multi-arch)
+	@echo "Building asyncua image (multi-arch, push)..."
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		--push \
+		--tag $(IMAGE_ASYNCUA):$(VERSION) \
+		--file asyncua/Dockerfile \
+		asyncua/
+
+test-asyncua: image-asyncua ## Build asyncua image and run its `test` command on the fixtures
+	@echo "Running asyncua unit tests..."
+	docker run --rm \
+		-v "$(PWD)/fixtures:/fixtures:ro" \
+		$(IMAGE_ASYNCUA):$(VERSION) \
+		test
+
+smoke-asyncua: ## Smoke test asyncua adapter (run 'make image-asyncua' first)
+	@echo "Smoking asyncua adapter..."
+	@scripts/smoke.sh asyncua $(IMAGE_ASYNCUA):$(VERSION)
+
+smoke-cross-asyncua: ## Cross-stack smoke: asyncua client/server against open62541 and Milo (run 'make image' first)
+	@echo "Smoking cross-stack interop of the asyncua adapter..."
+	@scripts/smoke.sh cross-asyncua $(IMAGE_ASYNCUA):$(VERSION) $(IMAGE_OPEN62541):$(VERSION) $(IMAGE_MILO):$(VERSION)
+
+shutdown-asyncua: ## Test asyncua graceful shutdown: SIGTERM must produce exit 0
+	@echo "Testing asyncua graceful shutdown..."
+	@scripts/shutdown-test.sh asyncua $(IMAGE_ASYNCUA):$(VERSION)
+
+run-asyncua: ## Start asyncua server on port $(ASYNCUA_PORT)
+	@echo "Starting asyncua server on port $(ASYNCUA_PORT)..."
+	docker run --rm \
+		-p $(ASYNCUA_PORT):4840 \
+		-v "$(PWD)/fixtures:/fixtures:ro" \
+		-v "$(PWD)/certs/test-pki:/pki:ro" \
+		$(IMAGE_ASYNCUA):$(VERSION) \
+		server \
+		--fixture /fixtures/baseline/fixture.json \
+		--advertised-host localhost \
+		--pki-dir /pki \
+		--ready-file /run/opcua-interop/ready
+
+clean-asyncua:
+	docker rmi $(IMAGE_ASYNCUA):$(VERSION) 2>/dev/null || true
+
 # ── Certificates ─────────────────────────────────────────────────────────────
 
 certs: ## Generate test PKI
@@ -330,7 +399,7 @@ certs: ## Generate test PKI
 # images natively per architecture, then publish-arch, publish-manifest and
 # digests. `publish` is a manual fallback that builds under emulation.
 
-ADAPTERS = open62541 milo async-opcua dotnet node-opcua
+ADAPTERS = open62541 milo async-opcua dotnet node-opcua asyncua
 ARCHS    = amd64 arm64
 
 define require_release_version

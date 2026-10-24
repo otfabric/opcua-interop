@@ -13,7 +13,7 @@
     },
     "adapter": {
       "type": "string",
-      "enum": ["open62541", "milo", "async-opcua", "dotnet", "node-opcua"]
+      "enum": ["open62541", "milo", "async-opcua", "dotnet", "node-opcua", "asyncua"]
     },
     "operation": {
       "type": "string",
