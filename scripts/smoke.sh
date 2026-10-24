@@ -427,13 +427,24 @@ FEAT_TMP=""
 FEAT_CONTAINERS=()
 
 feature_cleanup() {
-    local c
+    local c img=""
     for c in ${FEAT_CONTAINERS[@]+"${FEAT_CONTAINERS[@]}"}; do
+        [[ -n "${img}" ]] || img=$(docker inspect -f '{{.Config.Image}}' "${c}" 2>/dev/null || true)
         docker rm -f "${c}" &>/dev/null || true
     done
     FEAT_CONTAINERS=()
     if [[ -n "${FEAT_NET}" ]]; then docker network rm "${FEAT_NET}" &>/dev/null || true; FEAT_NET=""; fi
-    if [[ -n "${FEAT_TMP}" ]]; then rm -rf "${FEAT_TMP}"; FEAT_TMP=""; fi
+    if [[ -n "${FEAT_TMP}" ]]; then
+        # The adapters write into their mounted PKI directories (Milo's issuer
+        # store, node-opcua's own/), and on Linux those files belong to the
+        # container's user: remove them as root through one of the images.
+        if ! rm -rf "${FEAT_TMP}" 2>/dev/null && [[ -n "${img}" ]]; then
+            docker run --rm --user 0 --entrypoint sh -v "${FEAT_TMP}:/scratch" "${img}" \
+                -c 'rm -rf /scratch/* /scratch/.[!.]*' >/dev/null 2>&1 || true
+            rm -rf "${FEAT_TMP}"
+        fi
+        FEAT_TMP=""
+    fi
 }
 
 # A world-readable copy of the test PKI (generated on demand; an existing CA
