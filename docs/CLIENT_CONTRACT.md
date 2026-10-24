@@ -57,7 +57,7 @@ refused with exit 2 / `error.category = "input"` — never silently ignored.
 | `--username <name>` | Username for UserName identity token | — |
 | `--password <secret>` | Password for UserName identity token | — |
 | `--channel-lifetime-ms <n>` | Requested SecureChannel lifetime in ms; small values force SecurityToken renewals during the command | stack default |
-| `--application-uri <uri>` | Client ApplicationUri sent in CreateSession (open62541, async-opcua, node-opcua, asyncua) | URI SAN of `--certificate`, else stack default |
+| `--application-uri <uri>` | Client ApplicationUri sent in CreateSession (open62541, async-opcua, dotnet, node-opcua, asyncua) | URI SAN of `--certificate`, else stack default |
 | `--reverse-listen <port>` | Do not dial: listen on `<port>` and wait for the server's ReverseHello (open62541, async-opcua, node-opcua; see below) | — |
 | `--reverse-timeout-ms <n>` | How long to wait for the reverse connection | 30000 |
 | `--reverse-server-uri <uri>` | Fail (exit 3, `BadServerUriInvalid`) unless the reverse-connected server's `ServerArray[0]` equals `<uri>` | — |
@@ -1218,26 +1218,26 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `codec` | `{formats, jsonVersion, jsonModes, xmlEncodeUnsupported, xmlDecodeUnsupported}` |
 | `pubsub` | PubSub (Part 14) support, §14.11. Milo: `{"supported": false, …}` with empty lists |
 
-| Feature string | In | open62541 | Milo | async-opcua | node-opcua | Meaning |
-|----------------|----|:---------:|:----:|:-----------:|:----------:|---------|
-| `channel-lifetime` | client | ✓ | ✓ | ✓ | ✓ | `--channel-lifetime-ms` |
-| `deadband` | client | ✓ | ✓ | ✓ | ✓ | `subscribe --deadband-absolute/--deadband-percent/--trigger` |
-| `reverse-listen` | client | ✓ | — | ✓ | ✓ | `--reverse-listen` |
-| `ecc-security` | client, server | ✓ | — | — | — | ECC SecurityPolicies (`securityProfiles` lists them) |
-| `ecc-user-token` | client, server | ✓ | — | — | — | UserName token over an ECC endpoint (EccEncryptedSecret) |
-| `application-uri` | client | ✓ | — | ✓ | ✓ | `--application-uri`, ApplicationUri from the certificate |
-| `register-server2` | client | ✓ | ✓ | ✓ | ✓ | `register-server` can call RegisterServer2 |
-| `codec-json`, `codec-xml` | client | ✓ | ✓ | — | — | `codec` formats |
-| `codec-json-verbose` | client | — | ✓ | — | — | `codec --json-mode verbose` |
-| `codec-pubsub` | client | ✓ | — | — | — | `codec pubsub-{uadp,json}-{encode,decode}` (§14.9) |
-| `deadband` | server | ✓ | ✓ | ✓ | ✓ | DataChangeFilter absolute deadband / trigger honoured |
-| `percent-deadband` | server | ✓ | ✓ | ✓ | ✓ | percent deadband on AnalogItems with EURange (`Analog.*`) |
-| `reverse-connect` | server | ✓ | — | ✓ | ✓ | `--reverse-connect` |
-| `lds` | server | ✓ | — | — | — | `--lds` |
-| `mdns` | server | ✓ | — | — | — | `--mdns-name`, FindServersOnNetwork |
-| `register-with` | server | ✓ | ✓ | ✓ | ✓ | `--register-with` |
-| `node-management` | server | ✓ | — | ✓ | — | AddNodes / DeleteNodes served |
-| `pubsub` | server | ✓ | — | — | — | `--pubsub-config`, PubSub information model, SKS (§14) |
+| Feature string | In | open62541 | Milo | async-opcua | UA-.NETStandard | node-opcua | asyncua | Meaning |
+|----------------|----|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|---------|
+| `channel-lifetime` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `--channel-lifetime-ms` |
+| `deadband` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `subscribe --deadband-absolute/--deadband-percent/--trigger` |
+| `reverse-listen` | client | ✓ | — | ✓ | — | ✓ | — | `--reverse-listen` |
+| `ecc-security` | client, server | ✓ | — | — | — | — | — | ECC SecurityPolicies (`securityProfiles` lists them) |
+| `ecc-user-token` | client, server | ✓ | — | — | — | — | — | UserName token over an ECC endpoint (EccEncryptedSecret) |
+| `application-uri` | client | ✓ | — | ✓ | ✓ | ✓ | ✓ | `--application-uri`, ApplicationUri from the certificate |
+| `register-server2` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `register-server` can call RegisterServer2 |
+| `codec-json`, `codec-xml` | client | ✓ | ✓ | — | ✓ | — | — | `codec` formats |
+| `codec-json-verbose` | client | — | ✓ | — | ✓ | — | — | `codec --json-mode verbose` |
+| `codec-pubsub` | client | ✓ | — | — | — | — | — | `codec pubsub-{uadp,json}-{encode,decode}` (§14.9) |
+| `deadband` | server | ✓ | ✓ | ✓ | ✓ | ✓ | — | DataChangeFilter absolute deadband / trigger honoured |
+| `percent-deadband` | server | ✓ | ✓ | ✓ | ✓ | ✓ | — | percent deadband on AnalogItems with EURange (`Analog.*`) |
+| `reverse-connect` | server | ✓ | — | ✓ | — | ✓ | — | `--reverse-connect` |
+| `lds` | server | ✓ | — | — | — | — | — | `--lds` |
+| `mdns` | server | ✓ | — | — | — | — | — | `--mdns-name`, FindServersOnNetwork |
+| `register-with` | server | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `--register-with` |
+| `node-management` | server | ✓ | — | ✓ | ✓ | — | — | AddNodes / DeleteNodes served |
+| `pubsub` | server | ✓ | — | — | — | — | — | `--pubsub-config`, PubSub information model, SKS (§14) |
 
 Eclipse Milo 1.1.8 has no ReverseHello in its transports
 (`opc-ua-stack/stack-core/.../channel/messages/MessageType.java` knows only
@@ -1264,6 +1264,19 @@ that is only signed by a listed CA is rejected); the client validates the
 server certificate against `--trust-list` itself (exact match or issued by a
 listed certificate). See `async-opcua/README.md` for the stack deviations the
 go-opcua suite found.
+
+OPC Foundation UA-.NETStandard 2.0.1 (adapter name `dotnet`, added in adapter
+0.9.0) is the only adapter besides Milo with the Verbose JSON form: its `codec`
+encodes and decodes JSON (compact and verbose) and XML (see the codec table
+above), and its server serves AddNodes / DeleteNodes. The adapter does not wire
+the stack's ReverseConnectManager (`--reverse-listen` and `--reverse-connect`
+exit 2), and 2.0.1 does not accept the test PKI's RSA-CA-signed ECC
+certificates, so no `ecc-security` is declared and `--ecc-dir` is ignored with a
+warning. Its server runs no LDS, mDNS or PubSub (`--lds`, `--mdns-name`,
+`--mdns-capability` and `--pubsub-config` exit 2). The test PKI is copied into
+the stack's directory stores (own / trusted / issuer / rejected, DER);
+SHA-1-signed certificates are rejected. See "Reference stacks" in the README for
+the stack deviations the go-opcua suite found.
 
 node-opcua 2.187.12 (added in adapter 0.9.0) implements no ECC
 `SecurityPolicy` (`node-opcua-secure-channel` ends at `Aes256_Sha256_RsaPss`;
