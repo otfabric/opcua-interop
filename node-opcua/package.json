@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "node-opcua": "2.187.12",
+    "node-opcua-server-configuration": "2.187.12",
     "node-opcua-types": "2.187.9"
   },
   "devDependencies": {

@@ -239,11 +239,14 @@ server ... --pubsub-config /pubsub/udp-unicast-subscriber.json
 server ... --certificate /certs/cert.crt --private-key /certs/cert.key --https-port 4843 --wss-port 4844
 # UA-.NETStandard, node-opcua, open62541 (v0.12.0, serverFeatures "alarms"): no flag — the server
 # carries the Alarms & Conditions fixture s=Alarms.InteropAlarm (fixtures/baseline/README.md "Alarms")
+# open62541, UA-.NETStandard, node-opcua (v0.13.0, serverFeatures "push-management"): with
+# --certificate / --private-key / --pki-dir the ServerConfiguration push certificate management of
+# Part 12 §7; fixture users with role "SecurityAdmin" may call it (docs/CLIENT_CONTRACT.md §15)
 ```
 
 ### Client commands
 
-Nineteen client operations, plus `pubsub-discover` on the dotnet adapter (see `print-capabilities` → `clientOperations` and
+Nineteen client operations, plus `pubsub-discover` on the dotnet adapter and `push` on node-opcua (see `print-capabilities` → `clientOperations` and
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
 
 ```sh
@@ -262,6 +265,9 @@ client event-subscribe --endpoint ... --node '...' [--events 1] [--timeout-ms 10
                  [--of-type i=2041] [--min-severity 100]
 client alarms    --endpoint ... [--node i=2253] [--condition-name InteropAlarm] \
                  [--acknowledge] [--confirm] [--add-comment] [--comment interop-comment]
+client push      --endpoint ... --security-mode SignAndEncrypt --username ... --password ... \
+                 [--add-certificate cert.der] [--remove-certificate <thumbprint>] [--issuer] \
+                 [--csr] [--apply]                        # node-opcua (v0.13.0), §15
 client history-read --endpoint ... --node '...' --start <rfc3339> --end <rfc3339> \
                  [--num-values 0] [--timestamps Both] [--scenario continue]
 client republish --endpoint ... --subscription-id <n> --sequence-number <n>

@@ -72,7 +72,8 @@ import {
     Variant,
     WriteRequest,
 } from "node-opcua";
-import { VariableAttributes } from "node-opcua-types";
+import { ClientPushCertificateManagement, TrustListMasks } from "node-opcua-server-configuration";
+import { TrustListDataType, VariableAttributes } from "node-opcua-types";
 
 import { certificateUri, readCertificateDer, toPemFiles } from "./server.js";
 import {
@@ -1928,6 +1929,81 @@ async function cmdAlarms(a: Args, r: Result): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
+// Push certificate management (Part 12 §7) — CLIENT_CONTRACT §17
+// ---------------------------------------------------------------------------
+
+function trustListJson(tl: TrustListDataType): Record<string, unknown> {
+    const b64 = (l: Buffer[] | null | undefined) => (l ?? []).map((c) => Buffer.from(c).toString("base64"));
+    return {
+        specifiedLists: tl.specifiedLists,
+        trustedCertificates: b64(tl.trustedCertificates as Buffer[]),
+        trustedCrls: b64(tl.trustedCrls as Buffer[]),
+        issuerCertificates: b64(tl.issuerCertificates as Buffer[]),
+        issuerCrls: b64(tl.issuerCrls as Buffer[]),
+    };
+}
+
+/**
+ * client push: node-opcua's ClientPushCertificateManagement / TrustListClient
+ * (node-opcua-server-configuration) against the ServerConfiguration object of
+ * the server — read the DefaultApplicationGroup trust list, AddCertificate /
+ * RemoveCertificate, CreateSigningRequest, GetRejectedList, ApplyChanges and
+ * read the trust list again.
+ */
+async function cmdPush(a: Args, r: Result): Promise<number> {
+    if (!a.get("--endpoint")) throw new InputError("missing --endpoint");
+    const addFile = a.get("--add-certificate");
+    const removeThumb = a.get("--remove-certificate");
+    const issuer = a.has("--issuer");
+    const csr = a.has("--csr");
+    const apply = a.has("--apply");
+    const add = addFile !== undefined ? readCertificateDer(addFile) : undefined;
+    const c = await connect(a);
+    const out: Record<string, unknown> = {};
+    const step = (name: string, sc: StatusCode | number): boolean => {
+        const v = typeof sc === "number" ? sc : sc.value;
+        out[name + "Status"] = statusJson(v);
+        if (isGood(v)) return true;
+        r.setService(v).fail("service", `${name} returned a non-Good status`);
+        return false;
+    };
+    try {
+        const pcm = new ClientPushCertificateManagement(c.session!);
+        const tl = await (await pcm.getApplicationGroup()).getTrustList();
+        out.trustList = trustListJson(await tl.readTrustedCertificateListWithMasks(TrustListMasks.All));
+        let ok = true;
+        if (ok && add) ok = step("addCertificate", await tl.addCertificate(add, !issuer));
+        if (ok && removeThumb !== undefined) ok = step("removeCertificate", await tl.removeCertificate(removeThumb, !issuer));
+        if (ok && csr) {
+            const res = await pcm.createSigningRequest(
+                "ns=0;i=14156",
+                ClientPushCertificateManagement.rsaSha256ApplicationCertificateType,
+                null,
+                false,
+            );
+            ok = step("createSigningRequest", res.statusCode);
+            if (ok) out.certificateSigningRequest = Buffer.from(res.certificateSigningRequest ?? []).toString("base64");
+        }
+        if (ok) {
+            const rej = await pcm.getRejectedList();
+            ok = step("getRejectedList", rej.statusCode);
+            if (ok) out.rejectedCertificates = (rej.certificates ?? []).map((x) => Buffer.from(x).toString("base64"));
+        }
+        if (ok && apply) ok = step("applyChanges", await pcm.applyChanges());
+        if (ok) out.trustListAfter = trustListJson(await tl.readTrustedCertificateListWithMasks(TrustListMasks.All));
+        r.add(out);
+        return ok ? EXIT_OK : EXIT_SERVICE;
+    } catch (e) {
+        // The trust list helpers throw on a Bad method result.
+        const sc = statusFromError(e);
+        if (sc !== undefined) throw new ServiceError(`push: ${(e as Error).message}`, sc);
+        throw e;
+    } finally {
+        await close(c);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -1952,6 +2028,7 @@ const COMMANDS: Record<string, Cmd> = {
     "find-servers-on-network": cmdFindServersOnNetwork,
     "register-server": cmdRegisterServer,
     alarms: cmdAlarms,
+    push: cmdPush,
 };
 
 /** The client operations this adapter dispatches (print-capabilities must declare exactly these). */
@@ -1964,7 +2041,7 @@ const UNSUPPORTED_OPS: Record<string, string> = {
 export const CLIENT_USAGE =
     "usage: client <endpoints|find-servers|read|write|browse|translate|call|subscribe|subscription-lifecycle|" +
     "event-subscribe|history-read [--scenario continue]|republish|transfer-subscriptions|register-nodes|node-management|" +
-    "find-servers-on-network|register-server|alarms> --endpoint <url> [flags]";
+    "find-servers-on-network|register-server|alarms|push> --endpoint <url> [flags]";
 
 export async function clientCommand(argv: string[]): Promise<number> {
     if (argv.length < 1) {

@@ -58,7 +58,9 @@ deadband / trigger), `subscription-lifecycle` (`revise`, `publishing-mode`,
 fallback), `find-servers-on-network`, `alarms` (ConditionRefresh on
 ConditionType with the RefreshStart / RefreshEnd bracket, then Acknowledge /
 Confirm / AddComment of a condition, each followed by its event; contract §1 /
-§4 `alarms`).
+§4 `alarms`), `push` (push certificate management of Part 12 §7 with
+ClientPushCertificateManagement of node-opcua-server-configuration; contract
+§1 / §4 / §15 `push`).
 
 **Client features:** `channel-lifetime`, `deadband`, `reverse-listen`
 (also with security), `application-uri`, `register-server2`.
@@ -92,7 +94,10 @@ Active (node-opcua sets it false, deviation 7), and Enable does not throw
 (deviation 8).
 
 **Server features:** `deadband`, `percent-deadband`, `reverse-connect`,
-`register-with`, `alarms`.
+`register-with`, `alarms`, `push-management` (with `--certificate`:
+`installPushCertificateManagementOnServer` of node-opcua-server-configuration
+2.187.12, channels open at ApplyChanges keep the old certificate; fixture
+users get the well-known roles of their `roles`; contract §15).
 
 **Security profiles** declared (verified on the client and the server side):
 None/None, Basic256Sha256 Sign and SignAndEncrypt, Aes128_Sha256_RsaOaep and

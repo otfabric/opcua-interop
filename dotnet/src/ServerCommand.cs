@@ -37,7 +37,7 @@ namespace OpcUaInterop
         protected override void OnServerStarted(IServerInternal server)
         {
             base.OnServerStarted(server);
-            server.IdentityRegistry.Register(new FixtureUserAuthenticator(m_fixture));
+            server.IdentityRegistry.Register(new FixtureUserAuthenticator(m_fixture, server.NamespaceUris));
         }
 
         protected override ServerProperties LoadServerProperties()
@@ -52,14 +52,25 @@ namespace OpcUaInterop
         }
     }
 
-    /// <summary>UserName tokens checked against the fixture users.</summary>
+    /// <summary>UserName tokens checked against the fixture users. A user is granted
+    /// the well-known roles (Part 3 §4.9.2) named in its fixture "roles" (by BrowseName,
+    /// e.g. "SecurityAdmin" for the push certificate management of Part 12 §7.2);
+    /// AuthenticatedUser is always granted.</summary>
     internal sealed class FixtureUserAuthenticator : IUserTokenAuthenticator
     {
-        private readonly Fixture m_fixture;
+        private static readonly Role[] s_wellKnown =
+        [
+            Role.Observer, Role.Operator, Role.Engineer, Role.Supervisor,
+            Role.ConfigureAdmin, Role.SecurityAdmin
+        ];
 
-        public FixtureUserAuthenticator(Fixture fixture)
+        private readonly Fixture m_fixture;
+        private readonly NamespaceTable m_namespaces;
+
+        public FixtureUserAuthenticator(Fixture fixture, NamespaceTable namespaces)
         {
             m_fixture = fixture;
+            m_namespaces = namespaces;
         }
 
         public UserTokenType TokenType => UserTokenType.UserName;
@@ -75,10 +86,17 @@ namespace OpcUaInterop
             string password = userName.DecryptedPassword == null
                 ? string.Empty
                 : System.Text.Encoding.UTF8.GetString(userName.DecryptedPassword.ToArray());
-            bool ok = m_fixture.Users.Any(u => u.Username == userName.UserName && (u.Password ?? string.Empty) == password);
-            return new ValueTask<AuthenticationResult>(ok
-                ? AuthenticationResult.Accept(new UserIdentity(userName))
-                : AuthenticationResult.Reject(new ServiceResult(StatusCodes.BadUserAccessDenied)));
+            Fixture.UserDef user = m_fixture.Users.FirstOrDefault(u => u.Username == userName.UserName && (u.Password ?? string.Empty) == password);
+            if (user == null)
+            {
+                return new ValueTask<AuthenticationResult>(AuthenticationResult.Reject(new ServiceResult(StatusCodes.BadUserAccessDenied)));
+            }
+            var roles = new List<Role> { Role.AuthenticatedUser };
+            roles.AddRange(s_wellKnown.Where(r => user.Roles.Contains(r.Name)));
+            IUserIdentity identity = roles.Count == 1
+                ? new UserIdentity(userName)
+                : new RoleBasedIdentity(new UserIdentity(userName), roles, m_namespaces);
+            return new ValueTask<AuthenticationResult>(AuthenticationResult.Accept(identity));
         }
     }
 

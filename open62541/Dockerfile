@@ -36,15 +36,21 @@ RUN git clone --depth 1 --branch "${OPEN62541_COMMIT}" "${OPEN62541_REPO}" open6
 #    whose broker connection drops while it is already shutting down (a
 #    refused or lost broker while a WriterGroup goes to Error); apply the
 #    delayed-removal fix of upstream master.
+#  * fix_gds_amalgamation.py — with UA_ENABLE_GDS_PUSHMANAGEMENT two static
+#    functions of src/server/ua_server_ns0_gds.c clash with static functions
+#    of the same name in other files of the single-file amalgamation; rename
+#    them.
 #  * fix_condition_refresh_args.py — with PubSub's generated IntegerId type
 #    the v1.5.9 A&C ConditionRefresh(2) callbacks reject every SubscriptionId
 #    (Bad_InvalidArgument); accept IntegerId (an alias of UInt32) as well.
 COPY amalgam/inline_mqtt.py amalgam/backport_json_reader.py \
-     amalgam/backport_mqtt_teardown.py amalgam/fix_condition_refresh_args.py /src/prepare/
+     amalgam/backport_mqtt_teardown.py amalgam/fix_condition_refresh_args.py \
+     amalgam/fix_gds_amalgamation.py /src/prepare/
 RUN python3 /src/prepare/inline_mqtt.py /src/open62541 \
     && python3 /src/prepare/backport_json_reader.py /src/open62541 \
     && python3 /src/prepare/backport_mqtt_teardown.py /src/open62541 \
-    && python3 /src/prepare/fix_condition_refresh_args.py /src/open62541
+    && python3 /src/prepare/fix_condition_refresh_args.py /src/open62541 \
+    && python3 /src/prepare/fix_gds_amalgamation.py /src/open62541
 
 # Only the amalgamation target is built: the adapter compiles open62541.c itself,
 # and with UA_ENABLE_AMALGAMATION + mDNS (mdnsd) the non-amalgamated object
@@ -55,7 +61,8 @@ RUN python3 /src/prepare/inline_mqtt.py /src/open62541 \
 # (MQTT-C), the PubSub information model with its configuration methods, the
 # Security Key Service (GetSecurityKeys / SetSecurityKeys, SKS pull client;
 # AddSecurityGroup is bound by the adapter) and the PubSubConfiguration file
-# loader. Alarms & Conditions (Part 9, EXPERIMENTAL in v1.5.9; needs the full
+# loader. ServerConfiguration push certificate management (Part 12 §7,
+# UA_ENABLE_GDS_PUSHMANAGEMENT). Alarms & Conditions (Part 9, EXPERIMENTAL in v1.5.9; needs the full
 # namespace zero, which the adapter builds anyway) for the Alarms fixture. The PubSub-Aes128/256-CTR message
 # security policies of v1.5.9 only exist for mbedTLS; the adapter carries an
 # OpenSSL implementation of them (src/pubsub_security.c).
@@ -81,6 +88,7 @@ RUN cmake .. \
       -DUA_ENABLE_PUBSUB_FILE_CONFIG=ON \
       -DUA_ENABLE_PUBSUB_SKS=ON \
       -DUA_ENABLE_MQTT=ON \
+      -DUA_ENABLE_GDS_PUSHMANAGEMENT=ON \
     && cmake --build . --target open62541-amalgamation -- -j"$(nproc)"
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import {
     DataType,
     DataValue,
     LocalizedText,
+    makeRoles,
     MessageSecurityMode,
     NodeId,
     OPCUACertificateManager,
@@ -25,10 +26,13 @@ import {
     VariantArrayType,
 } from "node-opcua";
 
+import { installPushCertificateManagementOnServer } from "node-opcua-server-configuration";
 import { ALARM_NODE, ALARM_RESET, AlarmFixture, ALARMS_SOURCE, installAlarmFixture } from "./alarms.js";
 import { BehaviorDef, Fixture, loadFixture, NodeDef } from "./fixture.js";
 import { ADAPTER, ADAPTER_VERSION, bigToInt64, log, makeStatus, parseNodeIdString, parseTypeName } from "./util.js";
 import { stackVersion } from "./capabilities.js";
+
+const WELL_KNOWN_ROLES = new Set(["Observer", "Operator", "Engineer", "Supervisor", "ConfigureAdmin", "SecurityAdmin"]);
 
 const EVENTS_SOURCE = "Events.Source";
 const HISTORY_NODE = "History.Temperature";
@@ -683,6 +687,19 @@ export async function serverCommand(argv: string[]): Promise<void> {
         automaticallyAcceptUnknownCertificate: false,
         disableFileWatchers: true,
     });
+    if (secure) {
+        // Push certificate management serves the certificate manager's own
+        // pair (<pki>/own/certs/certificate.pem and its private key): put the
+        // --certificate / --private-key pair there.
+        const ownCert = path.join(pkiRoot, "own", "certs", "certificate.pem");
+        const ownKey = serverCertificateManager.privateKey;
+        fs.mkdirSync(path.dirname(ownCert), { recursive: true });
+        fs.mkdirSync(path.dirname(ownKey), { recursive: true });
+        fs.copyFileSync(certificateFile!, ownCert);
+        fs.copyFileSync(privateKeyFile!, ownKey);
+        certificateFile = ownCert;
+        privateKeyFile = ownKey;
+    }
 
     const securityPolicies = new Set<SecurityPolicy>([SecurityPolicy.None]);
     const securityModes = new Set<MessageSecurityMode>([MessageSecurityMode.None]);
@@ -739,6 +756,14 @@ export async function serverCommand(argv: string[]): Promise<void> {
             ? {
                   isValidUser: (userName: string, password: string) =>
                       users.some((u) => u.username === userName && (u.password ?? "") === password),
+                  // The well-known roles of the fixture user (Part 3 §4.9.2), e.g.
+                  // SecurityAdmin for the push certificate management (Part 12 §7.2).
+                  getUserRoles: (userName: string) =>
+                      makeRoles(
+                          ["AuthenticatedUser", ...((users.find((u) => u.username === userName)?.roles ?? []).filter((r) =>
+                              WELL_KNOWN_ROLES.has(r),
+                          ))].join(";"),
+                      ),
               }
             : undefined,
         reverseConnect: o.reverseConnect.length
@@ -761,6 +786,12 @@ export async function serverCommand(argv: string[]): Promise<void> {
     }
 
     await server.initialize();
+    if (secure) {
+        // ServerConfiguration push management (Part 12 §7, serverFeatures
+        // "push-management"): the trust list is the PKI directory; channels open
+        // when ApplyChanges installs a new certificate keep the old one.
+        await installPushCertificateManagementOnServer(server, { closeChannelsOnApplyChanges: false });
+    }
     const ns = server.engine.addressSpace!.registerNamespace(fixture.namespaces[0].uri);
     const builder = new AddressSpaceBuilder(server, fixture, ns);
     builder.build();

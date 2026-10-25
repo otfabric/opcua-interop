@@ -37,6 +37,7 @@ this contract. Changes that break it require a major schema version bump.
 | `register-server` | RegisterServer2 / RegisterServer of an arbitrary server description with an LDS |
 | `codec` | Encode / decode built-in values in the OPC UA JSON and XML DataEncodings (no session needed for literals); PubSub NetworkMessages (UADP / JSON, §14) |
 | `alarms` | Alarms & Conditions (Part 9): ConditionRefresh on an event monitored item, then optionally Acknowledge / Confirm / AddComment on the refreshed condition |
+| `push` | Push certificate management (Part 12 §7, §15): read the DefaultApplicationGroup TrustList, AddCertificate / RemoveCertificate, CreateSigningRequest, GetRejectedList, ApplyChanges |
 
 Which of these (and which optional features) an image provides is declared by
 `print-capabilities` (§13). A feature the underlying stack does not implement is
@@ -309,6 +310,36 @@ first failing status (CreateMonitoredItems, ConditionRefresh or the method),
 for a missing target. Exit codes (§5): 0 success, 2 bad input (before
 connecting), 3 connect / transport, 4 service failure, 7 timeout. The result
 is printed in every case once the subscription exists.
+
+### `push` flags
+
+Push certificate management client (Part 12 §7) against the ServerConfiguration
+object of the server, node-opcua only (adapter 0.13.0, §15). The methods need
+an encrypted channel and a user with the SecurityAdmin role, so the command is
+run with `--security-policy … --security-mode SignAndEncrypt` and
+`--username` / `--password`.
+
+```
+<image> client push --endpoint <url> [--add-certificate <file>] [--remove-certificate <thumbprint>]
+        [--issuer] [--csr] [--apply]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--add-certificate <file>` | AddCertificate with this certificate (PEM or DER file) | — |
+| `--remove-certificate <thumbprint>` | RemoveCertificate (hexadecimal SHA-1 thumbprint) | — |
+| `--issuer` | AddCertificate / RemoveCertificate with `isTrustedCertificate` false (issuer list) | trusted list |
+| `--csr` | CreateSigningRequest (DefaultApplicationGroup, RsaSha256ApplicationCertificateType, no subject, `regeneratePrivateKey` false) | off |
+| `--apply` | ApplyChanges after the changes | off |
+
+`--issuer`, `--csr` and `--apply` are presence flags.
+
+Steps, stopping at the first Bad status: read the trust list
+(OpenWithMasks All, Read, Close) → AddCertificate → RemoveCertificate →
+CreateSigningRequest → GetRejectedList → ApplyChanges → read the trust list
+again. Exit codes (§5): 0 success, 2 bad input, 3 connect / transport, 4 a
+method returned a Bad status (`serviceResult` is that status, e.g.
+`BadUserAccessDenied` without the SecurityAdmin role).
 
 ### `history-read` flags
 
@@ -841,6 +872,29 @@ condition without ConfirmedState), of an unexpected type, or the null DateTime
 `repeatStatusCode` is `null` unless the first Acknowledge was Good and its
 event arrived. When CreateMonitoredItems fails, `refresh` carries that status
 with `startSeen` / `endSeen` false.
+
+### `push`
+
+```json
+"results": [
+  {
+    "trustList": { "specifiedLists": 15, "trustedCertificates": ["<base64 DER>", …],
+                   "trustedCrls": […], "issuerCertificates": […], "issuerCrls": […] },
+    "addCertificateStatus":       { "name": "Good", "code": 0, "severity": "Good" },
+    "removeCertificateStatus":    { … },
+    "createSigningRequestStatus": { … },
+    "certificateSigningRequest":  "<base64 PKCS #10 DER>",
+    "getRejectedListStatus":      { … },
+    "rejectedCertificates":       ["<base64 DER>", …],
+    "applyChangesStatus":         { … },
+    "trustListAfter":             { … }
+  }
+]
+```
+
+A `…Status` key is present only for a step that ran; the keys after a failed
+step are absent. `trustList` / `trustListAfter` hold all four lists (base64
+DER certificates and CRLs).
 
 ### `history-read`
 
@@ -1391,6 +1445,7 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `pubsub` | server | ✓ | — | — | ✓ | — | — | `--pubsub-config` (§14); open62541 also the PubSub information model and SKS, UA-.NETStandard static keys only (§14.13) |
 | `transport-wss` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.wss://…` (§9); server `--wss-port` (§11) |
 | `transport-https` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.https://…` (§9); server `--https-port` (§11) |
+| `push-management` | server | ✓ | — | — | ✓ | ✓ | — | ServerConfiguration push certificate management (Part 12 §7, §15) with `--certificate` / `--private-key` / `--pki-dir`; fixture users get the well-known roles of their `roles` (SecurityAdmin) |
 | `alarms` | server | ✓ (experimental) | — | — | ✓ | ✓ | — | the Alarms & Conditions fixture (`s=Alarms.*`, fixtures/baseline/README.md "Alarms"); Acknowledge / Confirm / AddComment / Enable / Disable / ConditionRefresh by the stack's own handlers (ConditionRefresh2 too, not exercised by `alarms`) |
 
 `transports` in `print-capabilities` lists the endpoint schemes the adapter
@@ -1406,6 +1461,7 @@ all six adapters since adapter 0.12.0:
 | Client operation | open62541 | Milo | async-opcua | UA-.NETStandard | node-opcua | asyncua |
 |------------------|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|
 | `alarms` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `push` (adapter 0.13.0, §15) | — | — | — | — | ✓ | — |
 
 **Alarm servers** (all three give `success: true` for
 `alarms --node i=2253 --condition-name InteropAlarm --acknowledge --confirm --add-comment`
@@ -2238,3 +2294,47 @@ dotnet image) runs the scenarios `codec`, `udp-unicast`, `udp-multicast`,
 `pubsub-discover` of both types against the multicast publisher) on the
 example files of `pubsub/examples/`; the SKS and information-model scenarios
 do not apply.
+
+## 15. Push certificate management (OPC UA Part 12 §7)
+
+Added in adapter **0.13.0**. The adapter servers that declare
+`serverFeatures` `push-management` serve the ServerConfiguration object
+(i=12637) of their stack when started with `--certificate`, `--private-key`
+and `--pki-dir`: the DefaultApplicationGroup with its TrustList (FileType and
+TrustListType methods), UpdateCertificate, CreateSigningRequest,
+GetRejectedList and ApplyChanges. The trust list is the one the server
+validates new channels with (`--pki-dir`, §11); the pushed changes stay in
+the container.
+
+**Roles.** A fixture user is granted the well-known roles (Part 3 §4.9.2)
+named in its `roles` by BrowseName: `Observer`, `Operator`, `Engineer`,
+`Supervisor`, `ConfigureAdmin`, `SecurityAdmin` (AuthenticatedUser always).
+Part 12 §7.2 limits the methods to SecurityAdmin on a SignAndEncrypt channel;
+a test adds such a user to a copy of the baseline fixture, e.g.
+
+```json
+{ "username": "sec-admin", "password": "sec-admin-password", "roles": ["AuthenticatedUser", "SecurityAdmin"] }
+```
+
+| | open62541 1.5.9 | UA-.NETStandard 2.0.1 | node-opcua 2.187.12 |
+|---|---|---|---|
+| Implementation | `UA_ENABLE_GDS_PUSHMANAGEMENT` (in-memory certificate group of `UA_ServerConfig_setDefaultWithSecurityPolicies`) | the stack's ConfigurationNodeManager | `installPushCertificateManagementOnServer` (node-opcua-server-configuration), `closeChannelsOnApplyChanges: false` |
+| Access | any session on a SignAndEncrypt channel (no roles in v1.5.9) | SecurityAdmin (fixture roles), SignAndEncrypt; others `BadUserAccessDenied` | as UA-.NETStandard |
+| CertificateTypes | RsaMin, RsaSha256 | RsaSha256 | RsaSha256 |
+| SupportedPrivateKeyFormats | PEM, DER | PFX, PEM | PEM |
+| ApplyChanges without a pending change | `BadNothingToDo` | Good | `BadNothingToDo` |
+| After ApplyChanges | the channels whose certificates changed are closed shortly after the response | — | open channels keep the old certificate |
+| ServerCertificate of the endpoints after UpdateCertificate with issuers | the certificate | the certificate followed by its issuers (a chain) | the certificate followed by its issuers |
+| RemoveCertificate thumbprint | hexadecimal, either case | upper-case hexadecimal only (`BadInvalidArgument` otherwise) | hexadecimal |
+
+The node-opcua server serves the certificate manager's own pair, so the
+adapter copies `--certificate` / `--private-key` to
+`<pki-dir>/own/certs/certificate.pem` and the manager's private key file.
+
+**Client.** `client push` (§1) is node-opcua's ClientPushCertificateManagement
+and TrustListClient. UA-.NETStandard's push client
+(ServerPushConfigurationClient, NuGet
+`OPCFoundation.NetStandard.Opc.Ua.Gds.Client.Common`) has no 2.0.1 release,
+open62541 v1.5.9 has no push client API; the other adapters do not offer
+`push`.
+

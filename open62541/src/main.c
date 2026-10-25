@@ -144,15 +144,17 @@ static int cmd_print_capabilities(void) {
     printf("    \"ecc-user-token\",\n");
     printf("    \"lds\",\n");
     printf("    \"mdns\",\n");
-    printf("    \"register-with\",\n");
     printf("    \"node-management\",\n");
+    printf("    \"pubsub\",\n");
 #ifdef UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS
     /* Alarms fixture (Part 9) on the EXPERIMENTAL v1.5.9 A&C server */
-    printf("    \"pubsub\",\n");
-    printf("    \"alarms\"\n");
-#else
-    printf("    \"pubsub\"\n");
+    printf("    \"alarms\",\n");
 #endif
+#ifdef UA_ENABLE_GDS_PUSHMANAGEMENT
+    /* ServerConfiguration push management (Part 12 §7) of the stack */
+    printf("    \"push-management\",\n");
+#endif
+    printf("    \"register-with\"\n");
     printf("  ],\n");
     printf("  \"codec\": {\n");
     printf("    \"formats\": [\"json\", \"xml\"],\n");
