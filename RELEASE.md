@@ -72,6 +72,27 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.12.0
+
+**Date:** 2026-10-25
+**Previous release:** v0.11.0
+
+### Summary
+
+Alarms & Conditions (Part 9): every adapter client has the `alarms` operation, and the UA-.NETStandard, node-opcua and open62541 servers carry an alarm fixture.
+
+### Added
+
+- **`alarms` client operation, all six adapters:** subscribes to events of `--node`, runs ConditionRefresh and reports the retained conditions; `--condition-name`, `--acknowledge`, `--confirm`, `--add-comment`, `--disable` / `--enable` call the Part 9 methods with the condition's latest EventId. CLIENT_CONTRACT.md §1 describes the flags and the result.
+- **Alarm fixture (serverFeatures `alarms`) in the UA-.NETStandard, node-opcua and open62541 servers:** an AlarmConditionType condition `s=Alarms.InteropAlarm` with ConfirmedState on the source `s=Alarms.Source`, and the method `s=Alarms.Reset` that makes it active, unacknowledged and enabled again (fixtures/baseline/README.md "Alarms").
+- **open62541:** the image is built with `UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS` (experimental in 1.5.9), and `amalgam/fix_condition_refresh_args.py` patches v1.5.9's ConditionRefresh argument check to accept the SubscriptionId the Call service converts to IntegerId.
+
+### Not supported
+
+- Eclipse Milo 1.1.8 has no condition state machine, asyncua 2.1.0 has no Acknowledge / Confirm / AddComment / Enable / Disable handlers, and no async-opcua server fixture was attempted: those servers do not declare `alarms`.
+
+---
+
 ## v0.11.0
 
 **Date:** 2026-10-25

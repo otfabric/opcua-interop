@@ -1,6 +1,6 @@
 {
   "name": "opcua-interop-node-opcua",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "description": "opcua-interop adapter for node-opcua (client + server, CLIENT_CONTRACT v1.0)",
   "license": "MIT",
