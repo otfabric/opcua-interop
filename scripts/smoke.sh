@@ -1271,15 +1271,18 @@ check_asyncua_deadband_deviation() {
     fi
 }
 
-# asyncua 2.1.0 has no HistoryUpdate handler: the server answers
-# BadServiceUnsupported (asyncua/README.md). The check fails when that changes.
+# asyncua 2.1.0 has no HistoryUpdate: its permission ruleset refuses the
+# request for the User role the adapter gives every session
+# (BadUserAccessDenied), and the dispatcher has no handler behind it
+# (BadServiceUnsupported for Admin) — asyncua/README.md. The check fails when
+# that changes.
 check_asyncua_history_update_deviation() {
     local image="$1" endpoint="$2" label="$3" out
     out=$(run_client_op "${image}" history-update-events --endpoint "${endpoint}" --node "${HEV_NODE}" \
             --perform delete --event-id aGlzdC1ldnQtMA==) || true
     validate_envelope "${out}" "${label}:history-update-events" || return
-    if echo "${out}" | jq -e '.success == false and .serviceResult.name == "BadServiceUnsupported"' >/dev/null 2>&1; then
-        ok "${label}: history-update-events → BadServiceUnsupported (known asyncua 2.1.0 deviation, asyncua/README.md)"
+    if echo "${out}" | jq -e '.success == false and (.serviceResult.name == "BadUserAccessDenied" or .serviceResult.name == "BadServiceUnsupported")' >/dev/null 2>&1; then
+        ok "${label}: history-update-events refused (known asyncua 2.1.0 deviation, asyncua/README.md)"
     else
         fail "${label}: history-update-events — unexpected (did asyncua gain HistoryUpdate?): ${out}"
     fi

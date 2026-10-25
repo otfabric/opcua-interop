@@ -11,7 +11,6 @@ import glob
 import sys
 
 from asyncua import Server, ua
-from asyncua.server.history import HistoryDict
 
 from . import capabilities, client, common, fixture
 
@@ -25,7 +24,7 @@ async def check_fixture(path: str) -> list[str]:
         return [f"{path}: invalid: {e}"]
     srv = Server()
     await srv.init()
-    history = HistoryDict()
+    history = fixture.History(srv)
     srv.iserver.history_manager.set_storage(history)
     space = fixture.AddressSpaceBuilder(srv, data, history)
     try:
@@ -33,6 +32,11 @@ async def check_fixture(path: str) -> list[str]:
     except Exception as e:  # noqa: BLE001
         return [f"{path}: cannot build the address space: {e}"]
     problems = []
+    if space.history_events is not None:
+        evs, _ = await history.read_event_history(space.history_events, fixture.history_event(space.history_events, 0).Time,
+                                                  fixture.history_event(space.history_events, 4).Time, 0, ua.EventFilter())
+        if [bytes(e.EventId) for e in evs] != [f"hist-evt-{i}".encode() for i in range(5)]:
+            problems.append(f"{path}: History.Events does not hold the five seed events")
     for nd in data["nodes"]:
         nid = space.nodes.get(nd["nodeId"])
         if nid is None:

@@ -54,7 +54,10 @@ def capabilities() -> dict:
         # previous *sample* instead of the last reported value and ignores percent
         # deadbands), node-management (AddNodes/DeleteNodes need asyncua's Admin role,
         # which also bypasses AccessLevel checks), lds / mdns, reverse-connect, ECC, pubsub.
-        "serverFeatures": ["register-with"],
+        # history-events: History.Events with its five seed events (fixture.History:
+        # asyncua's HistoryDict with the WhereClause and NumValuesPerNode paging
+        # added). Not history-events-update: asyncua has no HistoryUpdate.
+        "serverFeatures": ["register-with", "history-events"],
         "pubsub": {
             "supported": False,
             "reason": "asyncua's PubSub (UADP over UDP, experimental) is not wired to the adapter: "
