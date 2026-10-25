@@ -40,7 +40,7 @@ public class CapabilitiesCommand {
         out.put("encodings",             Collections.singletonList("binary"));
         out.put("clientOperations",      Arrays.asList(
                 "endpoints", "find-servers", "read", "write", "browse", "translate",
-                "call", "subscribe", "subscription-lifecycle", "event-subscribe",
+                "call", "subscribe", "subscription-lifecycle", "event-subscribe", "alarms",
                 "history-read", "republish", "transfer-subscriptions",
                 "register-nodes", "node-management",
                 "find-servers-on-network", "register-server", "codec"));

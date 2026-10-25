@@ -90,7 +90,7 @@ public class ClientCommand {
     public static int run(String[] args) {
         if (args.length < 1) {
             System.err.println("usage: client <endpoints|find-servers|read|write|browse|translate|"
-                + "call|subscribe|subscription-lifecycle|event-subscribe|history-read|"
+                + "call|subscribe|subscription-lifecycle|event-subscribe|alarms|history-read|"
                 + "republish|transfer-subscriptions|register-nodes|node-management|"
                 + "find-servers-on-network|register-server|codec> ...");
             return 1;
@@ -111,6 +111,7 @@ public class ClientCommand {
                 case "subscribe":    return cmdSubscribe(rest);
                 case "subscription-lifecycle": return cmdSubscriptionLifecycle(rest);
                 case "event-subscribe":        return cmdEventSubscribe(rest);
+                case "alarms":                 return cmdAlarms(rest);
                 case "history-read":           return cmdHistoryRead(rest);
                 case "republish":              return cmdRepublish(rest);
                 case "transfer-subscriptions": return cmdTransferSubscriptions(rest);
@@ -1267,6 +1268,381 @@ public class ClientCommand {
         } finally {
             safeDisconnect(client, dto);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // alarms (Part 9: ConditionRefresh, Acknowledge, Confirm, AddComment)
+    // -------------------------------------------------------------------------
+
+    private static final long BAD_TIMEOUT = 0x800A0000L;
+    private static final long BAD_NODEID_UNKNOWN = 0x80340000L;
+    private static final NodeId REFRESH_START_EVENT = new NodeId(0, uint(2787));
+    private static final NodeId REFRESH_END_EVENT = new NodeId(0, uint(2788));
+
+    /** `--acknowledge` alone, or `--acknowledge true|false`. */
+    static boolean presenceFlag(String[] args, String flag) {
+        for (int i = 0; i < args.length; i++) {
+            if (flag.equals(args[i])) {
+                if (i + 1 < args.length) {
+                    String n = args[i + 1].toLowerCase(Locale.ROOT);
+                    if (n.equals("false") || n.equals("0") || n.equals("no")) return false;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The 16 select clauses of the contract (§4 `alarms`), in order. */
+    static SimpleAttributeOperand[] alarmSelectClauses() {
+        Object[][] spec = {
+            {2041, new String[]{"EventId"}},
+            {2041, new String[]{"EventType"}},
+            {2041, new String[]{"SourceNode"}},
+            {2041, new String[]{"SourceName"}},
+            {2041, new String[]{"Time"}},
+            {2041, new String[]{"Message"}},
+            {2041, new String[]{"Severity"}},
+            {2782, new String[]{"ConditionName"}},
+            {2782, new String[]{"BranchId"}},
+            {2782, new String[]{"Retain"}},
+            {2782, new String[]{"EnabledState", "Id"}},
+            {2782, new String[]{"Comment"}},
+            {2881, new String[]{"AckedState", "Id"}},
+            {2881, new String[]{"ConfirmedState", "Id"}},
+            {2915, new String[]{"ActiveState", "Id"}},
+        };
+        SimpleAttributeOperand[] out = new SimpleAttributeOperand[spec.length + 1];
+        for (int i = 0; i < spec.length; i++) {
+            String[] path = (String[]) spec[i][1];
+            QualifiedName[] qn = new QualifiedName[path.length];
+            for (int j = 0; j < path.length; j++) qn[j] = new QualifiedName(0, path[j]);
+            out[i] = new SimpleAttributeOperand(new NodeId(0, uint((Integer) spec[i][0])), qn,
+                AttributeId.Value.uid(), null);
+        }
+        // ConditionId: ConditionType, empty BrowsePath, AttributeId NodeId (Part 9 §5.5.2)
+        out[spec.length] = new SimpleAttributeOperand(new NodeId(0, uint(2782)), new QualifiedName[0],
+            AttributeId.NodeId.uid(), null);
+        return out;
+    }
+
+    private static Object alarmField(Variant[] f, int i) {
+        if (f == null || i >= f.length || f[i] == null || f[i].isNull()) return null;
+        Object v = f[i].getValue();
+        if (v instanceof StatusCode || v.getClass().isArray()) return null;
+        return v;
+    }
+
+    private static String alarmNodeId(Variant[] f, int i) {
+        Object v = alarmField(f, i);
+        if (v instanceof ExpandedNodeId) {
+            return null; // event fields carry NodeIds; a non-local ExpandedNodeId is not a ConditionId
+        }
+        return v instanceof NodeId ? ResultBuilder.nodeIdToString((NodeId) v) : null;
+    }
+
+    private static String alarmText(Variant[] f, int i) {
+        Object v = alarmField(f, i);
+        if (v instanceof LocalizedText) return ((LocalizedText) v).getText();
+        return v instanceof String ? (String) v : null;
+    }
+
+    private static Boolean alarmBool(Variant[] f, int i) {
+        Object v = alarmField(f, i);
+        return v instanceof Boolean ? (Boolean) v : null;
+    }
+
+    /** ConditionEntry of the contract (key order fixed). */
+    static Map<String, Object> conditionEntry(Variant[] f) {
+        Map<String, Object> e = new LinkedHashMap<>();
+        Object eid = alarmField(f, 0);
+        Object src = alarmField(f, 3);
+        Object cn = alarmField(f, 7);
+        Object time = alarmField(f, 4);
+        Object sev = alarmField(f, 6);
+        e.put("conditionId",   alarmNodeId(f, 15));
+        e.put("eventId",       eid instanceof ByteString && ((ByteString) eid).bytes() != null
+                ? Base64.getEncoder().encodeToString(((ByteString) eid).bytes()) : null);
+        e.put("eventType",     alarmNodeId(f, 1));
+        e.put("sourceNode",    alarmNodeId(f, 2));
+        e.put("sourceName",    src instanceof String ? src : null);
+        e.put("conditionName", cn instanceof String ? cn : null);
+        e.put("time",          time instanceof DateTime ? ((DateTime) time).getJavaInstant().toString() : null);
+        e.put("message",       alarmText(f, 5));
+        e.put("severity",      sev instanceof UShort ? ((UShort) sev).intValue() : null);
+        e.put("retain",        alarmBool(f, 9));
+        e.put("enabled",       alarmBool(f, 10));
+        e.put("acked",         alarmBool(f, 12));
+        e.put("confirmed",     alarmBool(f, 13));
+        e.put("active",        alarmBool(f, 14));
+        e.put("comment",       alarmText(f, 11));
+        return e;
+    }
+
+    /** Raw Publish loop state for the alarms command (single-threaded). */
+    private static final class AlarmEvents {
+        final OpcUaClient client;
+        final long rto;
+        final long deadline;
+        final List<Variant[]> fields = new ArrayList<>();
+        final List<Map<String, Object>> entries = new ArrayList<>();
+        final Map<String, Map<String, Object>> latest = new HashMap<>();
+        final List<SubscriptionAcknowledgement> acks = new ArrayList<>();
+
+        AlarmEvents(OpcUaClient client, long rto, long deadline) {
+            this.client = client;
+            this.rto = rto;
+            this.deadline = deadline;
+        }
+
+        /** One Publish; false when the deadline has passed or Publish failed. */
+        boolean pump() {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) return false;
+            PublishResponse resp;
+            try {
+                resp = (PublishResponse) client.sendRequest(new PublishRequest(
+                    newRequestHeader(client, Math.min(remaining + 2000, rto + 2000)),
+                    acks.toArray(new SubscriptionAcknowledgement[0])));
+            } catch (Exception e) {
+                return false;
+            }
+            acks.clear();
+            NotificationMessage nm = resp.getNotificationMessage();
+            if (nm == null || nm.getNotificationData() == null || nm.getNotificationData().length == 0) {
+                return true;
+            }
+            if (nm.getSequenceNumber() != null && resp.getSubscriptionId() != null) {
+                acks.add(new SubscriptionAcknowledgement(resp.getSubscriptionId(), nm.getSequenceNumber()));
+            }
+            for (ExtensionObject eo : nm.getNotificationData()) {
+                Object decoded = eo.decode(client.getStaticEncodingContext());
+                if (!(decoded instanceof EventNotificationList)) continue;
+                EventFieldList[] evts = ((EventNotificationList) decoded).getEvents();
+                if (evts == null) continue;
+                for (EventFieldList ev : evts) {
+                    if (!uint(1).equals(ev.getClientHandle())) continue;
+                    Variant[] f = ev.getEventFields() != null ? ev.getEventFields() : new Variant[0];
+                    Map<String, Object> entry = conditionEntry(f);
+                    fields.add(f);
+                    entries.add(entry);
+                    if (entry.get("conditionId") != null) {
+                        latest.put((String) entry.get("conditionId"), entry);
+                    }
+                }
+            }
+            return true;
+        }
+
+        Map<String, Object> waitFor(int from, java.util.function.Predicate<Map<String, Object>> p) {
+            int idx = from;
+            while (true) {
+                while (idx < entries.size()) {
+                    Map<String, Object> e = entries.get(idx++);
+                    if (p.test(e)) return e;
+                }
+                if (!pump()) return null;
+            }
+        }
+    }
+
+    private static StatusCode callStatus(OpcUaClient client, NodeId obj, NodeId method, Variant[] in) {
+        try {
+            CallResponse resp = client.call(List.of(new CallMethodRequest(obj, method, in)));
+            return resp.getResults()[0].getStatusCode();
+        } catch (UaException e) {
+            return e.getStatusCode();
+        } catch (Exception e) {
+            Throwable c = e.getCause();
+            if (c instanceof UaException) return ((UaException) c).getStatusCode();
+            return new StatusCode(org.eclipse.milo.opcua.stack.core.StatusCodes.Bad_UnexpectedError);
+        }
+    }
+
+    private static int cmdAlarms(String[] args) throws Exception {
+        String endpointUrl = findArg(args, "--endpoint");
+        if (endpointUrl == null) {
+            throw new InputException("missing --endpoint");
+        }
+        String nodeStr  = Optional.ofNullable(findArg(args, "--node")).orElse("i=2253");
+        String condName = findArg(args, "--condition-name");
+        boolean doAck     = presenceFlag(args, "--acknowledge");
+        boolean doConfirm = presenceFlag(args, "--confirm");
+        boolean doComment = presenceFlag(args, "--add-comment");
+        String comment  = Optional.ofNullable(findArg(args, "--comment")).orElse("interop-comment");
+        long   toMs     = parseLongArg(args, "--timeout-ms", 15000L);
+        double piMs     = parseDoubleArg(args, "--publishing-interval-ms", 200.0);
+        long   cto      = connectTimeoutMs(args);
+        long   rto      = requestTimeoutMs(args);
+        long   dto      = disconnectTimeoutMs(args);
+        if (!nodeStr.startsWith("nsu=")) {
+            NodeIdParser.parse(nodeStr);
+        } else if (nodeStr.indexOf(';', 4) < 0) {
+            throw new NodeIdParser.InvalidNodeIdException("malformed nsu= NodeId (missing ';'): " + nodeStr);
+        }
+
+        OpcUaClient client = connectClient(endpointUrl, cto, rto, args);
+        try {
+            NodeId nodeId = NodeIdParser.resolveWithClient(nodeStr, client, rto);
+            long deadline = System.currentTimeMillis() + toMs;
+            EventFilter filter = new EventFilter(alarmSelectClauses(), new ContentFilter(new ContentFilterElement[0]));
+            ExtensionObject filterEO = ExtensionObject.encode(client.getStaticEncodingContext(), filter);
+
+            // keep-alives well inside the request timeout, so no Publish times out locally
+            long keepAlive = Math.max(1, Math.min(20, (long) (rto / 2 / Math.max(piMs, 1))));
+            CreateSubscriptionResponse csResp = (CreateSubscriptionResponse) client.sendRequest(
+                new CreateSubscriptionRequest(newRequestHeader(client, rto), piMs,
+                    uint(Math.max(keepAlive * 10, 30)), uint(keepAlive), uint(0), true, ubyte(0)));
+            StatusCode csStatus = csResp.getResponseHeader().getServiceResult();
+            if (!csStatus.isGood()) {
+                System.out.println(new ResultBuilder("alarms").success(false).serviceResult(csStatus)
+                    .error("service", "CreateSubscription failed").toJson());
+                return 4;
+            }
+            UInteger subId = csResp.getSubscriptionId();
+
+            MonitoredItemCreateRequest monReq = new MonitoredItemCreateRequest(
+                new ReadValueId(nodeId, AttributeId.EventNotifier.uid(), null, QualifiedName.NULL_VALUE),
+                MonitoringMode.Reporting,
+                new MonitoringParameters(uint(1), 0.0, filterEO, uint(1000), true));
+            CreateMonitoredItemsResponse cmResp = (CreateMonitoredItemsResponse) client.sendRequest(
+                new CreateMonitoredItemsRequest(newRequestHeader(client, rto), subId, TimestampsToReturn.Both,
+                    new MonitoredItemCreateRequest[]{monReq}));
+            StatusCode monSc = cmResp.getResponseHeader().getServiceResult();
+            if (cmResp.getResults() != null && cmResp.getResults().length > 0) {
+                monSc = cmResp.getResults()[0].getStatusCode();
+            }
+
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("nodeId", ResultBuilder.nodeIdToString(nodeId));
+            item.put("subscriptionId", subId.longValue());
+            item.put("monitoredItemStatusCode", ResultBuilder.statusCodeJson(monSc));
+            Map<String, Object> refresh = new LinkedHashMap<>();
+            refresh.put("statusCode", ResultBuilder.statusCodeJson(monSc));
+            refresh.put("startSeen", false);
+            refresh.put("endSeen", false);
+            item.put("refresh", refresh);
+            item.put("conditions", new ArrayList<>());
+            item.put("target", null);
+            item.put("acknowledge", null);
+            item.put("confirm", null);
+            item.put("addComment", null);
+            ResultBuilder rb = new ResultBuilder("alarms").addResult(item);
+            int rc = alarmsRun(client, rto, deadline, subId, monSc, condName,
+                new boolean[]{doAck, doConfirm, doComment}, comment, item, refresh, rb);
+            try {
+                client.sendRequest(new DeleteSubscriptionsRequest(newRequestHeader(client, dto),
+                    new UInteger[]{subId}));
+            } catch (Exception ignored) {}
+            System.out.println(rb.toJson());
+            return rc;
+        } finally {
+            safeDisconnect(client, dto);
+        }
+    }
+
+    private static int alarmsRun(OpcUaClient client, long rto, long deadline, UInteger subId, StatusCode monSc,
+            String condName, boolean[] wanted, String comment,
+            Map<String, Object> item, Map<String, Object> refresh, ResultBuilder rb) throws Exception {
+        if (!monSc.isGood()) {
+            rb.success(false).serviceResult(monSc)
+                .error("service", "CreateMonitoredItems rejected the event monitored item");
+            return 4;
+        }
+        AlarmEvents ev = new AlarmEvents(client, rto, deadline);
+
+        // ConditionRefresh (Part 9 §5.5.7) on ConditionType; notifications that
+        // arrive meanwhile are queued by the server and come with the next Publish.
+        int idx = ev.entries.size();
+        StatusCode refreshSc = callStatus(client, new NodeId(0, uint(2782)), new NodeId(0, uint(3875)),
+            new Variant[]{new Variant(subId)});
+        refresh.put("statusCode", ResultBuilder.statusCodeJson(refreshSc));
+        if (!refreshSc.isGood()) {
+            rb.success(false).serviceResult(refreshSc).error("service", "ConditionRefresh failed");
+            return 4;
+        }
+        Map<String, Map<String, Object>> conditions = new LinkedHashMap<>();
+        boolean end = false;
+        while (!end) {
+            while (idx < ev.entries.size() && !end) {
+                Variant[] f = ev.fields.get(idx);
+                Map<String, Object> e = ev.entries.get(idx);
+                idx++;
+                Object et = alarmField(f, 1);
+                if (REFRESH_START_EVENT.equals(et)) {
+                    refresh.put("startSeen", true);
+                } else if (REFRESH_END_EVENT.equals(et)) {
+                    end = true;
+                } else if (e.get("conditionId") != null) {
+                    conditions.put((String) e.get("conditionId"), e);
+                }
+            }
+            if (!end && !ev.pump()) break;
+        }
+        refresh.put("endSeen", end);
+        List<Map<String, Object>> conds = new ArrayList<>(conditions.values());
+        item.put("conditions", conds);
+        if (!end) {
+            rb.success(false).serviceResult(BAD_TIMEOUT).error("timeout", "timeout waiting for the RefreshEndEvent");
+            return 7;
+        }
+
+        Map<String, Object> target = null;
+        for (Map<String, Object> e : conds) {
+            boolean match = condName != null ? condName.equals(e.get("conditionName"))
+                                             : Boolean.TRUE.equals(e.get("retain"));
+            if (match) { target = e; break; }
+        }
+        item.put("target", target);
+        if (target == null) {
+            if (wanted[0] || wanted[1] || wanted[2]) {
+                rb.success(false).serviceResult(BAD_NODEID_UNKNOWN)
+                    .error("service", "no matching condition in the ConditionRefresh");
+                return 4;
+            }
+            return 0;
+        }
+
+        String cidStr = (String) target.get("conditionId");
+        NodeId cid = NodeIdParser.parse(cidStr);
+        Variant ltV = new Variant(new LocalizedText("en", comment));
+        String[] keys = {"acknowledge", "confirm", "addComment"};
+        int[] methods = {9111, 9113, 9029};
+        for (int a = 0; a < keys.length; a++) {
+            if (!wanted[a]) continue;
+            String key = keys[a];
+            NodeId method = new NodeId(0, uint(methods[a]));
+            Map<String, Object> latest = ev.latest.getOrDefault(cidStr, target);
+            String eidB64 = (String) latest.get("eventId");
+            ByteString eid = eidB64 != null ? ByteString.of(Base64.getDecoder().decode(eidB64)) : ByteString.NULL_VALUE;
+            Variant[] in = {new Variant(eid), ltV};
+            int mark = ev.entries.size();
+            StatusCode sc = callStatus(client, cid, method, in);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("statusCode", ResultBuilder.statusCodeJson(sc));
+            out.put("event", null);
+            if (a == 0) out.put("repeatStatusCode", null);
+            item.put(key, out);
+            if (!sc.isGood()) {
+                rb.success(false).serviceResult(sc).error("service", key + " failed");
+                return 4;
+            }
+            final int ai = a;
+            Map<String, Object> got = ev.waitFor(mark, e -> cidStr.equals(e.get("conditionId")) && (
+                ai == 0 ? Boolean.TRUE.equals(e.get("acked"))
+                : ai == 1 ? Boolean.TRUE.equals(e.get("confirmed"))
+                : comment.equals(e.get("comment"))));
+            out.put("event", got);
+            if (a == 0) {
+                // the same, now stale EventId again (BadConditionBranchAlreadyAcked / BadEventIdUnknown)
+                out.put("repeatStatusCode", ResultBuilder.statusCodeJson(callStatus(client, cid, method, in)));
+            }
+            if (got == null) {
+                rb.success(false).serviceResult(BAD_TIMEOUT).error("timeout", "timeout waiting for the " + key + " event");
+                return 7;
+            }
+        }
+        return 0;
     }
 
     // -------------------------------------------------------------------------
