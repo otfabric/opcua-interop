@@ -7,7 +7,7 @@ namespace OpcUaInterop
     /// <summary>print-capabilities (docs/CLIENT_CONTRACT.md §13, §16; schemas/capabilities.schema.json).</summary>
     internal static class Capabilities
     {
-        public const string AdapterVersion = "0.14.0";
+        public const string AdapterVersion = "0.15.0";
 
         /// <summary>The UA-.NETStandard release the csproj pins.</summary>
         public const string PinnedStackVersion = "2.0.1";
