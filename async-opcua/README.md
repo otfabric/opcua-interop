@@ -54,7 +54,8 @@ async-opcua has no client API for.
 deadband / trigger), `subscription-lifecycle` (`revise`, `publishing-mode`,
 `monitoring-mode`, `delete`), `event-subscribe` (`--of-type`,
 `--min-severity`), `history-read` (raw, continuation points,
-`--scenario continue`), `republish`, `transfer-subscriptions`,
+`--scenario continue`), `history-read-events` / `history-update-events`
+(since 0.17.0, see below), `republish`, `transfer-subscriptions`,
 `register-nodes`, `node-management`, `register-server` (RegisterServer2 with
 fallback), `find-servers-on-network`, `alarms`, and since 0.15.0:
 
@@ -107,6 +108,25 @@ of the Aes policies; the adapter accepts those names but does not claim them.
 The server offers the non-None profiles of the fixture when started with
 `--certificate` / `--private-key`. User tokens: Anonymous,
 UserName (encrypted per policy; plaintext over None like the other adapters).
+
+**Historical events (0.17.0):** `history-read-events` sends one
+HistoryRead with `ReadEventDetails` for all `--node`s through the generic
+`HistoryRead` builder of async-opcua 0.19 (`HistoryReadAction::ReadEventDetails`);
+`--start` / `--end` omitted are the null DateTime, the SelectClauses are the
+`--select` paths from BaseEventType (`ns:Name` segments for namespace `ns`),
+and `--of-type` / `--min-severity` build the WhereClause with element 0 as the
+root (`And(1, 2)` when both are given). `--scenario continue` pages with
+`--num-values` (0 → 2) up to `--max-pages` (8) on one session, then releases
+the last continuation point and tries to reuse it, as `history-read` does.
+`history-update-events` sends `UpdateEventDetails` (insert / replace /
+update, the `--event` objects in `--select` order, a path an event lacks is a
+null Variant; without `--select` the paths are the events' keys in first-seen
+order) or `DeleteEventDetails` (`--event-id`) through the generic
+`HistoryUpdate` builder; `operationResults` are reported as the server sent
+them. No deviation from the contract: the stack's builders send exactly the
+requested details. The async-opcua server keeps no event history (no
+`History.Events`, no `history-events` server feature): async-opcua 0.19 has
+no historian for events, only the node manager hooks.
 
 ## Not provided (declared, refused with exit 2)
 

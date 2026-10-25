@@ -581,7 +581,7 @@ fn svc_err(e: opcua::types::Error, what: &str) -> Failure {
 
 // ── Entry ───────────────────────────────────────────────────────────────────
 
-pub const OPERATIONS: [&str; 20] = [
+pub const OPERATIONS: [&str; 22] = [
     "endpoints",
     "find-servers",
     "read",
@@ -594,6 +594,8 @@ pub const OPERATIONS: [&str; 20] = [
     "event-subscribe",
     "alarms",
     "history-read",
+    "history-read-events",
+    "history-update-events",
     "republish",
     "transfer-subscriptions",
     "register-nodes",
@@ -641,6 +643,12 @@ pub async fn run(args: &[String]) -> i32 {
         "event-subscribe" => run_op(sub, rest, |o| Box::pin(op_events(o))).await,
         "alarms" => run_op(sub, rest, |o| Box::pin(op_alarms(o))).await,
         "history-read" => run_op(sub, rest, |o| Box::pin(op_history(o))).await,
+        "history-read-events" => {
+            run_op(sub, rest, |o| Box::pin(history_events::op_history_read_events(o))).await
+        }
+        "history-update-events" => {
+            run_op(sub, rest, |o| Box::pin(history_events::op_history_update_events(o))).await
+        }
         "republish" => run_op(sub, rest, |o| Box::pin(op_republish(o))).await,
         "transfer-subscriptions" => run_op(sub, rest, |o| Box::pin(op_transfer(o))).await,
         "register-nodes" => run_op(sub, rest, |o| Box::pin(op_register_nodes(o))).await,
@@ -695,6 +703,7 @@ macro_rules! with_conn {
 // Part 12 push management, the Query service set and the GDS pull model
 // (CLIENT_CONTRACT §15, §1 "query flags", §16.2); after `with_conn!`.
 mod gds_pull;
+mod history_events;
 mod part12;
 mod push;
 mod query;
