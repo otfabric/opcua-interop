@@ -2587,3 +2587,14 @@ exit 3, bad input exit 2 (§5).
 - QueryServers / QueryApplications have no access check in 1.5.378, so
   Anonymous sessions may call them (not exercised by `gds-pull`);
   FindApplications needs AuthenticatedUser.
+- The CRL of the ECC CA is signed with ECDSA (outer signatureAlgorithm
+  ecdsa-with-SHA256) but its TBSCertList names sha256WithRSAEncryption;
+  RFC 5280 §5.1.1.2 requires both to be equal, and strict parsers (Go's
+  crypto/x509) refuse the CRL. The RSA CA's CRL is well formed.
+- The client reads the TrustList with the MethodIds of the type
+  (`FileType_Open`, `FileType_Read`, `FileType_Close`) on the TrustList
+  object, as Part 4 §5.11.2.2 permits; a server must resolve them to the
+  methods of the instance.
+- StartNewKeyPairRequest with privateKeyFormat `PFX` returns a PKCS #12
+  with the key, the certificate and its issuer, protected with the password
+  (not exercised by `gds-pull`, which asks for PEM).
