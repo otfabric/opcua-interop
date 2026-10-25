@@ -38,6 +38,31 @@ def load_crl(path) -> x509.CertificateRevocationList:
     return x509.load_der_x509_crl(data)
 
 
+def leaf_certificate(der: bytes) -> bytes:
+    """The first certificate of a DER blob that may be a certificate chain.
+
+    A ServerCertificate (EndpointDescription, CreateSession) may hold the
+    application instance certificate followed by its issuers, DER certificates
+    concatenated (Part 6 §6.2.3); UA-.NETStandard 2.0.1 servers send the chain by
+    default (SecurityConfiguration.SendCertificateChain). asyncua's own endpoint
+    selection peels the leaf off (client._first_cert_from_chain), but
+    Client.set_security(server_certificate=...) parses the bytes it is given as
+    one certificate, which fails on a chain ("ExtraData"). The length comes
+    from the outer SEQUENCE header (short or long form); a blob that is not a
+    DER SEQUENCE, or is shorter than its header says, is returned unchanged."""
+    if len(der) < 2 or der[0] != 0x30:
+        return der
+    first = der[1]
+    if first < 0x80:
+        end = 2 + first
+    else:
+        n = first & 0x7F
+        if n == 0 or n > 4 or len(der) < 2 + n:
+            return der
+        end = 2 + n + int.from_bytes(der[2 : 2 + n], "big")
+    return der[:end] if end <= len(der) else der
+
+
 def application_uri(cert: x509.Certificate) -> str | None:
     """The first URI of the SubjectAlternativeName (the ApplicationUri)."""
     try:

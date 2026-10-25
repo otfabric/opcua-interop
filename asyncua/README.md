@@ -133,6 +133,11 @@ list would stop. `pki.py` loads the files itself and hands them to asyncua's
 - **Client:** the `--trust-list` files (the CA or the server certificate) are
   the only trust anchors (chain, validity, revocation). Without `--trust-list`
   every server certificate is accepted (as Milo does).
+  A ServerCertificate that is a chain (leaf, then issuers, as UA-.NETStandard
+  2.0.1 servers send it) is reduced to its leaf before it is handed to
+  `Client.set_security`, which reads its `server_certificate` as a single
+  certificate (since 0.15.1; 0.15.0 failed with `ExtraData`,
+  CLIENT_CONTRACT.md §16.3).
 
 ## Stack deviations found by the go-opcua interop suite
 

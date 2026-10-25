@@ -72,6 +72,32 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.15.1
+
+**Date:** 2026-10-25
+**Previous release:** v0.15.0
+
+### Summary
+
+asyncua connects over Sign / SignAndEncrypt to UA-.NETStandard 2.0.1 servers again, which send their certificate with its issuer chain. The `dotnet-gds` server gets `--no-certificate-chain` for clients that take no chain, and CLIENT_CONTRACT.md §16.3 records which client stacks take one.
+
+### Added
+
+- **`--no-certificate-chain`** server flag of `dotnet-gds` (CLIENT_CONTRACT.md §16.1): GetEndpoints and CreateSession return the server certificate alone (`SecurityConfiguration.SendCertificateChain = false`). The default is unchanged: the certificate followed by its issuers, as Part 6 §6.2.3 allows. `scripts/smoke.sh dotnet-gds` runs `gds-pull` against such a server too.
+
+### Fixed
+
+- **asyncua client against UA-.NETStandard 2.0.1 servers** (`dotnet`, `dotnet-gds`) with a CA-signed certificate: every secure command, `gds-pull` included, stopped with `cannot use the client certificate / key: error parsing asn1 value: ParseError { kind: ExtraData }`. The adapter handed the endpoint's ServerCertificate, a chain, to `Client.set_security`, which reads one certificate. It now passes the leaf. opcua-asyncio 2.1.0 itself takes chains.
+
+### Notes
+
+- CLIENT_CONTRACT.md §16.3 lists the client stacks against the 2.0.1 server's certificate chain:
+  - open62541 v1.5.9 fails with `BadCertificateInvalid` after CreateSession, because it compares the response's ServerCertificate with the leaf byte for byte (`src/client/ua_client_connect.c:1694`). It connects with `--no-certificate-chain`.
+  - async-opcua 0.19.0 cannot parse a chain at all (`X509::from_der`, async-opcua README deviation 10). The 2.0.1 server always sends the chain in the OpenSecureChannel response, so `--no-certificate-chain` does not help.
+  - UA-.NETStandard, Milo 1.1.8 and go-opcua take the chain.
+
+---
+
 ## v0.15.0
 
 **Date:** 2026-10-25

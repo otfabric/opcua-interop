@@ -190,7 +190,7 @@ class Conn:
                     policy_cls,
                     uacrypto.CertProperties(self.cert, extension=file_format(self.cert)),
                     uacrypto.CertProperties(self.key, extension=file_format(self.key)),
-                    server_certificate=chosen.ServerCertificate,
+                    server_certificate=pki.leaf_certificate(chosen.ServerCertificate),
                     mode=mode,
                 )
             except Exception as e:  # noqa: BLE001

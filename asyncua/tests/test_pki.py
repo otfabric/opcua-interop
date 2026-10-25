@@ -55,6 +55,17 @@ class FilesTest(unittest.TestCase):
         crl = pki.load_crl(DATA / "ca-revokes-leaf.crl")
         self.assertEqual([r.serial_number for r in crl], [0x1001])
 
+    def test_leaf_of_a_certificate_chain(self):
+        # A ServerCertificate holding the leaf followed by its issuers (Part 6
+        # §6.2.3), as UA-.NETStandard 2.0.1 sends it: only the leaf is kept.
+        leaf = (DATA / "leaf.der").read_bytes()
+        ca = pki.load_certificate(DATA / "ca.crt").public_bytes(Encoding.DER)
+        self.assertEqual(pki.leaf_certificate(leaf + ca), leaf)
+        self.assertEqual(pki.leaf_certificate(leaf), leaf)
+        self.assertEqual(pki.leaf_certificate(b""), b"")
+        self.assertEqual(pki.leaf_certificate(b"\x30\x05ab"), b"\x30\x05ab")  # truncated: unchanged
+        self.assertEqual(pki.leaf_certificate(b"\x30\x02ab" + ca), b"\x30\x02ab")  # short form
+
 
 class PkiDir:
     """A <pki-dir> with trusted/{certs,crl}, issuers/{certs,crl} in a temp dir."""

@@ -1382,6 +1382,27 @@ run_dotnet_gds_smoke() {
         '.success == false and .serviceResult.name == "BadUserAccessDenied" and .results[0].findApplications == []
          and .results[0].registerStatus.name == "BadUserAccessDenied"' "${out}"
 
+    # --no-certificate-chain (§16.1): the leaf alone as ServerCertificate; the
+    # pull model still works.
+    local gds_leaf="smoke-gds-leaf-$$"
+    FEAT_CONTAINERS+=("${gds_leaf}")
+    docker run -d --name "${gds_leaf}" --network "${FEAT_NET}" \
+        -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+        "${img}" server --fixture /fixtures/gds/fixture.json \
+        --advertised-host "${gds_leaf}" --endpoint-path "${ENDPOINT_PATH}" \
+        --certificate /pki/dotnet-server/cert.crt --private-key /pki/dotnet-server/cert.key \
+        --pki-dir /pki/dotnet-server/pki --no-certificate-chain >/dev/null
+    wait_ready "${gds_leaf}"
+    if docker logs "${gds_leaf}" 2>&1 | grep -q "sent without its issuer chain"; then
+        ok "dotnet-gds: --no-certificate-chain"
+    else
+        fail "dotnet-gds: --no-certificate-chain not applied"
+    fi
+    out=$(feat_client "${img}" - gds-pull --endpoint "opc.tcp://${gds_leaf}:4840${ENDPOINT_PATH}" "${sec[@]}" "${admin[@]}" \
+            --app-uri "urn:opcua-interop:gds-pull:smoke-leaf" --unregister) || true
+    feat_expect "dotnet-gds→dotnet-gds (--no-certificate-chain): gds-pull" \
+        '.success == true and (.results[0].certificate | length) > 0 and .results[0].unregisterStatus.code == 0' "${out}"
+
     feature_cleanup
     trap - EXIT
 }

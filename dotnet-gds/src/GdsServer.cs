@@ -114,6 +114,11 @@ namespace OpcUaInterop
             string pkiDir = a.Get("--pki-dir") ?? "/run/opcua-interop/pki";
             string certFile = a.Get("--certificate");
             string keyFile = a.Get("--private-key");
+            // --no-certificate-chain (opt-in): the ServerCertificate of the endpoints and of
+            // CreateSession is the leaf only (SecurityConfiguration.SendCertificateChain =
+            // false). The default sends the certificate followed by its issuers (Part 6
+            // §6.2.3), which some client stacks do not accept (CLIENT_CONTRACT.md §16.3).
+            bool sendChain = !a.Has("--no-certificate-chain");
 
             string advertised = "opc.tcp://" + advertisedHost + ":" + advertisedPort.ToString(Inv.C) + path;
             Console.Error.WriteLine("[dotnet-gds] info: fixture " + fixture.Id + ", advertised endpoint " + advertised + " (bind " + bindAddress + ":" + bindPort.ToString(Inv.C) + ")");
@@ -153,7 +158,7 @@ namespace OpcUaInterop
                 Pki.CopyCrls(Path.Combine(pkiDir, "trusted", "crl"), Path.Combine(storeRoot, "trusted"));
                 Pki.CopyCertificates(Path.Combine(pkiDir, "issuers", "certs"), Path.Combine(storeRoot, "issuer"));
                 Pki.CopyCrls(Path.Combine(pkiDir, "issuers", "crl"), Path.Combine(storeRoot, "issuer"));
-                Console.Error.WriteLine("[dotnet-gds] info: server certificate " + rsa.Subject + " (" + applicationUri + "), " + trusted.ToString(Inv.C) + " trusted certificate(s)");
+                Console.Error.WriteLine("[dotnet-gds] info: server certificate " + rsa.Subject + " (" + applicationUri + "), " + trusted.ToString(Inv.C) + " trusted certificate(s)" + (sendChain ? "" : ", sent without its issuer chain"));
             }
             else
             {
@@ -241,6 +246,7 @@ namespace OpcUaInterop
                     .SetRejectUnknownRevocationStatus(false)
                     .SetMinimumCertificateKeySize(1024)
                     .SetAddAppCertToTrustedStore(false)
+                    .SetSendCertificateChain(sendChain)
                     .AddExtension<GlobalDiscoveryServerConfiguration>(null, gdsConfig)
                     .CreateAsync()
                     .ConfigureAwait(false);
