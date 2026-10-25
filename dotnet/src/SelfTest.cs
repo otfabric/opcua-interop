@@ -32,6 +32,7 @@ namespace OpcUaInterop
             Section("capabilities", CheckCapabilities);
             Section("literals", CheckLiterals);
             Section("pubsub codec", CheckPubSubCodec);
+            Section("alarms", CheckAlarms);
             if (File.Exists(fixturePath))
             {
                 Section("fixture " + fixturePath, () => CheckFixture(fixturePath));
@@ -81,6 +82,47 @@ namespace OpcUaInterop
         }
 
         // ── capabilities ────────────────────────────────────────────────────
+
+        private static void CheckAlarms()
+        {
+            using (JsonDocument doc = JsonDocument.Parse(Capabilities.Document()))
+            {
+                JsonElement root = doc.RootElement;
+                Check(root.GetProperty("clientOperations").EnumerateArray().Any(e => e.GetString() == "alarms"),
+                    "capabilities clientOperations has alarms");
+                Check(root.GetProperty("serverFeatures").EnumerateArray().Any(e => e.GetString() == "alarms"),
+                    "capabilities serverFeatures has alarms");
+            }
+            Check(ClientCommand.PresenceFlag(new Args(["--acknowledge", "--confirm"]), "--acknowledge"), "bare --acknowledge is true");
+            Check(ClientCommand.PresenceFlag(new Args(["--confirm"]), "--confirm"), "trailing bare --confirm is true");
+            Check(!ClientCommand.PresenceFlag(new Args(["--confirm", "false"]), "--confirm"), "--confirm false is false");
+            Check(!ClientCommand.PresenceFlag(new Args([]), "--add-comment"), "absent --add-comment is false");
+            Check(ClientCommand.s_alarmClauses.Length == 16 && ClientCommand.s_alarmClauses[15].Path.Length == 0 &&
+                ClientCommand.s_alarmClauses[15].Attribute == Attributes.NodeId, "16 SelectClauses, ConditionId is the NodeId attribute");
+
+            var f = new Variant[16];
+            f[0] = new Variant(ByteString.From(new byte[] { 1, 2, 3 }));
+            f[1] = new Variant(ObjectTypeIds.AlarmConditionType);
+            f[2] = new Variant(new NodeId("Alarms.Source", 2));
+            f[3] = new Variant("Alarms.Source");
+            f[4] = new Variant(new DateTimeUtc(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+            f[5] = new Variant(new LocalizedText("en", "interop-alarm"));
+            f[6] = new Variant((ushort)500);
+            f[7] = new Variant("InteropAlarm");
+            f[9] = new Variant(true);
+            f[10] = new Variant(true);
+            f[11] = new Variant(new LocalizedText("en", "c"));
+            f[12] = new Variant(false);
+            f[13] = new Variant(StatusCodes.BadAttributeIdInvalid);
+            f[14] = new Variant(true);
+            f[15] = new Variant(new NodeId("Alarms.InteropAlarm", 2));
+            string json = ClientCommand.ConditionEntry(f).ToJsonString();
+            Check(json == "{\"conditionId\":\"ns=2;s=Alarms.InteropAlarm\",\"eventId\":\"AQID\",\"eventType\":\"i=2915\"," +
+                "\"sourceNode\":\"ns=2;s=Alarms.Source\",\"sourceName\":\"Alarms.Source\",\"conditionName\":\"InteropAlarm\"," +
+                "\"time\":\"2026-01-01T00:00:00.000Z\",\"message\":\"interop-alarm\",\"severity\":500,\"retain\":true," +
+                "\"enabled\":true,\"acked\":false,\"confirmed\":null,\"active\":true,\"comment\":\"c\"}",
+                "ConditionEntry encoding (StatusCode field → null): " + json);
+        }
 
         private static void CheckCapabilities()
         {

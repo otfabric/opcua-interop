@@ -17,7 +17,7 @@ namespace OpcUaInterop
     /// folders / objects, variables, methods, behaviours (counter / toggle / ramp / fixed-status),
     /// BaseEvent emission on Events.Source and raw history on History.Temperature.
     /// </summary>
-    internal sealed class InteropNodeManager : AsyncCustomNodeManager
+    internal sealed partial class InteropNodeManager : AsyncCustomNodeManager
     {
         private const string EventsSourceId = "s=Events.Source";
         private const string HistoryTemperatureId = "s=History.Temperature";
@@ -204,6 +204,8 @@ namespace OpcUaInterop
                     }
                 }
 
+                List<NodeState> alarmNodes = CreateAlarmNodes(externalReferences);
+
                 foreach ((Fixture.NodeDef _, NodeState state) in defs)
                 {
                     if (!children.Contains(state))
@@ -211,11 +213,16 @@ namespace OpcUaInterop
                         await AddPredefinedNodeAsync(SystemContext, state, cancellationToken).ConfigureAwait(false);
                     }
                 }
+                foreach (NodeState state in alarmNodes)
+                {
+                    await AddPredefinedNodeAsync(SystemContext, state, cancellationToken).ConfigureAwait(false);
+                }
 
                 if (m_eventsSource != null)
                 {
                     await AddRootNotifierAsync(m_eventsSource, cancellationToken).ConfigureAwait(false);
                 }
+                await RegisterAlarmNotifierAsync(cancellationToken).ConfigureAwait(false);
 
                 SetupHistory();
                 SetupBehaviors();

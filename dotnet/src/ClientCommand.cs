@@ -20,7 +20,7 @@ namespace OpcUaInterop
             "endpoints", "find-servers", "read", "write", "browse", "translate", "call", "subscribe",
             "subscription-lifecycle", "event-subscribe", "history-read", "republish", "transfer-subscriptions",
             "register-nodes", "node-management", "find-servers-on-network", "register-server", "codec",
-            "pubsub-discover"
+            "pubsub-discover", "alarms"
         ];
 
         public static async Task<int> RunAsync(string[] args)
@@ -73,6 +73,7 @@ namespace OpcUaInterop
                     "node-management" => await NodeManagementAsync(c).ConfigureAwait(false),
                     "find-servers-on-network" => await FindServersOnNetworkAsync(c).ConfigureAwait(false),
                     "register-server" => await RegisterServerAsync(c).ConfigureAwait(false),
+                    "alarms" => await AlarmsAsync(c).ConfigureAwait(false),
                     _ => 1
                 };
             }

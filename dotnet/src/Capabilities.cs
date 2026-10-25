@@ -61,7 +61,7 @@ namespace OpcUaInterop
                 // Not listed: reverse-connect, lds, mdns, ecc-security (see above).
                 // transport-https / transport-wss: --https-port / --wss-port (needs --certificate)
                 ["serverFeatures"] = Json.Strings(["deadband", "percent-deadband", "register-with", "node-management", "pubsub",
-                    "transport-https", "transport-wss"]),
+                    "transport-https", "transport-wss", "alarms"]),
                 ["codec"] = new JsonObject
                 {
                     ["formats"] = Json.Strings(["json", "xml"]),
