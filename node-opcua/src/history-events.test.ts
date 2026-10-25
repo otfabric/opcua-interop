@@ -119,6 +119,8 @@ test("history events: the node-opcua server has no event history", async () => {
     const server = new OPCUAServer({
         port: 0,
         serverCertificateManager: new OPCUACertificateManager({ rootFolder: path.join(work, "pki"), disableFileWatchers: true }),
+        // Its own user PKI: the default folder is shared by the test files node --test runs in parallel.
+        userCertificateManager: new OPCUACertificateManager({ rootFolder: path.join(work, "user-pki"), disableFileWatchers: true }),
     });
     try {
         await server.start();

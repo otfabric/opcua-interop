@@ -30,6 +30,8 @@ test("alarms fixture: InteropAlarm is armed, acknowledge / confirm / Reset drive
     const server = new OPCUAServer({
         port: 0,
         serverCertificateManager: new OPCUACertificateManager({ rootFolder: path.join(work, "pki"), disableFileWatchers: true }),
+        // Its own user PKI: the default folder is shared by the test files node --test runs in parallel.
+        userCertificateManager: new OPCUACertificateManager({ rootFolder: path.join(work, "user-pki"), disableFileWatchers: true }),
     });
     try {
         await server.initialize();

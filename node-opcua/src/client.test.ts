@@ -93,6 +93,8 @@ test("client query: QueryFirst refused by the server is a service failure with t
     const server = new OPCUAServer({
         port: 0,
         serverCertificateManager: new OPCUACertificateManager({ rootFolder: path.join(work, "pki"), disableFileWatchers: true }),
+        // Its own user PKI: the default folder is shared by the test files node --test runs in parallel.
+        userCertificateManager: new OPCUACertificateManager({ rootFolder: path.join(work, "user-pki"), disableFileWatchers: true }),
     });
     try {
         await server.start();
