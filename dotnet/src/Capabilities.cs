@@ -57,7 +57,9 @@ namespace OpcUaInterop
                     "channel-lifetime", "deadband", "application-uri", "register-server2",
                     "codec-json", "codec-xml", "codec-json-verbose", "codec-pubsub",
                     // --endpoint opc.https://… / opc.wss://… (https-uabinary, wss-uasc-uabinary)
-                    "transport-https", "transport-wss"]),
+                    "transport-https", "transport-wss",
+                    // client push: --group, the Part 12 1.05 methods, TransactionDiagnostics (§15)
+                    "push-groups", "push-certificates", "push-transaction-diagnostics"]),
                 // Not listed: reverse-connect, lds, mdns, ecc-security (see above).
                 // transport-https / transport-wss: --https-port / --wss-port (needs --certificate)
                 ["serverFeatures"] = Json.Strings(["deadband", "percent-deadband", "register-with", "node-management", "pubsub",

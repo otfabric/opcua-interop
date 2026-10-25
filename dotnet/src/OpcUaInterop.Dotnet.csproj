@@ -20,5 +20,6 @@
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.PubSub" Version="$(OpcUaVersion)" />
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.PubSub.Udp" Version="$(OpcUaVersion)" />
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.PubSub.Mqtt" Version="$(OpcUaVersion)" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Gds.Client" Version="$(OpcUaVersion)" />
   </ItemGroup>
 </Project>

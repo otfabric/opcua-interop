@@ -33,6 +33,7 @@ namespace OpcUaInterop
             Section("literals", CheckLiterals);
             Section("pubsub codec", CheckPubSubCodec);
             Section("alarms", CheckAlarms);
+            Section("push / gds-pull flags", CheckPushFlags);
             if (File.Exists(fixturePath))
             {
                 Section("fixture " + fixturePath, () => CheckFixture(fixturePath));
@@ -142,6 +143,54 @@ namespace OpcUaInterop
             Check(pubsub.GetProperty("supported").GetBoolean(), "capabilities pubsub.supported is true");
             Check(pubsub.GetProperty("codecOps").EnumerateArray().Select(e => e.GetString()).SequenceEqual(PubSubCodec.Operations),
                 "capabilities pubsub.codecOps are the implemented codec operations");
+        }
+
+        // ── push / gds-pull flags ───────────────────────────────────────────
+
+        private static void CheckPushFlags()
+        {
+            PushOptions o = PushOptions.Parse(new Args([]));
+            Check(o.GroupId == "i=14156" && o.CertificateTypeId == "i=12560" && !o.Apply && !o.Cancel && o.LifetimeDays == 365 && o.KeySize == 0,
+                "push defaults: DefaultApplicationGroup, RsaSha256ApplicationCertificateType, lifetime 365, key size 0");
+            o = PushOptions.Parse(new Args(["--group", "Https"]));
+            Check(o.GroupId == "i=14088" && o.CertificateTypeId == "i=12558", "push --group Https: DefaultHttpsGroup, HttpsCertificateType");
+            o = PushOptions.Parse(new Args(["--group", "UserToken", "--create-self-signed"]));
+            Check(o.GroupId == "i=14122" && o.CertificateTypeId == "i=15181" && o.Cancel, "push --group UserToken --create-self-signed: CancelChanges implied");
+            o = PushOptions.Parse(new Args(["--delete-certificate", "i=12560", "--apply"]));
+            Check(o.DeleteType == "i=12560" && o.Apply && !o.Cancel, "push --delete-certificate --apply: no CancelChanges");
+            foreach (string[] bad in new[]
+            {
+                new[] { "--group", "Nope" },
+                new[] { "--lifetime-days", "65536" },
+                new[] { "--key-size", "-1" },
+                new[] { "--delete-certificate", "x=1" },
+                new[] { "--add-certificate", "/nonexistent.der" },
+                new[] { "--update-private-key", "/nonexistent.pem" }
+            })
+            {
+                bool refused = false;
+                try
+                {
+                    PushOptions.Parse(new Args(bad));
+                }
+                catch (InputException)
+                {
+                    refused = true;
+                }
+                Check(refused, "push " + string.Join(' ', bad) + " is an input error");
+            }
+            GdsPullOptions g = GdsPullOptions.Parse(new Args(["--app-uri", "urn:x:y:my-app"]));
+            Check(g.AppName == "my-app" && g.Request == "csr" && g.AppType == ApplicationType.Server, "gds-pull defaults and the application name");
+            bool badPull = false;
+            try
+            {
+                GdsPullOptions.Parse(new Args(["--request", "nope"]));
+            }
+            catch (InputException)
+            {
+                badPull = true;
+            }
+            Check(badPull, "gds-pull --request nope is an input error");
         }
 
         // ── PubSub codec ────────────────────────────────────────────────────
