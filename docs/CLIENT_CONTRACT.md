@@ -29,6 +29,8 @@ this contract. Changes that break it require a major schema version bump.
 | `subscription-lifecycle` | Test subscription lifecycle scenarios (revise, publishing-mode, monitoring-mode, delete) |
 | `event-subscribe` | Create an event monitored item with a BaseEvent SelectClauses filter; collect N events |
 | `history-read` | HistoryRead with ReadRawModifiedDetails (raw only); optional continuation point |
+| `history-read-events` | HistoryRead with ReadEventDetails (Part 11 §6.5.2): SelectClauses, an optional OfType / Severity WhereClause, continuation points (adapter 0.17.0, §17) |
+| `history-update-events` | HistoryUpdate with UpdateEventDetails insert / replace / update (Part 11 §6.9.4) or DeleteEventDetails (§6.9.7) (adapter 0.17.0, §17) |
 | `republish` | RepublishRequest for a subscription sequence number |
 | `transfer-subscriptions` | TransferSubscriptions for one or more subscription ids |
 | `register-nodes` | RegisterNodes, Read through the registered aliases, UnregisterNodes |
@@ -424,6 +426,83 @@ reuse after release. The result item includes `scenario`, `pages`,
 
 Adapter servers expose gate-compliant fixed raw samples on
 `History.Temperature` (5 values from `2026-07-24T10:00:00Z` step 5s).
+
+### `history-read-events` flags
+
+HistoryRead with ReadEventDetails (Part 11 §6.5.2) on one or more nodes
+(adapter 0.17.0, `clientOperations` `history-read-events`, §17).
+
+```
+<image> client history-read-events --endpoint <url> --node <nodeId> [--node <nodeId>]...
+        [--start <rfc3339>] [--end <rfc3339>] [--num-values <n>] [--select <path>]...
+        [--of-type <nodeId>] [--min-severity <n>] [--continuation-point <b64>]
+        [--release-continuation-point] [--timestamps source|server|both|neither]
+        [--scenario continue [--max-pages <n>]]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--node <nodeId>` | Event notifier to read (repeatable: one HistoryReadValueId each, one result each) | required |
+| `--start <rfc3339>` | `ReadEventDetails.StartTime` | null DateTime |
+| `--end <rfc3339>` | `ReadEventDetails.EndTime` | null DateTime |
+| `--num-values <n>` | `NumValuesPerNode` (UInt32) | 0 (no client limit) |
+| `--select <path>` | A SelectClause (repeatable, in order): `TypeDefinitionId` BaseEventType (`i=2041`), AttributeId Value, the BrowsePath from `/`-separated names; a name is `ns:Name` in another namespace, else namespace 0 (`Severity`, `2:Vendor/2:Detail`) | `EventId`, `EventType`, `SourceNode`, `SourceName`, `Time`, `ReceiveTime`, `Message`, `Severity` |
+| `--of-type <nodeId>` | WhereClause element OfType with this event type (subtypes match) | — |
+| `--min-severity <n>` | WhereClause element GreaterThanOrEqual(`Severity`, UInt16 `n`) | — |
+| `--continuation-point <b64>` | The ContinuationPoint of the HistoryReadValueId (one `--node` only) | — |
+| `--release-continuation-point` | `ReleaseContinuationPoints` true (presence flag; `false` after it turns it off); needs `--continuation-point` | off |
+| `--timestamps <v>` | `TimestampsToReturn`, sent as given (any case). Part 11 ignores it for events | `both` |
+| `--scenario continue` | Per node on one session: HistoryRead, then HistoryRead with each returned continuation point until none is left or `--max-pages` requests were sent; then release the last continuation point received and send it once more | — |
+| `--max-pages <n>` | Most HistoryRead requests per node of `--scenario continue` | 8 |
+
+The WhereClause is empty without `--of-type` and `--min-severity`, a single
+element with one of them, and with both
+`[And(ElementOperand 1, ElementOperand 2), OfType, GreaterThanOrEqual]`:
+element 0 is the root of a ContentFilter and an ElementOperand refers to a
+later element (Part 4 §7.7.1; UA-.NETStandard 2.0.1 answers
+`BadEventFilterInvalid` for an `And` after its operands). The SelectClauses
+of `event-subscribe` are unchanged.
+
+Exit codes (§5): 0 the service result is Good and no node result is Bad
+(`GoodNoData` included), 2 bad input (before connecting), 3 connect /
+transport, 4 a service fault or a Bad node result (`serviceResult` is the
+fault or the first Bad node status; the results are printed), 7 timeout.
+
+### `history-update-events` flags
+
+HistoryUpdate of events on one node (adapter 0.17.0, `clientOperations`
+`history-update-events`, §17): UpdateEventDetails (Part 11 §6.9.4) for
+`insert`, `replace` and `update`, DeleteEventDetails (§6.9.7) for `delete`.
+
+```
+<image> client history-update-events --endpoint <url> --node <nodeId>
+        --perform insert|replace|update [--select <path>]... --event <json> [--event <json>]...
+<image> client history-update-events --endpoint <url> --node <nodeId>
+        --perform delete --event-id <b64> [--event-id <b64>]...
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--node <nodeId>` | The historizing notifier (`UpdateEventDetails.NodeId`) | required |
+| `--perform <op>` | `insert`, `replace`, `update` (`PerformInsertReplace` Insert / Replace / Update) or `delete` (DeleteEventDetails) | required |
+| `--select <path>` | The SelectClauses of the UpdateEventDetails filter (repeatable, in order; the path syntax of `history-read-events`); no WhereClause is sent | the keys of the `--event` objects, in order of first appearance |
+| `--event <json>` | One `EventData` entry (repeatable, in order): a JSON object keyed by select path; the fields are sent in `--select` order, a path the object does not have is a null Variant. A value is `{"type": "<built-in type>", "value": <§7 encoding>}`, or a bare JSON string (String), boolean (Boolean), integer (Int32), other number (Double) or `{"locale", "text"}` object (LocalizedText). A key that is not a `--select` path is an input error | — |
+| `--event-id <b64>` | `DeleteEventDetails.EventIds` entry (repeatable) | — |
+
+```bash
+--event '{"EventId":{"type":"ByteString","value":"aGlzdC1ldnQtNQ=="},"EventType":{"type":"NodeId","value":"i=2041"},
+          "Time":{"type":"DateTime","value":"2026-07-24T10:00:25Z"},"Severity":{"type":"UInt16","value":600},
+          "Message":{"type":"LocalizedText","value":{"locale":"en","text":"inserted"}},"SourceName":"History.Events"}'
+```
+
+The value of a `NodeId` field is a NodeId string (§8, `nsu=` resolved on the
+server), a `ByteString` Base64, a `DateTime` RFC 3339, a `StatusCode` a
+number or `{"code": n}`, a `QualifiedName` `"ns:Name"` or `{"ns", "name"}`.
+
+Exit codes (§5): 0 the service result and the node's StatusCode are not Bad;
+the `operationResults` are reported as the server returns them, also when
+some are Bad (tests assert them). 2 bad input (before connecting), 3 connect
+/ transport, 4 a service fault or a Bad node StatusCode, 7 timeout.
 
 ### `republish` flags
 
@@ -1057,6 +1136,86 @@ QueryNext's. `queryNext` has one entry per QueryNext request.
 `null`. Timestamps omitted when absent. Fixture baseline returns five Doubles
 `20`…`24` at 5s steps from `2026-07-24T10:00:00Z`.
 
+### `history-read-events`
+
+```json
+"results": [
+  {
+    "nodeId":            "ns=2;s=History.Events",
+    "statusCode":        { "name": "Good", "code": 0, "severity": "Good" },
+    "continuationPoint": "<base64>" | null,
+    "selectClauses":     ["EventId", "EventType", "SourceNode", "SourceName", "Time", "ReceiveTime", "Message", "Severity"],
+    "events": [
+      {
+        "fields": [
+          { "name": "EventId",     "dataType": "ByteString",    "builtInType": 15, "value": "aGlzdC1ldnQtMA==" },
+          { "name": "EventType",   "dataType": "NodeId",        "builtInType": 17, "value": "i=2041" },
+          { "name": "SourceNode",  "dataType": "NodeId",        "builtInType": 17, "value": "ns=2;s=History.Events" },
+          { "name": "SourceName",  "dataType": "String",        "builtInType": 12, "value": "History.Events" },
+          { "name": "Time",        "dataType": "DateTime",      "builtInType": 13, "value": "2026-07-24T10:00:00.000Z" },
+          { "name": "ReceiveTime", "dataType": "DateTime",      "builtInType": 13, "value": "2026-07-24T10:00:00.000Z" },
+          { "name": "Message",     "dataType": "LocalizedText", "builtInType": 21, "value": { "locale": "en", "text": "history-event-0" } },
+          { "name": "Severity",    "dataType": "UInt16",        "builtInType": 5,  "value": 100 }
+        ]
+      }
+    ]
+  }
+]
+```
+
+One result per `--node`, in order. `statusCode` is the node's
+HistoryReadResult StatusCode (`GoodNoData` for a range without events), or
+the service result when the request failed. `selectClauses` are the
+`--select` paths as given, and each event's `fields` follow them by index
+(`name` is the path); a server that returns fewer fields gives fewer. The
+values are encoded as in §7 (as `event-subscribe`): a field the server leaves
+empty is `builtInType` 0 with `value` null (`dataType` `"Null"`, or
+`"Unknown"` in the dotnet and Milo adapters), a StatusCode field is the §7
+StatusCode object. DateTime values have the §7 precision of the adapter;
+the fixture times are whole seconds.
+
+With `--scenario continue` each result also has
+
+```json
+"scenario": "continue",
+"pages": [
+  { "statusCode": {…}, "continuationPoint": "<base64>" | null, "events": [ … ] }
+],
+"releaseStatusCode":           { "name": "BadContinuationPointInvalid", … } | null,
+"reuseAfterReleaseStatusCode": { "name": "BadContinuationPointInvalid", … } | null
+```
+
+`pages` has one entry per HistoryRead request; `events` at the result level
+is all pages' events in order, `statusCode` / `continuationPoint` are the
+last page's. `releaseStatusCode` is the node status of the request with
+`ReleaseContinuationPoints` true and the last continuation point the node
+returned, `reuseAfterReleaseStatusCode` that of reading with it once more;
+both are `null` when the server returned no continuation point. When the
+pages run out normally, that last continuation point has already been
+consumed by the next request.
+
+### `history-update-events`
+
+```json
+"results": [
+  {
+    "nodeId":            "ns=2;s=History.Events",
+    "performUpdateType": "Insert",
+    "statusCode":        { "name": "Good", "code": 0, "severity": "Good" },
+    "operationResults":  [
+      { "name": "GoodEntryInserted", "code": 10616832, "severity": "Good" },
+      { "name": "BadEntryExists",    "code": 2157903872, "severity": "Bad" }
+    ]
+  }
+]
+```
+
+`performUpdateType` is `Insert`, `Replace`, `Update` or `Delete`;
+`statusCode` the HistoryUpdateResult StatusCode, `operationResults` its
+OperationResults (one per `--event` / `--event-id`, as the server returns
+them). Status names as in §3 (Milo spells them with an underscore,
+`Good_EntryInserted`; compare `code`). A service fault gives `results: []`.
+
 ### `republish`
 
 ```json
@@ -1593,6 +1752,8 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `alarms-105` | server | — | — | — | ✓ | — | — | adapter 0.15.0: the Part 9 1.05 extension of the Alarms fixture (`s=Alarms.ExtAlarm`, `s=Alarms.Dialog`, `s=Alarms.Group`, fixtures/baseline/README.md "Alarms (1.05)"): Suppress / Silence / OutOfService / Latched / Shelving state methods, a dialog, condition branches, an alarm group and AudibleSound |
 | `auditing` | server | — | — | — | ✓ | — | — | adapter 0.15.0: `--auditing` (§11) turns the server's auditing on: audit events (AuditCondition*EventType of the alarm methods among them) reach event monitored items of SignAndEncrypt sessions |
 | `pubsub-multicast-loopback` | server | — | — | — | ✓ | — | — | adapter 0.15.0: the PubSub runtime (§14) loops its own UDP multicast back to the host (IP_MULTICAST_LOOP), so a subscriber on the same host (e.g. `--network host`) receives the publisher's multicast |
+| `history-events` | server | — | — | — | ✓ | — | ✓ | adapter 0.17.0: the event history fixture `s=History.Events` (§17, fixtures/baseline/README.md "History (events)"): HistoryRead with ReadEventDetails of the five seeded events, SelectClauses, WhereClause and continuation points |
+| `history-events-update` | server | — | — | — | ✓ | — | — | adapter 0.17.0: HistoryUpdate of `s=History.Events` with UpdateEventDetails (insert / replace / update) and DeleteEventDetails, and the method `s=History.ResetEvents` (§17) |
 
 `transports` in `print-capabilities` lists the endpoint schemes the adapter
 dials and serves: `["opc.tcp"]`, UA-.NETStandard (adapter 0.11.0)
@@ -1602,8 +1763,9 @@ only), Milo 1.1.8 has incubating, unpublished client transports only, and
 async-opcua, node-opcua and asyncua implement `opc.tcp` only.
 
 The `alarms` client operation (§1 `alarms` flags) is in `clientOperations` of
-all six adapters since adapter 0.12.0; `push`, `query` and `gds-pull` are in
-those of the adapters below:
+all six adapters since adapter 0.12.0; `push`, `query`, `gds-pull`,
+`history-read-events` and `history-update-events` are in those of the
+adapters below:
 
 | Client operation | open62541 | Milo | async-opcua | UA-.NETStandard | node-opcua | asyncua |
 |------------------|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|
@@ -1611,6 +1773,8 @@ those of the adapters below:
 | `push` (adapter 0.13.0, §15; the others since 0.15.0) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `query` (adapter 0.15.0) | — | — | ✓ | — | ✓ | — |
 | `gds-pull` (§16; `dotnet-gds` since adapter 0.14.0, the others since 0.15.0) | ✓ | ✓ | ✓ | ✓ (`dotnet-gds` ✓) | — | ✓ |
+| `history-read-events` (adapter 0.17.0, §17) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `history-update-events` (adapter 0.17.0, §17) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 **Alarm servers** (all three give `success: true` for
 `alarms --node i=2253 --condition-name InteropAlarm --acknowledge --confirm --add-comment`
@@ -2833,3 +2997,97 @@ exit 3, bad input exit 2 (§5).
   against both kinds of server; `scripts/smoke.sh cross-dotnet` reads with the
   open62541 client from both kinds of `dotnet` server (Good with
   `--no-certificate-chain`, `BadCertificateInvalid` with the chain).
+
+---
+
+## 17. Historical events (OPC UA Part 11)
+
+Adapter 0.17.0: the client operations `history-read-events` and
+`history-update-events` (§1 flags, §4 results) on all six adapters, and the
+server fixture `s=History.Events` on the servers that declare
+`history-events` (§13).
+
+### 17.1 Server fixture `s=History.Events`
+
+Built in code (not in `fixture.json`), like the alarm fixture; servers
+without `history-events` have no such node. fixtures/baseline/README.md
+"History (events)" has the table.
+
+- Object `nsu=urn:otfabric:opcua-interop:model;s=History.Events`
+  (BaseObjectType), Organizes from `s=History`. EventNotifier `0x0D`
+  (SubscribeToEvents | HistoryRead | HistoryWrite) where the server also
+  declares `history-events-update`, else `0x05`.
+- Five seeded events, no live emission: EventId the ASCII bytes
+  `hist-evt-0` … `hist-evt-4`, Time `2026-07-24T10:00:00Z` + 5 s × n,
+  ReceiveTime = Time, Severity `100` … `500`, Message text
+  `history-event-n` (the locale is the server's; `en` on UA-.NETStandard),
+  SourceNode the object, SourceName `History.Events`; EventType
+  BaseEventType (`i=2041`), except `hist-evt-3`: SystemEventType (`i=2130`).
+- With `history-events-update`: the method `s=History.ResetEvents`
+  (HasComponent of `s=History.Events`, no arguments) restores the seed —
+  call it before a read that follows updates; the archive is shared by all
+  sessions.
+
+Reference results (`scripts/smoke.sh dotnet`, `cross-dotnet`; any client
+against a `history-events` server after `ResetEvents`):
+
+| Request | Events (EventId) |
+|---|---|
+| `--start 2026-07-24T10:00:00Z --end 2026-07-24T10:01:00Z` | `hist-evt-0` … `hist-evt-4`, oldest first |
+| `--start 2026-07-24T10:01:00Z --end 2026-07-24T09:59:00Z` (end before start: newest first) | `hist-evt-4` … `hist-evt-0` |
+| forward, `--num-values 2 --scenario continue` | pages of 2, 2, 1; `releaseStatusCode` / `reuseAfterReleaseStatusCode` `BadContinuationPointInvalid` (the last continuation point was consumed) |
+| forward, `--of-type i=2130` | `hist-evt-3` |
+| forward, `--min-severity 300` | `hist-evt-2`, `hist-evt-3`, `hist-evt-4` |
+| forward, `--of-type i=2041 --min-severity 300` | `hist-evt-2`, `hist-evt-3`, `hist-evt-4` (OfType matches subtypes) |
+| `--start 2027-01-01T00:00:00Z --end 2027-01-02T00:00:00Z` | none, node status `GoodNoData`, exit 0 |
+
+| Update (SelectClauses EventId, EventType, Time, Severity, Message) | operationResults |
+|---|---|
+| `insert` of a new EventId and of `hist-evt-0` | `GoodEntryInserted`, `BadEntryExists` |
+| `replace` of `hist-evt-0` and of an unknown EventId | `GoodEntryReplaced`, `BadNoEntryExists` |
+| `update` of an unknown EventId and of `hist-evt-0` | `GoodEntryInserted`, `GoodEntryReplaced` |
+| `delete` of `hist-evt-1` and of an unknown EventId | `Good`, `BadNoEntryExists` |
+
+### 17.2 UA-.NETStandard 2.0.1 (dotnet)
+
+The fixture is the stack's historian dispatcher (`AsyncCustomNodeManager`
+→ `HistorianDispatcher`) on an `InMemoryHistorianProvider` with
+`HistorianNodeCapabilities.EventReadWrite`; `ResetEvents` replaces the
+provider with a freshly seeded one. Behaviour of the stack:
+
+- The time range includes StartTime and excludes EndTime (both directions);
+  StartTime = EndTime reads that instant only. Null StartTime and EndTime
+  together are the node status `BadInvalidTimestampArgument` (exit 4). Only
+  `--start`: oldest first from StartTime; only `--end`: newest first from
+  EndTime, EndTime included (`--end 2026-07-24T10:00:10Z --num-values 10`
+  gives `hist-evt-2`, `hist-evt-1`, `hist-evt-0`).
+- The WhereClause is evaluated after a page was cut at `NumValuesPerNode`: a
+  filtered page can hold fewer events than `--num-values` and still return a
+  continuation point. An `And` element after its operands is
+  `BadEventFilterInvalid` (§1 `history-read-events` flags).
+- Continuation points belong to the session: one from another `client` run
+  is `BadContinuationPointInvalid`, also for `--release-continuation-point`.
+  Releasing a continuation point that was not consumed is `Good`.
+- Insert and update need EventType and Time in the SelectClauses, replace
+  needs EventId: otherwise the node status and every operation result are
+  `BadArgumentsMissing`. An insert without an EventId gets 16 random bytes. An inserted event keeps only the
+  fields it was given (a later read returns null for the others); replace and
+  update merge the given fields into the stored event.
+- Delete reports `Good`, not a `GoodEntry*` code, for a deleted event.
+- When every operation of a HistoryUpdate fails, the node's StatusCode is
+  that Bad operation status (e.g. `BadEntryExists`), so the command exits 4
+  with the `operationResults` printed; with at least one Good operation the
+  node status is Good.
+- The fixture does not report the updates as live events, and
+  HistoricalEventConfiguration / the server's HistoryServerCapabilities are
+  not populated.
+
+### 17.3 node-opcua 2.187.12 (server)
+
+node-opcua historizes variables only. A HistoryRead with ReadEventDetails
+makes its address-space engine throw, and the server answers the whole
+request with the service fault `BadHistoryOperationInvalid`
+(`node-opcua-server/dist/opcua_server.js`); HistoryUpdate is not served
+(`BadServiceUnsupported`). The node-opcua server has no `s=History.Events`
+and declares neither `history-events` nor `history-events-update`; its
+client operations work against the dotnet fixture.

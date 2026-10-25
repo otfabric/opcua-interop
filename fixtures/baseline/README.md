@@ -16,7 +16,8 @@ Objects (i=85)
     ├── Diagnostics   — adapter name, stack version, fixture id
     ├── Events        — EventNotifier source emitting deterministic BaseEvents
     ├── Alarms        — Alarms & Conditions condition (only adapters with serverFeatures "alarms")
-    ├── History       — gate-compliant fixed raw HistoryRead samples
+    ├── History       — gate-compliant fixed raw HistoryRead samples; History.Events (only
+    │                   adapters with serverFeatures "history-events")
     ├── Analog        — AnalogItemType variables with EURange (deadband filters)
     └── PubSub        — writable PubSub fields / TargetVariables, one per type
 ```
@@ -242,6 +243,40 @@ Gate-compliant raw samples only (no DB, no update/delete, no aggregates/interpol
 | Node | Type | Samples |
 |---|---|---|
 | `History.Temperature` | Double | 5 values `20`…`24` at `2026-07-24T10:00:00Z` step 5s |
+
+## History (events)
+
+Event history (OPC UA Part 11) fixture, since adapter 0.17.0. Only the
+servers that declare `"history-events"` in `print-capabilities` →
+`serverFeatures` build it: UA-.NETStandard (also `"history-events-update"`)
+and asyncua. Like the alarm fixture, the nodes are **not** in `fixture.json`;
+they are created in code (CLIENT_CONTRACT §17).
+
+```
+Compatibility
+└── History                (nsu=urn:otfabric:opcua-interop:model;s=History)
+    └── History.Events     (s=History.Events, BaseObjectType, Organizes)
+        └── ResetEvents    (s=History.ResetEvents, Method, HasComponent, no arguments; history-events-update only)
+```
+
+`History.Events` has EventNotifier `0x0D` (SubscribeToEvents |
+HistoryRead | HistoryWrite) on servers with `history-events-update`, else
+`0x05` (SubscribeToEvents | HistoryRead). It emits no live events; its
+history holds five seeded events:
+
+| # | EventId (ASCII bytes) | EventType | Time | Severity | Message |
+|---|---|---|---|---|---|
+| 0 | `hist-evt-0` | BaseEventType `i=2041` | `2026-07-24T10:00:00Z` | 100 | `history-event-0` |
+| 1 | `hist-evt-1` | BaseEventType `i=2041` | `2026-07-24T10:00:05Z` | 200 | `history-event-1` |
+| 2 | `hist-evt-2` | BaseEventType `i=2041` | `2026-07-24T10:00:10Z` | 300 | `history-event-2` |
+| 3 | `hist-evt-3` | SystemEventType `i=2130` | `2026-07-24T10:00:15Z` | 400 | `history-event-3` |
+| 4 | `hist-evt-4` | BaseEventType `i=2041` | `2026-07-24T10:00:20Z` | 500 | `history-event-4` |
+
+Every event: SourceNode `s=History.Events`, SourceName `History.Events`,
+ReceiveTime = Time. Compare the Message text: its locale is the server's
+(`en` on UA-.NETStandard). HistoryUpdate (insert / replace /
+update / delete) changes the shared archive; `ResetEvents` restores these
+five events — call it first when a test reads after updates.
 
 ## Users
 

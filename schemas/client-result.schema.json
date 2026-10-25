@@ -23,7 +23,8 @@
         "history-read", "republish", "transfer-subscriptions",
         "register-nodes", "node-management",
         "find-servers-on-network", "register-server", "codec", "pubsub-discover",
-        "alarms", "push", "query", "gds-pull"
+        "alarms", "push", "query", "gds-pull",
+        "history-read-events", "history-update-events"
       ]
     },
     "success": {
@@ -48,6 +49,8 @@
           { "$ref": "#/$defs/eventSubscribeResult" },
           { "$ref": "#/$defs/alarmsResult" },
           { "$ref": "#/$defs/historyReadResult" },
+          { "$ref": "#/$defs/historyReadEventsResult" },
+          { "$ref": "#/$defs/historyUpdateEventsResult" },
           { "$ref": "#/$defs/republishResult" },
           { "$ref": "#/$defs/transferSubscriptionsResult" },
           { "$ref": "#/$defs/registerNodesResult" },
@@ -428,6 +431,71 @@
             }
           }
         }
+      }
+    },
+    "historyEventList": {
+      "description": "Events of history-read-events (docs/CLIENT_CONTRACT.md §4): fields by SelectClause index, values as in §7.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["fields"],
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "dataType", "builtInType", "value"],
+              "properties": {
+                "name":        { "type": "string" },
+                "dataType":    { "type": "string" },
+                "builtInType": { "type": "integer", "minimum": 0, "maximum": 25 },
+                "value":       {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "historyReadEventsResult": {
+      "description": "history-read-events, one per --node (adapter 0.17.0). scenario, pages, releaseStatusCode and reuseAfterReleaseStatusCode only with --scenario continue.",
+      "type": "object",
+      "required": ["nodeId", "statusCode", "continuationPoint", "selectClauses", "events"],
+      "additionalProperties": false,
+      "properties": {
+        "scenario":          { "type": "string", "const": "continue" },
+        "nodeId":            { "type": "string" },
+        "statusCode":        { "$ref": "#/$defs/statusCode" },
+        "continuationPoint": { "oneOf": [ { "type": "null" }, { "type": "string" } ] },
+        "selectClauses":     { "type": "array", "items": { "type": "string" } },
+        "events":            { "$ref": "#/$defs/historyEventList" },
+        "pages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["statusCode", "continuationPoint", "events"],
+            "additionalProperties": false,
+            "properties": {
+              "statusCode":        { "$ref": "#/$defs/statusCode" },
+              "continuationPoint": { "oneOf": [ { "type": "null" }, { "type": "string" } ] },
+              "events":            { "$ref": "#/$defs/historyEventList" }
+            }
+          }
+        },
+        "releaseStatusCode":           { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/statusCode" } ] },
+        "reuseAfterReleaseStatusCode": { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/statusCode" } ] }
+      }
+    },
+    "historyUpdateEventsResult": {
+      "description": "history-update-events (adapter 0.17.0): the HistoryUpdateResult of the node.",
+      "type": "object",
+      "required": ["nodeId", "performUpdateType", "statusCode", "operationResults"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId":            { "type": "string" },
+        "performUpdateType": { "type": "string", "enum": ["Insert", "Replace", "Update", "Delete"] },
+        "statusCode":        { "$ref": "#/$defs/statusCode" },
+        "operationResults":  { "type": "array", "items": { "$ref": "#/$defs/statusCode" } }
       }
     },
     "republishResult": {
