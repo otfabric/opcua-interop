@@ -134,13 +134,27 @@ public class HistoryEventsTest {
             List.of("EventId", "Message", "SourceNode", "Custom", "Missing"), new HistoryEventFieldList[]{ ev });
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> fields = (List<Map<String, Object>>) out.get(0).get("fields");
-        assertEquals(5, fields.size());
+        assertEquals(4, fields.size(), "only the fields the server returned, no padding");
         assertEquals("aGlzdC1ldnQtMA==", fields.get(0).get("value"));
         assertEquals(15, fields.get(0).get("builtInType"));
         assertEquals("LocalizedText", fields.get(1).get("dataType"));
         assertEquals("Null", fields.get(2).get("dataType"));
         assertEquals(0, fields.get(2).get("builtInType"));
         assertEquals("StatusCode", fields.get(3).get("dataType"));
-        assertEquals("Null", fields.get(4).get("dataType"), "fewer fields than select clauses");
+        assertEquals("Custom", fields.get(3).get("name"));
+    }
+
+    @Test
+    void readInputErrors() {
+        String ep = "opc.tcp://127.0.0.1:1";
+        // Rejected before connecting (exit 2).
+        assertThrows(ClientCommand.InputException.class, () -> HistoryEventsCommand.cmdRead(new String[]{
+            "--endpoint", ep, "--node", "ns=1;s=History.Events", "--release-continuation-point"}));
+        assertThrows(ClientCommand.InputException.class, () -> HistoryEventsCommand.cmdRead(new String[]{
+            "--endpoint", ep, "--node", "ns=1;s=History.Events", "--release-continuation-point", "true"}));
+        assertThrows(ClientCommand.InputException.class, () -> HistoryEventsCommand.cmdRead(new String[]{
+            "--endpoint", ep, "--node", "ns=1;s=A", "--node", "ns=1;s=B", "--continuation-point", "AAEC"}));
+        assertThrows(ClientCommand.InputException.class, () -> HistoryEventsCommand.cmdRead(new String[]{
+            "--endpoint", ep, "--node", "ns=1;s=A", "--continuation-point", "not base64!"}));
     }
 }

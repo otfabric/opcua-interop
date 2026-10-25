@@ -216,8 +216,9 @@ final class HistoryEventsCommand {
         for (HistoryEventFieldList ev : events) {
             Variant[] vs = ev.getEventFields() != null ? ev.getEventFields() : new Variant[0];
             List<Map<String, Object>> fields = new ArrayList<>();
-            for (int i = 0; i < select.size(); i++) {
-                Variant v = i < vs.length ? vs[i] : Variant.NULL_VALUE;
+            // Only the fields the server returned (no padding), named by select index.
+            for (int i = 0; i < Math.min(select.size(), vs.length); i++) {
+                Variant v = vs[i];
                 Map<String, Object> fld = new LinkedHashMap<>();
                 fld.put("name", select.get(i));
                 if (v == null || v.isNull()) {
@@ -306,6 +307,12 @@ final class HistoryEventsCommand {
             }
         }
         boolean release = ClientCommand.presenceFlag(args, "--release-continuation-point");
+        if (release && cpIn == null) {
+            throw new ClientCommand.InputException("--release-continuation-point needs --continuation-point");
+        }
+        if (cpIn != null && nodes.size() > 1) {
+            throw new ClientCommand.InputException("--continuation-point takes exactly one --node");
+        }
         TimestampsToReturn ts = timestamps(ClientCommand.findArg(args, "--timestamps"));
         String scenario = ClientCommand.findArg(args, "--scenario");
         if (scenario != null && !scenario.equals("continue")) {
@@ -350,31 +357,37 @@ final class HistoryEventsCommand {
                         if (!p.svc.isGood() || !p.item.isGood() || p.cp == null) break;
                         cp = p.cp;
                     }
-                    // Release the last continuation point seen, then try to reuse it.
+                    // Release the last continuation point seen, then try to reuse it;
+                    // no continuation point at all: no release request, both null.
                     String lastCp = null;
                     for (int i = pages.size() - 1; i >= 0 && lastCp == null; i--) {
                         Object v = pages.get(i).get("continuationPoint");
                         if (v instanceof String s && !s.isEmpty()) lastCp = s;
                     }
-                    if (lastCp == null && cp != null) lastCp = cp;
-                    StatusCode releaseSc = StatusCode.GOOD, reuseSc = StatusCode.GOOD;
+                    Map<String, Object> releaseSc = null, reuseSc = null;
                     if (lastCp != null) {
                         byte[] b = Base64.getDecoder().decode(lastCp);
                         Page rel = read(client, rto, det, ts, true, List.of(id), b, select).get(0);
-                        releaseSc = rel.svc.isGood() ? rel.item : rel.svc;
+                        releaseSc = ResultBuilder.statusCodeJson(rel.svc.isGood() ? rel.item : rel.svc);
                         Page re = read(client, rto, det, ts, false, List.of(id), b, select).get(0);
-                        reuseSc = re.svc.isGood() ? re.item : re.svc;
-                    } else {
-                        Page rel = read(client, rto, det, ts, true, List.of(id), null, select).get(0);
-                        releaseSc = rel.svc.isGood() ? rel.item : rel.svc;
+                        reuseSc = ResultBuilder.statusCodeJson(re.svc.isGood() ? re.item : re.svc);
+                    }
+                    List<Map<String, Object>> all = new ArrayList<>();
+                    for (Map<String, Object> pm : pages) {
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> evs = (List<Map<String, Object>>) pm.get("events");
+                        all.addAll(evs);
                     }
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("scenario", "continue");
                     item.put("nodeId", ResultBuilder.nodeIdToString(id));
+                    item.put("statusCode", ResultBuilder.statusCodeJson(last.svc.isGood() ? last.item : last.svc));
+                    item.put("continuationPoint", last.cp);
                     item.put("selectClauses", select);
+                    item.put("events", all);
                     item.put("pages", pages);
-                    item.put("releaseStatusCode", ResultBuilder.statusCodeJson(releaseSc));
-                    item.put("reuseAfterReleaseStatusCode", ResultBuilder.statusCodeJson(reuseSc));
+                    item.put("releaseStatusCode", releaseSc);
+                    item.put("reuseAfterReleaseStatusCode", reuseSc);
                     rb.addResult(item);
                     StatusCode s = last.svc.isGood() ? last.item : last.svc;
                     if (!last.svc.isGood() || !last.item.isGood()) {
@@ -520,13 +533,17 @@ final class HistoryEventsCommand {
                     item = new StatusCode(org.eclipse.milo.opcua.stack.core.StatusCodes.Bad_UnexpectedError);
                 }
             }
-            Map<String, Object> r = new LinkedHashMap<>();
-            r.put("nodeId", ResultBuilder.nodeIdToString(id));
-            r.put("performUpdateType", performName(perform));
-            r.put("statusCode", ResultBuilder.statusCodeJson(svc.isGood() ? item : svc));
-            r.put("operationResults", opResults);
             boolean ok = svc.isGood() && item.isGood();
-            ResultBuilder rb = new ResultBuilder(op).success(ok).serviceResult(svc.isGood() ? item : svc).addResult(r);
+            ResultBuilder rb = new ResultBuilder(op).success(ok).serviceResult(svc.isGood() ? item : svc);
+            if (svc.isGood()) {
+                // A service fault has no result item (results: []).
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("nodeId", ResultBuilder.nodeIdToString(id));
+                r.put("performUpdateType", performName(perform));
+                r.put("statusCode", ResultBuilder.statusCodeJson(item));
+                r.put("operationResults", opResults);
+                rb.addResult(r);
+            }
             if (!ok) rb.error("service", "HistoryUpdate returned a Bad status");
             System.out.println(rb.toJson());
             return ok ? 0 : 4;
