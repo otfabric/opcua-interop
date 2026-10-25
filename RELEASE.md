@@ -72,6 +72,27 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.11.0
+
+**Date:** 2026-10-25
+**Previous release:** v0.10.1
+
+### Summary
+
+The UA-.NETStandard adapter serves and dials the HTTPS (`opc.https`, Part 6 §7.4) and WebSocket (`opc.wss`, Part 6 §7.5) transports.
+
+### Added
+
+- **dotnet server:** `--https-port` and `--wss-port` open `opc.https` (https-uabinary) and `opc.wss` (wss-uasc-uabinary) listeners next to `opc.tcp`. Both need `--certificate` and `--private-key`. The capabilities list the server features `transport-https` and `transport-wss`, and the transports `opc.https` and `opc.wss`.
+- **dotnet client:** an `--endpoint` of `opc.https://…` or `opc.wss://…` selects the endpoint with that transport profile (client features `transport-https`, `transport-wss`).
+- CLIENT_CONTRACT.md §9, §11 and §13 describe the transports.
+
+### Changed
+
+- **dotnet:** the runtime image is `mcr.microsoft.com/dotnet/aspnet` (Kestrel hosts the HTTPS and WebSocket listeners), and it exposes 4840, 4843 and 4844.
+
+---
+
 ## v0.10.1
 
 **Date:** 2026-10-24

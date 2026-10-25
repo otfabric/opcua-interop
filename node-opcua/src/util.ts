@@ -21,7 +21,7 @@ import {
 } from "node-opcua";
 
 export const ADAPTER = "node-opcua";
-export const ADAPTER_VERSION = "0.10.1";
+export const ADAPTER_VERSION = "0.11.0";
 export const SCHEMA_VERSION = "1.0";
 
 // ---------------------------------------------------------------------------
