@@ -41,7 +41,7 @@ public class CapabilitiesCommand {
         out.put("clientOperations",      Arrays.asList(
                 "endpoints", "find-servers", "read", "write", "browse", "translate",
                 "call", "subscribe", "subscription-lifecycle", "event-subscribe", "alarms",
-                "history-read", "republish", "transfer-subscriptions",
+                "history-read", "history-read-events", "history-update-events", "republish", "transfer-subscriptions",
                 "register-nodes", "node-management",
                 "find-servers-on-network", "register-server", "codec",
                 // Push certificate management (§15) and the GDS pull model (§16.2), built

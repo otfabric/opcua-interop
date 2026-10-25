@@ -18,6 +18,7 @@ asyncua/
 │   ├── fixture.py        # fixture → asyncua address space, behaviours, events, history
 │   ├── methods.py        # fixture methods (Add, Multiply, Echo, NoArguments, MultipleOutputs, Fail)
 │   ├── client.py         # client subcommands
+│   ├── history_events.py # client history-read-events / history-update-events
 │   ├── pki.py            # test PKI loading, chain / CRL validation on asyncua's validator
 │   ├── common.py         # envelope, status codes, NodeId / value encoding
 │   ├── capabilities.py   # print-capabilities
@@ -51,9 +52,9 @@ docker run --rm ghcr.io/otfabric/opcua-interop-asyncua:dev \
 
 | | |
 |---|---|
-| `clientOperations` | `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`, `subscribe`, `subscription-lifecycle`, `event-subscribe`, `alarms`, `history-read`, `republish`, `transfer-subscriptions`, `register-nodes`, `node-management`, `find-servers-on-network`, `register-server`, `push` and `gds-pull` (since 0.15.0; everything except `codec` and `query`) |
+| `clientOperations` | `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`, `subscribe`, `subscription-lifecycle`, `event-subscribe`, `alarms`, `history-read`, `history-read-events`, `history-update-events` (0.17.0), `republish`, `transfer-subscriptions`, `register-nodes`, `node-management`, `find-servers-on-network`, `register-server`, `push` and `gds-pull` (since 0.15.0; everything except `codec` and `query`) |
 | `clientFeatures` | `channel-lifetime`, `deadband` (the client sends DataChangeFilters), `application-uri`, `register-server2`; since 0.15.0 `push-groups`, `push-certificates`, `push-transaction-diagnostics` |
-| `serverFeatures` | `register-with` (RegisterServer / RegisterServer2 with an LDS); no `alarms`: asyncua 2.1.0 answers ConditionRefresh (`asyncua/server/subscription_service.py` replays the condition events it was given) but implements no condition state machine (no Acknowledge / Confirm / AddComment / Enable / Disable handlers), so the server has no `Alarms.*` fixture |
+| `serverFeatures` | `register-with` (RegisterServer / RegisterServer2 with an LDS); `history-events` (0.17.0, `History.Events`, see below; not `history-events-update`: asyncua has no HistoryUpdate); no `alarms`: asyncua 2.1.0 answers ConditionRefresh (`asyncua/server/subscription_service.py` replays the condition events it was given) but implements no condition state machine (no Acknowledge / Confirm / AddComment / Enable / Disable handlers), so the server has no `Alarms.*` fixture |
 | `securityProfiles` | None; Basic128Rsa15, Basic256, Basic256Sha256, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss, Sign and SignAndEncrypt |
 | `userTokenTypes` | Anonymous, UserName |
 | `pubsub` | `supported: false` |
@@ -91,11 +92,47 @@ because an asyncua server has to supply that logic itself:
   `BadTooManyArguments`, `BadInvalidArgument` with `BadTypeMismatch`).
 - **History.Temperature**: the five fixed samples sit in asyncua's own
   `HistoryDict` backend, so HistoryRead is asyncua's.
+- **History.Events** (0.17.0): an Object under `History` (created by the
+  adapter unless the fixture has it), EventNotifier `0x05` (SubscribeToEvents |
+  HistoryRead, no HistoryWrite), with the five seed events of the contract
+  (`hist-evt-0` … `hist-evt-4`, 2026-07-24T10:00:00Z step 5 s, Severity 100 …
+  500, `hist-evt-3` a SystemEventType). They are written into the history
+  storage under the node's NodeId: asyncua's `historize_node_event` would
+  subscribe to *live* events and stores every event under the emitting node of
+  its event generator (the Server object `i=2253` unless one is given), so it
+  cannot seed a fixed history. HistoryRead `ReadEventDetails` is asyncua's
+  `HistoryManager`; the storage (`fixture.History`, a `HistoryDict`) adds what
+  asyncua leaves to it — see "Historical events" below. No `History.ResetEvents`
+  method (nothing can change the history).
 - **AnalogItems**: the adapter adds the EURange property, because asyncua's
   AddNodes does not instantiate type children.
 - **Discovery URLs**: `set_match_discovery_endpoint_url(False)` and
   `set_match_discovery_client_ip(False)`, so endpoints advertise exactly
   `--advertised-host` / `--advertised-port`, as the other adapters do.
+
+### Historical events (0.17.0)
+
+`client history-read-events` builds the HistoryReadRequest itself
+(ReadEventDetails with StartTime, EndTime, NumValuesPerNode and the
+EventFilter of `--select` / `--of-type` / `--min-severity`, an omitted
+`--start` / `--end` the null DateTime): asyncua's `Node.read_event_history`
+sends no NumValuesPerNode and follows continuation points by itself.
+`client history-update-events` sends UpdateEventDetails / DeleteEventDetails
+through the session's generic `history_update`. Both verified against the
+go-opcua event history (insert / replace / update / delete).
+
+The server's event history, asyncua 2.1.0:
+
+| # | Behaviour | Where | In the fixture |
+|---|---|---|---|
+| 1 | The WhereClause of ReadEventDetails is not applied | `HistoryDict.read_event_history` ignores `evfilter` | `fixture.History` applies it with asyncua's `WhereClauseEvaluator` |
+| 2 | OfType compares the EventType exactly: `--of-type i=2041` does not match the SystemEventType event (`hist-evt-3`) | `WhereClauseEvaluator` | stays (asyncua's evaluator) |
+| 3 | NumValuesPerNode truncates without a ContinuationPoint (one is returned only above 10000 events) | `HistoryDict.read_event_history` | `fixture.History` returns the Time of the next event; `HistoryManager` resumes from it |
+| 4 | Continuation points are stateless DateTimes: releasing one answers the next page with `Good`, and reusing a released one works (`reuseAfterReleaseStatusCode` Good) | `HistoryManager._read_event_history` | stays |
+| 5 | Both ends of the range are inclusive, also for start > end (newest first), and a range without events answers `Good`, not `GoodNoData` | `HistoryDict` | stays |
+| 6 | The EventNotifier HistoryRead bit is not checked; a node without event history answers `Good` with no events | `HistoryManager` | stays |
+| 7 | No HistoryUpdate: the request is refused by asyncua's permission ruleset for the User role every session gets (`BadUserAccessDenied`); there is no handler behind it either (`BadServiceUnsupported` for Admin) | `SimpleRoleRuleset`, `UAProcessor` | pinned by smoke `check_asyncua_history_update_deviation` |
+| 8 | Events triggered through an event generator get random EventIds | `EventGenerator` | not used: the seed is written to the storage |
 
 ## Not provided (declared, refused with exit 2)
 

@@ -2,6 +2,7 @@
 
 #include "client.h"
 #include "client_internal.h"
+#include "history_events.h"
 #include "output.h"
 #include "values.h"
 
@@ -4693,6 +4694,7 @@ int client_run(int argc, char **argv) {
         fprintf(stderr,
             "usage: client <endpoints|find-servers|read|write|browse|translate|"
             "call|subscribe|subscription-lifecycle|event-subscribe|alarms|history-read|"
+            "history-read-events|history-update-events|"
             "republish|transfer-subscriptions|register-nodes|node-management|"
             "find-servers-on-network|register-server|codec|push|gds-pull> ...\n");
         return 2;
@@ -4758,6 +4760,8 @@ int client_run(int argc, char **argv) {
     if (strcmp(sub, "event-subscribe")        == 0) return cmd_event_subscribe(argc - 1, argv + 1);
     if (strcmp(sub, "alarms")                 == 0) return cmd_alarms(argc - 1, argv + 1);
     if (strcmp(sub, "history-read")           == 0) return cmd_history_read(argc - 1, argv + 1);
+    if (strcmp(sub, "history-read-events")    == 0) return cmd_history_read_events(argc - 1, argv + 1);
+    if (strcmp(sub, "history-update-events")  == 0) return cmd_history_update_events(argc - 1, argv + 1);
     if (strcmp(sub, "republish")              == 0) return cmd_republish(argc - 1, argv + 1);
     if (strcmp(sub, "transfer-subscriptions") == 0) return cmd_transfer_subscriptions(argc - 1, argv + 1);
     if (strcmp(sub, "register-nodes")         == 0) return cmd_register_nodes(argc - 1, argv + 1);

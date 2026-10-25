@@ -8,7 +8,12 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import logging
+
 from asyncua import Server, ua
+from asyncua.common.events import Event
+from asyncua.server.history import HistoryDict
+from asyncua.server.monitored_item_service import WhereClauseEvaluator
 
 from .common import ADAPTER, log, parse_datetime, stack_version
 
@@ -58,6 +63,52 @@ _ACCESS_BITS = {
 
 EVENTS_SOURCE = "Events.Source"
 HISTORY_TEMPERATURE = "History.Temperature"
+HISTORY_FOLDER = "History"
+HISTORY_EVENTS = "History.Events"
+_HISTORY_EVENTS_BASE = datetime(2026, 7, 24, 10, 0, 0, tzinfo=timezone.utc)
+
+
+class History(HistoryDict):
+    """asyncua's in-memory history (HistoryDict) with two changes for event
+    history reads, which asyncua leaves to the storage (HistoryStorageInterface
+    gets the EventFilter and returns a continuation point):
+
+    - the WhereClause is applied, with asyncua's own WhereClauseEvaluator (the
+      one of event monitored items: OfType compares the EventType exactly);
+    - NumValuesPerNode cuts with a continuation point (the Time of the next
+      event; asyncua's HistoryManager resumes the read from that time, start
+      inclusive) instead of dropping the rest.
+
+    Everything else is asyncua's (asyncua/README.md "Historical events")."""
+
+    def __init__(self, server: Server | None = None):
+        super().__init__()
+        self._server = server
+
+    async def read_event_history(self, source_id, start, end, nb_values, evfilter):
+        results, cont = await super().read_event_history(source_id, start, end, 0, evfilter)
+        where = getattr(evfilter, "WhereClause", None)
+        if where is not None and where.Elements and self._server is not None:
+            ev = WhereClauseEvaluator(logging.getLogger(__name__), self._server.iserver.aspace, where)
+            results = [e for e in results if ev.eval(e)]
+        if nb_values and len(results) > nb_values:
+            return results[:nb_values], results[nb_values].Time
+        return results, cont
+
+
+def history_event(source: ua.NodeId, i: int) -> Event:
+    """Seed event i of History.Events (CLIENT_CONTRACT.md, fixtures/baseline README)."""
+    t = _HISTORY_EVENTS_BASE + timedelta(seconds=5 * i)
+    ev = Event(emitting_node=source)
+    ev.add_property("EventId", f"hist-evt-{i}".encode(), ua.VariantType.ByteString)
+    ev.add_property("EventType", ua.NodeId(ua.ObjectIds.SystemEventType if i == 3 else ua.ObjectIds.BaseEventType), ua.VariantType.NodeId)
+    ev.add_property("SourceNode", source, ua.VariantType.NodeId)
+    ev.add_property("SourceName", HISTORY_EVENTS, ua.VariantType.String)
+    ev.add_property("Time", t, ua.VariantType.DateTime)
+    ev.add_property("ReceiveTime", t, ua.VariantType.DateTime)
+    ev.add_property("Message", ua.LocalizedText(f"history-event-{i}", "en"), ua.VariantType.LocalizedText)
+    ev.add_property("Severity", 100 * (i + 1), ua.VariantType.UInt16)
+    return ev
 
 
 class FixtureError(Exception):
@@ -183,6 +234,7 @@ class AddressSpaceBuilder:
         self.write_only_values: dict[ua.NodeId, ua.DataValue] = {}
         self._tasks: list[asyncio.Task] = []
         self._events_source: ua.NodeId | None = None
+        self._history_events: ua.NodeId | None = None
 
     # ── NodeId resolution ──────────────────────────────────────────────────
 
@@ -218,6 +270,7 @@ class AddressSpaceBuilder:
                 await self._add(nd)
             except Exception as e:  # noqa: BLE001
                 raise RuntimeError(f"cannot create {nd['nodeId']}: {e}") from e
+        await self._history_events_node()
         await self._fill_diagnostics()
 
     async def _add_item(self, item: ua.AddNodesItem) -> ua.NodeId:
@@ -302,6 +355,9 @@ class AddressSpaceBuilder:
             if short == EVENTS_SOURCE:
                 attrs.EventNotifier = 1  # SubscribeToEvents
                 self._events_source = nid
+            if short == HISTORY_EVENTS:
+                attrs.EventNotifier = 0x05  # SubscribeToEvents | HistoryRead (no HistoryUpdate in asyncua)
+                self._history_events = nid
             item.NodeAttributes = attrs
             await self._add_item(item)
         self.nodes[nd["nodeId"]] = nid
@@ -379,6 +435,41 @@ class AddressSpaceBuilder:
             await self.history.save_node_value(
                 nid, ua.DataValue(ua.Variant(20.0 + i, ua.VariantType.Double), SourceTimestamp=ts, ServerTimestamp=ts)
             )
+
+    @property
+    def history_events(self) -> ua.NodeId | None:
+        return self._history_events
+
+    async def _history_events_node(self) -> None:
+        """History.Events: the Object (Organizes from History) unless the
+        fixture has it, and its five seed events written into the history
+        storage under its NodeId (asyncua's own historize_node_event would
+        subscribe to live events and store them under the Server object)."""
+        if self._history_events is None:
+            parent = next((nid for fid, nid in self.nodes.items() if _short_id(fid) == HISTORY_FOLDER), None)
+            if parent is None:
+                return
+            nid = ua.NodeId(HISTORY_EVENTS, self.ns_idx, ua.NodeIdType.String)
+            item = ua.AddNodesItem()
+            item.RequestedNewNodeId = nid
+            item.BrowseName = ua.QualifiedName(HISTORY_EVENTS, self.ns_idx)
+            item.ParentNodeId = parent
+            item.ReferenceTypeId = ua.NodeId(ua.ObjectIds.Organizes)
+            item.NodeClass = ua.NodeClass.Object
+            item.TypeDefinition = ua.NodeId(ua.ObjectIds.BaseObjectType)
+            attrs = ua.ObjectAttributes()
+            attrs.DisplayName = ua.LocalizedText(HISTORY_EVENTS, "en")
+            attrs.Description = ua.LocalizedText("Event history: five seeded events", "en")
+            attrs.EventNotifier = 0x05
+            item.NodeAttributes = attrs
+            await self._add_item(item)
+            self._history_events = nid
+        if self.history is None:
+            return
+        nid = self._history_events
+        await self.history.new_historized_event(nid, [], None, 0)
+        for i in range(5):
+            await self.history.save_event(history_event(nid, i))
 
     async def _fill_diagnostics(self) -> None:
         values = {"Diagnostics.AdapterName": ADAPTER, "Diagnostics.StackVersion": f"asyncua {stack_version()}"}

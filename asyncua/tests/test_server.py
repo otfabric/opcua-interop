@@ -4,6 +4,7 @@ validation, EURange, history, SIGTERM -> exit 0. Readiness is polled (the
 ready file, the server's own condition), never waited for by a fixed delay."""
 
 import asyncio
+import base64
 import contextlib
 import io
 import json
@@ -19,7 +20,7 @@ from pathlib import Path
 from asyncua import Client, ua
 
 from opcua_interop_asyncua import client as adapter_client
-from opcua_interop_asyncua import fixture, selftest, server
+from opcua_interop_asyncua import fixture, history_events, selftest, server
 
 logging.disable(logging.WARNING)
 
@@ -129,6 +130,8 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
                                   "--method", MODEL + "Methods.Add", "--input", "Int32:2", "--input", "Int32:3")
         self.assertEqual((rc, out["results"][0]["outputArguments"]), (0, [5]), out)
 
+        await self.check_history_events(endpoint)
+
         rc, out = await client_op("read", "--endpoint", endpoint, "--node", "nsu=urn:unknown;s=x")
         self.assertEqual(rc, 2, out)
         self.assertEqual(out["error"]["category"], "input")
@@ -140,6 +143,50 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
         rc, out = await client_op("read", "--endpoint", endpoint, "--node", MODEL + "Scalar.Int32",
                                   "--username", "test-user", "--password", "test-password")
         self.assertEqual(rc, 0, out)
+
+    async def check_history_events(self, endpoint):
+        ev = MODEL + "History.Events"
+        rng = ["--start", "2026-07-24T10:00:00Z", "--end", "2026-07-24T10:01:00Z"]
+
+        def ids(item):
+            return [base64.b64decode(e["fields"][0]["value"]).decode() for e in item["events"]]
+
+        rc, out = await client_op("history-read-events", "--endpoint", endpoint, "--node", ev, *rng)
+        self.assertEqual(rc, 0, out)
+        item = out["results"][0]
+        self.assertEqual(ids(item), [f"hist-evt-{i}" for i in range(5)])
+        self.assertEqual(item["selectClauses"], history_events.DEFAULT_SELECT)
+        f = {x["name"]: x for x in item["events"][3]["fields"]}
+        self.assertEqual(f["EventType"]["value"], "i=2130")
+        self.assertEqual(f["Severity"], {"name": "Severity", "dataType": "UInt16", "builtInType": 5, "value": 400})
+        self.assertEqual(f["Message"]["value"], {"locale": "en", "text": "history-event-3"})
+        self.assertEqual(f["Time"]["value"], "2026-07-24T10:00:15.000Z")
+        self.assertEqual(f["SourceName"]["value"], "History.Events")
+
+        rc, out = await client_op("history-read-events", "--endpoint", endpoint, "--node", ev,
+                                  "--start", "2026-07-24T10:01:00Z", "--end", "2026-07-24T10:00:00Z")
+        self.assertEqual(ids(out["results"][0]), [f"hist-evt-{i}" for i in range(4, -1, -1)], out)
+
+        rc, out = await client_op("history-read-events", "--endpoint", endpoint, "--node", ev, *rng,
+                                  "--num-values", "2", "--scenario", "continue")
+        self.assertEqual(rc, 0, out)
+        item = out["results"][0]
+        self.assertEqual([len(p["events"]) for p in item["pages"]], [2, 2, 1])
+        self.assertEqual(ids(item), [f"hist-evt-{i}" for i in range(5)])
+        self.assertIsNone(item["continuationPoint"])
+        # asyncua's continuation points are stateless DateTimes (README "Historical events").
+        self.assertEqual((item["releaseStatusCode"]["name"], item["reuseAfterReleaseStatusCode"]["name"]), ("Good", "Good"))
+
+        rc, out = await client_op("history-read-events", "--endpoint", endpoint, "--node", ev, *rng, "--of-type", "i=2130")
+        self.assertEqual(ids(out["results"][0]), ["hist-evt-3"], out)
+        rc, out = await client_op("history-read-events", "--endpoint", endpoint, "--node", ev, *rng, "--min-severity", "300")
+        self.assertEqual(ids(out["results"][0]), ["hist-evt-2", "hist-evt-3", "hist-evt-4"], out)
+
+        # No HistoryUpdate in asyncua (README "Historical events").
+        rc, out = await client_op("history-update-events", "--endpoint", endpoint, "--node", ev,
+                                  "--perform", "delete", "--event-id", "aGlzdC1ldnQtMA==")
+        self.assertEqual(rc, 4, out)
+        self.assertEqual(out["serviceResult"]["name"], "BadUserAccessDenied")
 
     async def test_selftest_builds_the_fixture(self):
         # `test` builds the address space of every mounted fixture.

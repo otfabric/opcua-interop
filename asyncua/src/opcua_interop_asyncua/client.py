@@ -12,7 +12,7 @@ from asyncua.crypto import security_policies as sp
 from asyncua.crypto import uacrypto
 from asyncua.ua.uaerrors import UaStatusCodeError
 
-from . import pki, push
+from . import history_events, pki, push
 from .common import (
     Args,
     AdapterError,
@@ -51,6 +51,8 @@ OPERATIONS = [
     "event-subscribe",
     "alarms",
     "history-read",
+    "history-read-events",
+    "history-update-events",
     "republish",
     "transfer-subscriptions",
     "register-nodes",
@@ -1603,6 +1605,14 @@ async def cmd_gds_pull(args: Args, r: Result) -> int:
     return await push.cmd_gds_pull(args, r, Conn)
 
 
+async def cmd_history_read_events(args: Args, r: Result) -> int:
+    return await history_events.cmd_history_read_events(args, r, Conn)
+
+
+async def cmd_history_update_events(args: Args, r: Result) -> int:
+    return await history_events.cmd_history_update_events(args, r, Conn)
+
+
 COMMANDS = {
     "endpoints": cmd_endpoints,
     "find-servers": cmd_find_servers,
@@ -1616,6 +1626,8 @@ COMMANDS = {
     "event-subscribe": cmd_event_subscribe,
     "alarms": cmd_alarms,
     "history-read": cmd_history_read,
+    "history-read-events": cmd_history_read_events,
+    "history-update-events": cmd_history_update_events,
     "republish": cmd_republish,
     "transfer-subscriptions": cmd_transfer_subscriptions,
     "register-nodes": cmd_register_nodes,

@@ -43,6 +43,7 @@
 
 #include "client.h"
 #include "fixture.h"
+#include "history_events.h"
 #include "server.h"
 
 #include <stdio.h>
@@ -116,6 +117,8 @@ static int cmd_print_capabilities(void) {
     printf("    \"event-subscribe\",\n");
     printf("    \"alarms\",\n");
     printf("    \"history-read\",\n");
+    printf("    \"history-read-events\",\n");
+    printf("    \"history-update-events\",\n");
     printf("    \"republish\",\n");
     printf("    \"transfer-subscriptions\",\n");
     printf("    \"register-nodes\",\n");
@@ -257,10 +260,10 @@ static int cmd_validate_fixture(int argc, char **argv) {
  * ---------------------------------------------------------------------- */
 
 static int cmd_test(int argc, char **argv) {
-    /* Forward to the fixture_test main if linked, otherwise print skip. */
+    /* The fixture parser has its own fixture_test binary (BUILD_TESTS); the
+     * client helpers that need the open62541 types are tested in-process. */
     (void)argc; (void)argv;
-    fprintf(stderr, "test: use the separate fixture_test binary for unit tests\n");
-    return 0;
+    return hev_selftest();
 }
 
 /* -------------------------------------------------------------------------

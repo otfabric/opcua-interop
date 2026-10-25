@@ -91,6 +91,7 @@ public class ClientCommand {
         if (args.length < 1) {
             System.err.println("usage: client <endpoints|find-servers|read|write|browse|translate|"
                 + "call|subscribe|subscription-lifecycle|event-subscribe|alarms|history-read|"
+                + "history-read-events|history-update-events|"
                 + "republish|transfer-subscriptions|register-nodes|node-management|"
                 + "find-servers-on-network|register-server|push|gds-pull|codec> ...");
             return 1;
@@ -113,6 +114,8 @@ public class ClientCommand {
                 case "event-subscribe":        return cmdEventSubscribe(rest);
                 case "alarms":                 return cmdAlarms(rest);
                 case "history-read":           return cmdHistoryRead(rest);
+                case "history-read-events":    return HistoryEventsCommand.cmdRead(rest);
+                case "history-update-events":  return HistoryEventsCommand.cmdUpdate(rest);
                 case "republish":              return cmdRepublish(rest);
                 case "transfer-subscriptions": return cmdTransferSubscriptions(rest);
                 case "register-nodes":         return cmdRegisterNodes(rest);
@@ -2543,7 +2546,7 @@ public class ClientCommand {
      * Raw {@code client.sendRequest(...)} calls do not inject the token; a NULL
      * token makes CreateMonitoredItems fail ownership checks on go-opcua.
      */
-    private static RequestHeader newRequestHeader(OpcUaClient client, long timeoutMs)
+    static RequestHeader newRequestHeader(OpcUaClient client, long timeoutMs)
             throws UaException {
         NodeId auth = NodeId.NULL_VALUE;
         if (client != null) {

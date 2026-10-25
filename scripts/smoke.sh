@@ -113,6 +113,55 @@ validate_envelope() {
     return 0
 }
 
+# ── Historical events (CLIENT_CONTRACT.md `history-read-events`, `history-update-events`) ──
+
+HEV_NODE="nsu=urn:otfabric:opcua-interop:model;s=History.Events"
+
+# check_history_events_caps <image> <label>: print-capabilities lists both operations.
+check_history_events_caps() {
+    local image="$1" label="$2" out
+    out=$(docker run --rm "${image}" print-capabilities 2>/dev/null) || true
+    if echo "${out}" | jq -e '(.clientOperations | index("history-read-events")) and (.clientOperations | index("history-update-events"))' >/dev/null 2>&1; then
+        ok "${label}: print-capabilities lists history-read-events / history-update-events"
+    else
+        fail "${label}: print-capabilities lacks the history-events client operations"
+    fi
+}
+
+# check_history_events_envelope <image> <endpoint> <label>: a node of the
+# baseline fixture without event history; the command completes the protocol
+# and prints a history-read-events envelope (servers answer a Bad item status
+# or no events, the check takes either).
+check_history_events_envelope() {
+    local image="$1" endpoint="$2" label="$3" out
+    out=$(run_client_op "${image}" history-read-events --endpoint "${endpoint}" \
+            --node "nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32" \
+            --start 2026-07-24T10:00:00Z --end 2026-07-24T10:01:00Z) || true
+    validate_envelope "${out}" "${label}:history-read-events" || return
+    if echo "${out}" | jq -e '.operation == "history-read-events" and ((.success == false) or ((.results[0].events | length) == 0))' >/dev/null 2>&1; then
+        ok "${label}: history-read-events on a node without event history"
+    else
+        fail "${label}: history-read-events on a node without event history — unexpected: ${out}"
+    fi
+}
+
+# check_history_events_read <image> <endpoint> <label>: the five seeded events
+# of History.Events, oldest first, and the newest first with start > end.
+check_history_events_read() {
+    local image="$1" endpoint="$2" label="$3" out
+    out=$(run_client_op "${image}" history-read-events --endpoint "${endpoint}" --node "${HEV_NODE}" \
+            --start 2026-07-24T10:00:00Z --end 2026-07-24T10:01:00Z) || true
+    validate_envelope "${out}" "${label}:history-read-events" || return
+    if echo "${out}" | jq -e '.success == true and (.results[0].events | length) == 5
+            and .results[0].events[0].fields[0].name == "EventId"
+            and .results[0].events[0].fields[0].value == "aGlzdC1ldnQtMA=="
+            and .results[0].events[4].fields[0].value == "aGlzdC1ldnQtNA=="' >/dev/null 2>&1; then
+        ok "${label}: history-read-events forward → 5 events"
+    else
+        fail "${label}: history-read-events forward — unexpected: ${out}"
+    fi
+}
+
 # ── Smoke checks ──────────────────────────────────────────────────────────────
 
 check_endpoints() {
@@ -1007,11 +1056,23 @@ run_single_smoke() {
         check_codec_node "${image}" "${endpoint}" "${adapter}→${adapter}"
         check_codec_roundtrip "${image}" "${image}" "${adapter}→${adapter}"
     fi
-    if [[ "${adapter}" == "dotnet" ]]; then
-        check_history_events "${image}" "${endpoint}" "${adapter}→${adapter}"
-    elif [[ "${adapter}" == "node-opcua" ]]; then
-        check_history_events_unsupported "${image}" "${endpoint}" "${adapter}→${adapter}"
-    fi
+    case "${adapter}" in
+        dotnet)
+            check_history_events "${image}" "${endpoint}" "${adapter}→${adapter}"
+            ;;
+        node-opcua)
+            check_history_events_unsupported "${image}" "${endpoint}" "${adapter}→${adapter}"
+            ;;
+        asyncua)
+            check_history_events_caps "${image}" "${adapter}"
+            check_history_events_read "${image}" "${endpoint}" "${adapter}→${adapter}"
+            check_asyncua_history_update_deviation "${image}" "${endpoint}" "${adapter}→${adapter}"
+            ;;
+        async-opcua|open62541|milo)
+            check_history_events_caps "${image}" "${adapter}"
+            check_history_events_envelope "${image}" "${endpoint}" "${adapter}→${adapter}"
+            ;;
+    esac
 
     stop_server "${cname}"
     if [[ "${adapter}" == "open62541" ]]; then
@@ -1333,6 +1394,23 @@ check_asyncua_deadband_deviation() {
     fi
 }
 
+# asyncua 2.1.0 has no HistoryUpdate: its permission ruleset refuses the
+# request for the User role the adapter gives every session
+# (BadUserAccessDenied), and the dispatcher has no handler behind it
+# (BadServiceUnsupported for Admin) — asyncua/README.md. The check fails when
+# that changes.
+check_asyncua_history_update_deviation() {
+    local image="$1" endpoint="$2" label="$3" out
+    out=$(run_client_op "${image}" history-update-events --endpoint "${endpoint}" --node "${HEV_NODE}" \
+            --perform delete --event-id aGlzdC1ldnQtMA==) || true
+    validate_envelope "${out}" "${label}:history-update-events" || return
+    if echo "${out}" | jq -e '.success == false and (.serviceResult.name == "BadUserAccessDenied" or .serviceResult.name == "BadServiceUnsupported")' >/dev/null 2>&1; then
+        ok "${label}: history-update-events refused (known asyncua 2.1.0 deviation, asyncua/README.md)"
+    else
+        fail "${label}: history-update-events — unexpected (did asyncua gain HistoryUpdate?): ${out}"
+    fi
+}
+
 # Secured channels with the asyncua-server / asyncua-client identities of the
 # test PKI on a feature network: the open62541 and Milo clients against the
 # asyncua server (Basic256Sha256, the Aes policies, UserName, untrusted client
@@ -1500,17 +1578,21 @@ run_cross_asyncua_smoke() {
     run_asyncua_pair_checks "${img_open62541}" "${ep_asyncua}" "o62541→asyncua" no
     check_asyncua_deadband_deviation "${img_open62541}" "${ep_asyncua}" "o62541→asyncua"
     run_asyncua_pair_checks "${img_milo}" "${ep_asyncua}" "milo→asyncua" no
+    check_history_events_read "${img_open62541}" "${ep_asyncua}" "o62541→asyncua"
+    check_history_events_read "${img_milo}" "${ep_asyncua}" "milo→asyncua"
     if [[ -n "${img_async_opcua}" ]]; then
         local ep_async_opcua="opc.tcp://localhost:${port_async_opcua}${ENDPOINT_PATH}"
         log "Cross-stack: asyncua ↔ async-opcua"
         run_asyncua_pair_checks "${img_asyncua}" "${ep_async_opcua}" "asyncua→async-opcua"
         run_asyncua_pair_checks "${img_async_opcua}" "${ep_asyncua}" "async-opcua→asyncua" no
+        check_history_events_read "${img_async_opcua}" "${ep_asyncua}" "async-opcua→asyncua"
     fi
     if [[ -n "${img_dotnet}" ]]; then
         local ep_dotnet="opc.tcp://localhost:${port_dotnet}${ENDPOINT_PATH}"
         log "Cross-stack: asyncua ↔ dotnet"
         run_asyncua_pair_checks "${img_asyncua}" "${ep_dotnet}" "asyncua→dotnet"
         run_asyncua_pair_checks "${img_dotnet}" "${ep_asyncua}" "dotnet→asyncua" no
+        check_history_events_read "${img_dotnet}" "${ep_asyncua}" "dotnet→asyncua"
     fi
 
     for cname in "${servers[@]}"; do stop_server "${cname}"; done

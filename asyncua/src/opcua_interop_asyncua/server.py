@@ -12,7 +12,6 @@ from pathlib import Path
 
 from asyncua import Server, ua
 from asyncua.crypto.permission_rules import User, UserRole
-from asyncua.server.history import HistoryDict
 
 from . import fixture as fx
 from . import pki
@@ -161,7 +160,7 @@ async def run(argv: list[str]) -> int:
         tokens.append(ua.UserNameIdentityToken)
     server.set_identity_tokens(tokens)
 
-    history = HistoryDict()
+    history = fx.History(server)
     server.iserver.history_manager.set_storage(history)
 
     space = fx.AddressSpaceBuilder(server, fixture, history)
