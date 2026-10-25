@@ -183,6 +183,43 @@ services:
       retries: 15
       start_period: 5s
 
+  # Global Discovery Server (Part 12 pull model, docs/CLIENT_CONTRACT.md §16) of
+  # UA-.NETStandard 1.5.378 with the dotnet-server identity of the test PKI.
+  # Host port 4846 (4845 is asyncua).
+  dotnet-gds:
+    image: ghcr.io/otfabric/opcua-interop-dotnet-gds:${OPCUA_COMPAT_VERSION:-dev}
+    command:
+      - server
+      - --fixture
+      - /fixtures/gds/fixture.json
+      - --bind-address
+      - 0.0.0.0
+      - --bind-port
+      - "4840"
+      - --advertised-host
+      - dotnet-gds
+      - --endpoint-path
+      - /opcua-interop
+      - --certificate
+      - /pki/dotnet-server/cert.crt
+      - --private-key
+      - /pki/dotnet-server/cert.key
+      - --pki-dir
+      - /pki/dotnet-server/pki
+      - --ready-file
+      - /run/opcua-interop/ready
+    ports:
+      - "4846:4840"
+    volumes:
+      - ./fixtures:/fixtures:ro
+      - ./certs/test-pki:/pki:ro
+    healthcheck:
+      test: ["CMD", "test", "-f", "/run/opcua-interop/ready"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+
   # MQTT broker for the PubSub (Part 14) tests: plain MQTT on 1883, anonymous.
   # eclipse-mosquitto:2.0.22, pinned by its multi-arch index digest.
   mosquitto:

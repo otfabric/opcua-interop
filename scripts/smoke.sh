@@ -6,6 +6,7 @@
 #   smoke.sh milo <image>                             # single-adapter smoke
 #   smoke.sh async-opcua <image>                      # single-adapter smoke
 #   smoke.sh dotnet <image>                           # single-adapter smoke
+#   smoke.sh dotnet-gds <image>                       # GDS pull model: server + client gds-pull (§16)
 #   smoke.sh node-opcua <image>                       # single-adapter smoke
 #   smoke.sh cross <image-open62541> <image-milo> [image-async-opcua] [image-node-opcua]
 #                                                     # cross-stack self-check
@@ -26,7 +27,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENDPOINT_PATH="/opcua-interop"
 WAIT_TIMEOUT=60
 
-MODE="${1:?Usage: smoke.sh <open62541|milo|async-opcua|dotnet|node-opcua|asyncua|cross|cross-dotnet|cross-asyncua> <image> [images...]}"
+MODE="${1:?Usage: smoke.sh <open62541|milo|async-opcua|dotnet|dotnet-gds|node-opcua|asyncua|cross|cross-dotnet|cross-asyncua> <image> [images...]}"
 shift
 
 PASS=0
@@ -1326,9 +1327,69 @@ run_cross_asyncua_smoke() {
     trap - EXIT
 }
 
+# ── Mode: dotnet-gds (GDS pull model, docs/CLIENT_CONTRACT.md §16) ─────────────
+
+# The GDS server of the dotnet-gds image on a feature network (fixtures/gds,
+# the dotnet-server identity of the test PKI) and its own client gds-pull
+# against it: CSR and new key pair over Basic256Sha256/SignAndEncrypt with the
+# gds-admin user, revoke and unregister; anonymous FindApplications is denied.
+run_dotnet_gds_smoke() {
+    local img="$1"
+
+    prepare_pki
+    FEAT_NET="smoke-net-$$"
+    docker network create "${FEAT_NET}" >/dev/null
+    local gds="smoke-gds-$$"
+    FEAT_CONTAINERS+=("${gds}")
+    trap feature_cleanup EXIT
+
+    log "Starting dotnet-gds Global Discovery Server..."
+    docker run -d --name "${gds}" --network "${FEAT_NET}" \
+        -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+        "${img}" server --fixture /fixtures/gds/fixture.json \
+        --advertised-host "${gds}" --endpoint-path "${ENDPOINT_PATH}" \
+        --certificate /pki/dotnet-server/cert.crt --private-key /pki/dotnet-server/cert.key \
+        --pki-dir /pki/dotnet-server/pki >/dev/null
+    wait_ready "${gds}"
+
+    local ep="opc.tcp://${gds}:4840${ENDPOINT_PATH}"
+    local sec=(--security-policy Basic256Sha256 --security-mode SignAndEncrypt
+               --certificate /pki/dotnet-client/cert.crt --private-key /pki/dotnet-client/cert.key
+               --trust-list /pki/ca/ca.crt)
+    local admin=(--username gds-admin --password gds-admin-password)
+    local out kind
+
+    out=$(docker run --rm "${img}" print-capabilities) || true
+    feat_expect "dotnet-gds: print-capabilities" \
+        '.adapter.name == "dotnet-gds" and (.clientOperations | index("gds-pull")) and (.serverFeatures | index("gds-pull"))' "${out}"
+
+    out=$(feat_client "${img}" - endpoints --endpoint "${ep}") || true
+    feat_expect "dotnet-gds→dotnet-gds: endpoints" \
+        '.success == true and ([.results[] | select(.securityMode == "SignAndEncrypt")] | length) > 0' "${out}"
+
+    for kind in csr new-key-pair; do
+        out=$(feat_client "${img}" - gds-pull --endpoint "${ep}" "${sec[@]}" "${admin[@]}" \
+                --app-uri "urn:opcua-interop:gds-pull:smoke-${kind}" --request "${kind}" --revoke --unregister) || true
+        feat_expect "dotnet-gds→dotnet-gds: gds-pull --request ${kind} --revoke --unregister" \
+            '.success == true and .results[0].registered == true and (.results[0].certificate | length) > 0
+             and (.results[0].issuerCertificates | length) > 0 and .results[0].trustList.specifiedLists == 15
+             and .results[0].revokeStatus.code == 0 and .results[0].unregisterStatus.code == 0' "${out}"
+    done
+
+    out=$(feat_client "${img}" - gds-pull --endpoint "${ep}" "${sec[@]}") || true
+    feat_expect "dotnet-gds→dotnet-gds: anonymous FindApplications denied" \
+        '.success == false and .serviceResult.name == "BadUserAccessDenied" and .results[0].findApplicationsStatus.name == "BadUserAccessDenied"' "${out}"
+
+    feature_cleanup
+    trap - EXIT
+}
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 case "${MODE}" in
+    dotnet-gds)
+        run_dotnet_gds_smoke "${1:?image required}"
+        ;;
     open62541)
         run_single_smoke "open62541" "${1:?image required}"
         ;;
@@ -1357,7 +1418,7 @@ case "${MODE}" in
         run_cross_asyncua_smoke "${1:?asyncua image required}" "${2:?open62541 image required}" "${3:?milo image required}" "${4:-}" "${5:-}"
         ;;
     *)
-        echo "Unknown mode: ${MODE}. Use open62541, milo, async-opcua, dotnet, node-opcua, asyncua, cross, cross-dotnet or cross-asyncua." >&2
+        echo "Unknown mode: ${MODE}. Use open62541, milo, async-opcua, dotnet, dotnet-gds, node-opcua, asyncua, cross, cross-dotnet or cross-asyncua." >&2
         exit 1
         ;;
 esac

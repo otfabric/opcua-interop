@@ -68,7 +68,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua]
+        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua, dotnet-gds]
     steps:
       - uses: actions/checkout@v7
 
@@ -105,7 +105,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua]
+        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua, dotnet-gds]
     steps:
       - uses: actions/checkout@v7
 
@@ -245,7 +245,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua]
+        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua, dotnet-gds]
     steps:
       - uses: actions/checkout@v7
 

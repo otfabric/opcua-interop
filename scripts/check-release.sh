@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Checks that a release tag is consistent with the repository before anything
 # is built: the tag is vMAJOR.MINOR.PATCH, every adapter reports that version
-# (print-capabilities adapter.version, Milo BuildInfo; the dotnet BuildInfo is
-# its adapter.version), and RELEASE.md has a
+# (print-capabilities adapter.version, Milo BuildInfo; the dotnet and dotnet-gds
+# BuildInfo is their adapter.version), and RELEASE.md has a
 # non-empty section for it.
 #
 #   scripts/check-release.sh v0.8.0
@@ -30,6 +30,7 @@ check milo/src/main/java/io/otfabric/opcuainterop/ServerCommand.java 's/^ +"([0-
 check async-opcua/src/common.rs 's/^pub const ADAPTER_VERSION: &str = "([0-9.]+)";$/\1/p' "async-opcua adapter.version"
 check async-opcua/Cargo.toml 's/^version = "([0-9.]+)"$/\1/p' "async-opcua crate version"
 check dotnet/src/Capabilities.cs 's/.*const string AdapterVersion = "([0-9.]+)";.*/\1/p' "dotnet adapter.version (also its BuildInfo version)"
+check dotnet-gds/src/Capabilities.cs 's/.*const string AdapterVersion = "([0-9.]+)";.*/\1/p' "dotnet-gds adapter.version (also its BuildInfo version)"
 check node-opcua/src/util.ts 's/^export const ADAPTER_VERSION = "([0-9.]+)";$/\1/p' "node-opcua adapter.version"
 check node-opcua/package.json 's/^  "version": "([0-9.]+)",$/\1/p' "node-opcua package version"
 check asyncua/src/opcua_interop_asyncua/common.py 's/^ADAPTER_VERSION = "([0-9.]+)"$/\1/p' "asyncua adapter.version (also its BuildInfo version)"

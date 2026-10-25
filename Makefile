@@ -391,6 +391,75 @@ run-asyncua: ## Start asyncua server on port $(ASYNCUA_PORT)
 clean-asyncua:
 	docker rmi $(IMAGE_ASYNCUA):$(VERSION) 2>/dev/null || true
 
+# ── UA-.NETStandard GDS (dotnet-gds) adapter ─────────────────────────────────
+#
+# The GDS pull model (Part 12 §6, §7.9; docs/CLIENT_CONTRACT.md §16) on
+# UA-.NETStandard 1.5.378.182: a Global Discovery Server and `client gds-pull`.
+# Its own block like asyncua's: the aggregate targets get it as a prerequisite.
+
+IMAGE_DOTNET_GDS = $(REGISTRY)/opcua-interop-dotnet-gds
+DOTNET_GDS_PORT ?= 4846
+
+.PHONY: image-dotnet-gds buildx-dotnet-gds test-dotnet-gds smoke-dotnet-gds \
+        shutdown-dotnet-gds run-dotnet-gds clean-dotnet-gds
+
+image: image-dotnet-gds
+buildx: buildx-dotnet-gds
+test: test-dotnet-gds
+smoke: smoke-dotnet-gds
+shutdown: shutdown-dotnet-gds
+clean: clean-dotnet-gds
+
+image-dotnet-gds: ## Build UA-.NETStandard GDS (dotnet-gds) image (host arch, loaded into Docker)
+	@echo "Building UA-.NETStandard GDS (dotnet-gds) image (host arch)..."
+	docker build \
+		--tag $(IMAGE_DOTNET_GDS):$(VERSION) \
+		--file dotnet-gds/Dockerfile \
+		dotnet-gds/
+
+buildx-dotnet-gds: ## Build and push dotnet-gds image (multi-arch)
+	@echo "Building UA-.NETStandard GDS (dotnet-gds) image (multi-arch, push)..."
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		--push \
+		--tag $(IMAGE_DOTNET_GDS):$(VERSION) \
+		--file dotnet-gds/Dockerfile \
+		dotnet-gds/
+
+test-dotnet-gds: image-dotnet-gds ## Build dotnet-gds image and run its `test` command
+	@echo "Running dotnet-gds self-test..."
+	docker run --rm \
+		-v "$(PWD)/fixtures:/fixtures:ro" \
+		$(IMAGE_DOTNET_GDS):$(VERSION) \
+		test
+
+smoke-dotnet-gds: ## Smoke test dotnet-gds: GDS server + client gds-pull (run 'make image-dotnet-gds' first)
+	@echo "Smoking UA-.NETStandard GDS (dotnet-gds) adapter..."
+	@scripts/smoke.sh dotnet-gds $(IMAGE_DOTNET_GDS):$(VERSION)
+
+shutdown-dotnet-gds: ## Test dotnet-gds graceful shutdown: SIGTERM must produce exit 0
+	@echo "Testing dotnet-gds graceful shutdown..."
+	@scripts/shutdown-test.sh dotnet-gds $(IMAGE_DOTNET_GDS):$(VERSION)
+
+run-dotnet-gds: ## Start the dotnet-gds Global Discovery Server on port $(DOTNET_GDS_PORT)
+	@echo "Starting dotnet-gds Global Discovery Server on port $(DOTNET_GDS_PORT)..."
+	docker run --rm \
+		-p $(DOTNET_GDS_PORT):4840 \
+		-v "$(PWD)/fixtures:/fixtures:ro" \
+		-v "$(PWD)/certs/test-pki:/pki:ro" \
+		$(IMAGE_DOTNET_GDS):$(VERSION) \
+		server \
+		--fixture /fixtures/gds/fixture.json \
+		--advertised-host localhost \
+		--certificate /pki/dotnet-server/cert.crt \
+		--private-key /pki/dotnet-server/cert.key \
+		--pki-dir /pki/dotnet-server/pki \
+		--ready-file /run/opcua-interop/ready
+
+clean-dotnet-gds:
+	docker rmi $(IMAGE_DOTNET_GDS):$(VERSION) 2>/dev/null || true
+	rm -rf dotnet-gds/src/bin/ dotnet-gds/src/obj/
+
 # ── Certificates ─────────────────────────────────────────────────────────────
 
 certs: ## Generate test PKI
@@ -403,7 +472,7 @@ certs: ## Generate test PKI
 # images natively per architecture, then publish-arch, publish-manifest and
 # digests. `publish` is a manual fallback that builds under emulation.
 
-ADAPTERS = open62541 milo async-opcua dotnet node-opcua asyncua
+ADAPTERS = open62541 milo async-opcua dotnet node-opcua asyncua dotnet-gds
 ARCHS    = amd64 arm64
 
 define require_release_version

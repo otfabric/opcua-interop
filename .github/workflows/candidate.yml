@@ -291,6 +291,80 @@ jobs:
           docker run --rm -v "$PWD/fixtures:/fixtures:ro" opcua-interop-dotnet:candidate test
           bash scripts/smoke.sh dotnet opcua-interop-dotnet:candidate
 
+  candidate-dotnet-gds:
+    name: dotnet-gds
+    runs-on: ubuntu-latest
+    outputs:
+      pin: ${{ steps.resolve.outputs.pin }}
+      latest: ${{ steps.resolve.outputs.latest }}
+      update: ${{ steps.resolve.outputs.update }}
+      build: ${{ steps.build.outcome }}
+      smoke: ${{ steps.smoke.outcome }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # The GDS adapter follows the newest UA-.NETStandard release that has both GDS
+      # packages (Gds.Server.Common and Gds.Client.Common); 2.0.x has none.
+      - name: Resolve UA-.NETStandard GDS pin vs latest NuGet release
+        id: resolve
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import re
+          import sys
+          import urllib.request
+          from pathlib import Path
+
+          pin = ""
+          for line in Path("dotnet-gds/Dockerfile").read_text().splitlines():
+              if line.startswith("ARG OPCUA_VERSION="):
+                  pin = line.split("=", 1)[1].strip()
+                  break
+          if not pin:
+              raise SystemExit("could not read OPCUA_VERSION from dotnet-gds/Dockerfile")
+
+          def stable(package):
+              url = f"https://api.nuget.org/v3-flatcontainer/{package}/index.json"
+              versions = json.load(urllib.request.urlopen(url))["versions"]
+              return {v for v in versions if re.fullmatch(r"\d+\.\d+\.\d+(\.\d+)?", v)}
+
+          both = stable("opcfoundation.netstandard.opc.ua.gds.server.common") & \
+              stable("opcfoundation.netstandard.opc.ua.gds.client.common")
+          if not both:
+              raise SystemExit("no stable release with both UA-.NETStandard GDS packages on NuGet")
+          latest = max(both, key=lambda v: tuple(int(x) for x in v.split(".")))
+          update = "yes" if pin != latest else "no"
+
+          print(f"pin={pin}")
+          print(f"latest={latest}")
+          print(f"update={update}")
+          print(f"resolved pin={pin} latest={latest} update={update}", file=sys.stderr)
+          PY
+
+      - name: Build dotnet-gds adapter at latest release
+        id: build
+        continue-on-error: true
+        uses: docker/build-push-action@v7
+        with:
+          context: dotnet-gds
+          file: dotnet-gds/Dockerfile
+          push: false
+          load: true
+          tags: opcua-interop-dotnet-gds:candidate
+          build-args: |
+            OPCUA_VERSION=${{ steps.resolve.outputs.latest }}
+
+      - name: Run dotnet-gds self-test and smoke against candidate image
+        id: smoke
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD/fixtures:/fixtures:ro" opcua-interop-dotnet-gds:candidate test
+          bash scripts/smoke.sh dotnet-gds opcua-interop-dotnet-gds:candidate
+
   candidate-node-opcua:
     name: node-opcua
     runs-on: ubuntu-latest
@@ -440,7 +514,7 @@ jobs:
   summary:
     name: Decision table
     runs-on: ubuntu-latest
-    needs: [candidate-open62541, candidate-milo, candidate-async-opcua, candidate-dotnet, candidate-node-opcua, candidate-asyncua]
+    needs: [candidate-open62541, candidate-milo, candidate-async-opcua, candidate-dotnet, candidate-node-opcua, candidate-asyncua, candidate-dotnet-gds]
     if: always()
     steps:
       - name: Write pin-vs-latest summary
@@ -465,6 +539,11 @@ jobs:
           DOTNET_UPDATE: ${{ needs.candidate-dotnet.outputs.update }}
           DOTNET_BUILD: ${{ needs.candidate-dotnet.outputs.build }}
           DOTNET_SMOKE: ${{ needs.candidate-dotnet.outputs.smoke }}
+          GDS_PIN: ${{ needs.candidate-dotnet-gds.outputs.pin }}
+          GDS_LATEST: ${{ needs.candidate-dotnet-gds.outputs.latest }}
+          GDS_UPDATE: ${{ needs.candidate-dotnet-gds.outputs.update }}
+          GDS_BUILD: ${{ needs.candidate-dotnet-gds.outputs.build }}
+          GDS_SMOKE: ${{ needs.candidate-dotnet-gds.outputs.smoke }}
           NO_PIN: ${{ needs.candidate-node-opcua.outputs.pin }}
           NO_LATEST: ${{ needs.candidate-node-opcua.outputs.latest }}
           NO_UPDATE: ${{ needs.candidate-node-opcua.outputs.update }}
@@ -508,6 +587,12 @@ jobs:
           dotnet_build = os.environ.get("DOTNET_BUILD", "?")
           dotnet_smoke = smoke_label(dotnet_build, os.environ.get("DOTNET_SMOKE", ""))
 
+          gds_pin = os.environ.get("GDS_PIN", "")
+          gds_latest = os.environ.get("GDS_LATEST", "")
+          gds_update = os.environ.get("GDS_UPDATE", "?")
+          gds_build = os.environ.get("GDS_BUILD", "?")
+          gds_smoke = smoke_label(gds_build, os.environ.get("GDS_SMOKE", ""))
+
           no_pin = os.environ.get("NO_PIN", "")
           no_latest = os.environ.get("NO_LATEST", "")
           no_update = os.environ.get("NO_UPDATE", "?")
@@ -543,6 +628,10 @@ jobs:
               f"`{dotnet_pin}` | `{dotnet_latest}` | `{dotnet_build}` | `{dotnet_smoke}` | **{dotnet_update}** |"
           )
           print(
+              f"| [UA-.NETStandard GDS](https://github.com/OPCFoundation/UA-.NETStandard) (dotnet-gds) | NuGet, both GDS packages | "
+              f"`{gds_pin}` | `{gds_latest}` | `{gds_build}` | `{gds_smoke}` | **{gds_update}** |"
+          )
+          print(
               f"| [node-opcua](https://github.com/node-opcua/node-opcua) | npm semver | "
               f"`{no_pin}` | `{no_latest}` | `{no_build}` | `{no_smoke}` | **{no_update}** |"
           )
@@ -557,6 +646,7 @@ jobs:
           print("- Milo: `milo/pom.xml` (`milo.version`)")
           print('- async-opcua: `async-opcua/Cargo.toml` (`async-opcua = "=X.Y.Z"`), `Cargo.lock`, `STACK_VERSION` in `src/common.rs`')
           print("- UA-.NETStandard: `dotnet/Dockerfile` (`ARG OPCUA_VERSION`)")
+          print("- UA-.NETStandard GDS: `dotnet-gds/Dockerfile` (`ARG OPCUA_VERSION`) and the default in `dotnet-gds/src/OpcUaInterop.DotnetGds.csproj`")
           print('- node-opcua: `node-opcua/package.json` (`node-opcua`, `node-opcua-types`, exact), `package-lock.json`')
           print("- opcua-asyncio: `asyncua/requirements.in` (`asyncua==X.Y.Z`) and the hashed lock `asyncua/requirements.txt`")
           print()

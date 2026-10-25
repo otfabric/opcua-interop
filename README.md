@@ -20,6 +20,9 @@ reference stacks:
   SDK for Node.js (since v0.9.0).
 - **opcua-asyncio (Python)** — The asyncio OPC UA client and server
   library of FreeOpcUa (PyPI `asyncua`, since v0.9.0).
+- **UA-.NETStandard GDS (C#)** — The Global Discovery Server and GDS
+  client of UA-.NETStandard 1.5.378 (`dotnet-gds`, the Part 12 pull model,
+  since v0.14.0).
 
 The infrastructure provides deterministic test fixtures, simulated
 OPC UA servers, reference client operations, secure communication,
@@ -93,6 +96,9 @@ make run-dotnet
 
 # opcua-asyncio server on port 4845
 make run-asyncua
+
+# UA-.NETStandard Global Discovery Server on port 4846
+make run-dotnet-gds
 ```
 
 ### Run a reference client probe
@@ -129,6 +135,7 @@ docker run --rm ghcr.io/otfabric/opcua-interop-async-opcua:latest print-capabili
 docker run --rm ghcr.io/otfabric/opcua-interop-dotnet:latest print-capabilities
 docker run --rm ghcr.io/otfabric/opcua-interop-node-opcua:latest print-capabilities
 docker run --rm ghcr.io/otfabric/opcua-interop-asyncua:latest print-capabilities
+docker run --rm ghcr.io/otfabric/opcua-interop-dotnet-gds:latest print-capabilities
 ```
 
 ## Architecture
@@ -138,6 +145,7 @@ opcua-interop/
 ├── fixtures/           # Shared, stack-neutral fixture definitions
 │   ├── schema/         # JSON Schema for fixture validation
 │   ├── baseline/       # Baseline fixture (scalars, access, browse, methods, subscriptions, events, history)
+│   ├── gds/            # The baseline plus the GDS administrator gds-admin (dotnet-gds)
 │   ├── subscriptions/  # Dynamic-value and subscription fixture
 │   ├── methods/        # Method fixture
 │   ├── security/       # Security policy fixture
@@ -151,6 +159,7 @@ opcua-interop/
 ├── dotnet/             # C# adapter on UA-.NETStandard (Dockerfile, csproj, source)
 ├── node-opcua/         # TypeScript adapter (Dockerfile, package.json, source)
 ├── asyncua/            # Python adapter on opcua-asyncio (Dockerfile, hashed requirements, source)
+├── dotnet-gds/         # C# GDS adapter on UA-.NETStandard 1.5.378 (Global Discovery Server, client gds-pull)
 ├── schemas/            # JSON Schemas for client results and print-capabilities
 ├── docs/               # Client command contract (CLIENT_CONTRACT.md)
 ├── pubsub/examples/    # PubSub configurations (--pubsub-config) used by the PubSub smoke
@@ -188,6 +197,7 @@ Each image supports the same command contract:
 | `ghcr.io/otfabric/opcua-interop-dotnet:<version>` (from v0.9.0) | linux/amd64, linux/arm64 |
 | `ghcr.io/otfabric/opcua-interop-node-opcua:<version>` (from v0.9.0) | linux/amd64, linux/arm64 |
 | `ghcr.io/otfabric/opcua-interop-asyncua:<version>` (from v0.9.0) | linux/amd64, linux/arm64 |
+| `ghcr.io/otfabric/opcua-interop-dotnet-gds:<version>` (from v0.14.0) | linux/amd64, linux/arm64 |
 
 ### Server command
 
@@ -287,7 +297,18 @@ client codec --endpoint ... --node '...' [--node '...']                        #
 client codec pubsub-uadp-encode|pubsub-json-encode [--document <description>] # PubSub NetworkMessage (open62541, dotnet)
 client codec pubsub-uadp-decode|pubsub-json-decode [--document <message>] [--metadata <DataSetMetaDataType>]
 client pubsub-discover --url opc.udp://<host>:<port> [--type DataSetMetaData|DataSetWriterConfiguration] # UADP discovery probe (dotnet)
+client gds-pull  --endpoint ... --security-mode SignAndEncrypt --username ... --password ... \
+                 [--app-uri urn:x] [--app-type Server|Client|ClientAndServer] [--discovery-url ...] \
+                 [--request csr|new-key-pair] [--certificate-type RsaSha256|NistP256] \
+                 [--revoke] [--unregister] [--finish-timeout-ms 30000]   # dotnet-gds (v0.14.0), §16
 ```
+
+The `dotnet-gds` image (v0.14.0) is a separate adapter: its `server` is a Global
+Discovery Server (Part 12 §6 Directory and §7.9 pull certificate management,
+the stack's GlobalDiscoverySampleServer with auto-approved requests) and its
+client has `endpoints` and `gds-pull` only. It runs on UA-.NETStandard
+1.5.378.182, the last release with the GDS packages (2.0.x has none); see
+[`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md) §16.
 
 `subscribe` takes a DataChangeFilter (`--deadband-absolute <x>` | `--deadband-percent <x>`,
 `--trigger Status|StatusValue|StatusValueTimestamp`); the baseline fixture's
@@ -535,6 +556,7 @@ make image-async-opcua   # Build async-opcua image (host arch)
 make image-dotnet        # Build UA-.NETStandard image (host arch)
 make image-node-opcua    # Build node-opcua image (host arch)
 make image-asyncua       # Build opcua-asyncio image (host arch, unit tests in the build)
+make image-dotnet-gds    # Build UA-.NETStandard GDS image (host arch)
 make validate            # Validate fixtures and schema
 make validate-fixtures   # Validate all fixture files
 make test                # Run unit tests for all adapters
@@ -544,6 +566,7 @@ make test-async-opcua    # Run async-opcua unit tests
 make test-dotnet         # Run UA-.NETStandard adapter unit tests
 make test-node-opcua     # Build node-opcua (unit tests in the build), run its fixture self-test
 make test-asyncua        # Build opcua-asyncio (unit tests in the build), run its fixture self-test
+make test-dotnet-gds     # Build the GDS image and run its self-test
 make smoke               # Run all smoke tests (images must be built)
 make smoke-open62541     # Smoke test open62541 only
 make smoke-milo          # Smoke test Milo only
@@ -551,6 +574,7 @@ make smoke-async-opcua   # Smoke test async-opcua only (no codec checks)
 make smoke-dotnet        # Smoke test UA-.NETStandard only
 make smoke-node-opcua    # Smoke test node-opcua only (no codec checks)
 make smoke-asyncua       # Smoke test opcua-asyncio only (no codec checks)
+make smoke-dotnet-gds    # GDS server + client gds-pull (CSR, new key pair, revoke, unregister)
 make smoke-cross-stack   # Cross-stack interop self-check
 make smoke-cross-dotnet  # UA-.NETStandard client/server against open62541 and Milo
 make smoke-cross-asyncua # opcua-asyncio client/server against open62541 and Milo, secured channels, LDS
@@ -563,6 +587,7 @@ make run-async-opcua     # Start async-opcua server (foreground, port 4842)
 make run-dotnet          # Start UA-.NETStandard server (foreground, port 4843)
 make run-node-opcua      # Start node-opcua server (foreground, port 4844)
 make run-asyncua         # Start opcua-asyncio server (foreground, port 4845)
+make run-dotnet-gds      # Start the UA-.NETStandard Global Discovery Server (foreground, port 4846)
 make run-mosquitto       # Start the MQTT broker for PubSub tests (foreground, port 1883)
 make certs               # Generate test PKI (requires openssl >= 1.1)
 make clean               # Remove build artifacts and containers
@@ -603,6 +628,7 @@ adapter surface gets a new tag; published tags are not moved. Release notes and 
 | UA-.NETStandard (`dotnet`) | C# | OPC Foundation UA-.NETStandard 2.0.1 (NuGet `OPCFoundation.NetStandard.Opc.Ua.*`) on .NET 10 | The OPC Foundation reference implementation, the stack most commercial servers and clients build on |
 | node-opcua | TypeScript | node-opcua 2.187.12 (npm, Node.js 24 / OpenSSL) | JavaScript ecosystem stack, independent encoder/decoder and session/subscription engine; see [`node-opcua/README.md`](node-opcua/README.md) |
 | opcua-asyncio (`asyncua`) | Python | opcua-asyncio 2.1.0 (PyPI `asyncua`, `cryptography`) on CPython 3.14 | The most used Python stack, independent encoder/decoder and security code; see [`asyncua/README.md`](asyncua/README.md) |
+| UA-.NETStandard GDS (`dotnet-gds`) | C# | OPC Foundation UA-.NETStandard 1.5.378.182 with `Opc.Ua.Gds.Server.Common` / `Opc.Ua.Gds.Client.Common` on .NET 10 | The reference Global Discovery Server and GDS client (Part 12 pull model, §16); a separate image because the GDS packages have no 2.0.x release |
 
 Feature support differs per stack and is declared by `print-capabilities`:
 
