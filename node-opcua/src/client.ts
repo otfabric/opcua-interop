@@ -1631,6 +1631,302 @@ async function cmdRegisterServer(a: Args, r: Result): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
+// alarms: ConditionRefresh + Acknowledge / Confirm / AddComment (Part 9)
+// ---------------------------------------------------------------------------
+
+/** The 16 SelectClauses of `alarms`: [TypeDefinitionId, BrowsePath, AttributeId]. */
+const ALARM_SELECT: [string, string[], number][] = [
+    ["i=2041", ["EventId"], AttributeIds.Value],
+    ["i=2041", ["EventType"], AttributeIds.Value],
+    ["i=2041", ["SourceNode"], AttributeIds.Value],
+    ["i=2041", ["SourceName"], AttributeIds.Value],
+    ["i=2041", ["Time"], AttributeIds.Value],
+    ["i=2041", ["Message"], AttributeIds.Value],
+    ["i=2041", ["Severity"], AttributeIds.Value],
+    ["i=2782", ["ConditionName"], AttributeIds.Value],
+    ["i=2782", ["BranchId"], AttributeIds.Value],
+    ["i=2782", ["Retain"], AttributeIds.Value],
+    ["i=2782", ["EnabledState", "Id"], AttributeIds.Value],
+    ["i=2782", ["Comment"], AttributeIds.Value],
+    ["i=2881", ["AckedState", "Id"], AttributeIds.Value],
+    ["i=2881", ["ConfirmedState", "Id"], AttributeIds.Value],
+    ["i=2915", ["ActiveState", "Id"], AttributeIds.Value],
+    ["i=2782", [], AttributeIds.NodeId], // ConditionId (Part 9 §5.5.2)
+];
+
+const REFRESH_START = "i=2787";
+const REFRESH_END = "i=2788";
+
+/** A ConditionEntry of the `alarms` result (docs/CLIENT_CONTRACT.md §4 `alarms`). */
+export interface ConditionEntry {
+    conditionId: string | null;
+    eventId: string | null;
+    eventType: string | null;
+    sourceNode: string | null;
+    sourceName: string | null;
+    conditionName: string | null;
+    time: string | null;
+    message: string | null;
+    severity: number | null;
+    retain: boolean | null;
+    enabled: boolean | null;
+    acked: boolean | null;
+    confirmed: boolean | null;
+    active: boolean | null;
+    comment: string | null;
+}
+
+interface ConditionEvent {
+    entry: ConditionEntry;
+    eventId: Buffer | null;
+}
+
+/** The value of an event field, null for Null / StatusCode (a Bad select result) / absent. */
+function eventValue(v: Variant | undefined): unknown {
+    if (!v || v.dataType === DataType.Null || v.dataType === DataType.StatusCode) return null;
+    return v.value ?? null;
+}
+
+/** The ConditionEntry of one event's 16 fields (ALARM_SELECT order). */
+export function conditionEntry(fields: Variant[]): ConditionEntry {
+    const f = (i: number) => eventValue(fields[i]);
+    const nid = (i: number) => (f(i) instanceof NodeId ? nodeIdToString(f(i) as NodeId) : null);
+    const str = (i: number) => (typeof f(i) === "string" ? (f(i) as string) : null);
+    const bool = (i: number) => (typeof f(i) === "boolean" ? (f(i) as boolean) : null);
+    const text = (i: number) => (f(i) instanceof LocalizedText ? ((f(i) as LocalizedText).text ?? "") : null);
+    const ev = f(0);
+    const t = f(4);
+    const sev = f(6);
+    return {
+        conditionId: nid(15),
+        eventId: Buffer.isBuffer(ev) ? ev.toString("base64") : null,
+        eventType: nid(1),
+        sourceNode: nid(2),
+        sourceName: str(3),
+        conditionName: str(7),
+        time: t instanceof Date ? dateToString(t) : null,
+        message: text(5),
+        severity: typeof sev === "number" ? sev : null,
+        retain: bool(9),
+        enabled: bool(10),
+        acked: bool(12),
+        confirmed: bool(13),
+        active: bool(14),
+        comment: text(11),
+    };
+}
+
+/** A presence flag (`--acknowledge`), also `--acknowledge true|false`. */
+export function flagArg(a: Args, name: string): boolean {
+    const i = a.argv.indexOf(name);
+    if (i < 0) return false;
+    const next = a.argv[i + 1];
+    return !(next === "false" || next === "0");
+}
+
+async function callStatus(c: Conn, objectId: NodeId, methodId: NodeId, inputArguments: Variant[]): Promise<number> {
+    const { resp, status } = await tx(c, new CallRequest({ methodsToCall: [{ objectId, methodId, inputArguments }] }));
+    if (!resp || isBad(status) || !resp.results?.length) return status || StatusCodes.BadUnexpectedError.value;
+    return codeOf(resp.results[0].statusCode);
+}
+
+async function cmdAlarms(a: Args, r: Result): Promise<number> {
+    if (!a.get("--endpoint")) throw new InputError("missing --endpoint");
+    const nodeStr = a.get("--node") ?? "i=2253";
+    parseNodeIdString(nodeStr);
+    const conditionName = a.get("--condition-name");
+    const doAck = flagArg(a, "--acknowledge");
+    const doConfirm = flagArg(a, "--confirm");
+    const doComment = flagArg(a, "--add-comment");
+    const commentText = a.get("--comment") ?? "interop-comment";
+    const toMs = a.num("--timeout-ms", 15000);
+    const pi = a.num("--publishing-interval-ms", 200);
+    const c = await connect(a);
+    const deadline = Date.now() + toMs;
+    const left = () => Math.max(0, deadline - Date.now());
+    try {
+        const nodeId = resolve(c, nodeStr);
+        const selectClauses = ALARM_SELECT.map(([type, browsePath, attributeId]) => new SimpleAttributeOperand({
+            typeDefinitionId: type,
+            browsePath: browsePath.map((name) => new QualifiedName({ namespaceIndex: 0, name })),
+            attributeId,
+        }));
+        const filter = new EventFilter({ selectClauses, whereClause: new ContentFilter({ elements: [] }) });
+        const sub = await createSubscription(c, pi, 10000, 10);
+        const pump = new PublishPump(c, Math.max(sub.revisedPublishingInterval * sub.revisedMaxKeepAliveCount + 5000, c.t.request));
+
+        // Event classification, every notification in arrival order.
+        let processed = 0;
+        let refreshCalled = false;
+        let startSeen = false;
+        let endSeen = false;
+        const refreshed = new Map<string, ConditionEntry>(); // first-seen order, last value
+        const latest = new Map<string, ConditionEvent>();
+        const condEvents: ConditionEvent[] = [];
+        const drain = () => {
+            while (processed < pump.notifications.length) {
+                const n = pump.notifications[processed++];
+                if (!n.eventFields || n.clientHandle !== 1) continue;
+                const entry = conditionEntry(n.eventFields);
+                if (entry.eventType === REFRESH_START) {
+                    if (refreshCalled) startSeen = true;
+                    continue;
+                }
+                if (entry.eventType === REFRESH_END) {
+                    if (refreshCalled) endSeen = true;
+                    continue;
+                }
+                if (!entry.conditionId) continue;
+                const ev0 = eventValue(n.eventFields[0]);
+                const ce: ConditionEvent = { entry, eventId: Buffer.isBuffer(ev0) ? ev0 : null };
+                latest.set(entry.conditionId, ce);
+                condEvents.push(ce);
+                if (refreshCalled && !endSeen) refreshed.set(entry.conditionId, entry);
+            }
+        };
+        pump.onNotification = drain;
+        pump.start();
+
+        const mon = await createMonitoredItem(c, sub.subscriptionId, nodeId, {
+            attributeId: AttributeIds.EventNotifier,
+            samplingInterval: 0,
+            queueSize: 1000,
+            discardOldest: true,
+            filter,
+            ts: TimestampsToReturn.Both,
+        });
+
+        const item: Record<string, unknown> = {
+            nodeId: nodeIdToString(nodeId),
+            subscriptionId: sub.subscriptionId,
+            monitoredItemStatusCode: statusJson(mon.status),
+            refresh: null,
+            conditions: [],
+            target: null,
+            acknowledge: null,
+            confirm: null,
+            addComment: null,
+        };
+        let exit = EXIT_OK;
+        const finish = async (): Promise<number> => {
+            pump.stop();
+            await deleteSubscription(c, sub.subscriptionId);
+            r.add(item);
+            return exit;
+        };
+        const failWith = (status: number, category: string, msg: string, code: number) => {
+            r.setService(status).fail(category, msg);
+            exit = code;
+        };
+
+        if (!isGood(mon.status)) {
+            item.refresh = { statusCode: statusJson(mon.status), startSeen: false, endSeen: false };
+            failWith(mon.status, "service", "CreateMonitoredItems rejected the event monitored item", EXIT_SERVICE);
+            return await finish();
+        }
+
+        // ConditionRefresh(SubscriptionId) on the ConditionType object.
+        refreshCalled = true;
+        const refreshStatus = await callStatus(c, resolve(c, "i=2782"), resolve(c, "i=3875"),
+            [new Variant({ dataType: DataType.UInt32, value: sub.subscriptionId })]);
+        const refresh: Record<string, unknown> = { statusCode: statusJson(refreshStatus), startSeen, endSeen };
+        item.refresh = refresh;
+        if (!isGood(refreshStatus)) {
+            failWith(refreshStatus, "service", "ConditionRefresh failed", EXIT_SERVICE);
+            return await finish();
+        }
+        const gotEnd = await pump.waitFor(() => endSeen, left());
+        refresh.startSeen = startSeen;
+        refresh.endSeen = endSeen;
+        const list = [...refreshed.values()];
+        item.conditions = list;
+        if (!gotEnd) {
+            failWith(StatusCodes.BadTimeout.value, "timeout", "timeout waiting for the RefreshEndEvent", EXIT_TIMEOUT);
+            return await finish();
+        }
+
+        const target = conditionName !== undefined
+            ? list.find((e) => e.conditionName === conditionName)
+            : list.find((e) => e.retain === true);
+        item.target = target ?? null;
+        if (!target) {
+            if (doAck || doConfirm || doComment) {
+                failWith(StatusCodes.BadNodeIdUnknown.value, "service",
+                    conditionName !== undefined ? `no condition named ${conditionName} in the refresh` : "no retained condition in the refresh", EXIT_SERVICE);
+            }
+            return await finish();
+        }
+        const targetKey = target.conditionId!;
+        const conditionId = resolve(c, targetKey);
+        const comment = new Variant({ dataType: DataType.LocalizedText, value: new LocalizedText({ locale: "en", text: commentText }) });
+        const eventIdArg = (b: Buffer | null) => new Variant({ dataType: DataType.ByteString, value: b });
+
+        /** Calls a condition method, then waits for the target's next event matching `pred`. */
+        const action = async (methodId: string, pred: (e: ConditionEntry) => boolean) => {
+            const eventId = latest.get(targetKey)?.eventId ?? null;
+            const mark = condEvents.length;
+            const status = await callStatus(c, conditionId, resolve(c, methodId), [eventIdArg(eventId), comment]);
+            let event: ConditionEntry | null = null;
+            if (!isGood(status)) return { status, event, eventId, timedOut: false };
+            const ok = await pump.waitFor(() => {
+                for (let i = mark; i < condEvents.length; i++) {
+                    const e = condEvents[i].entry;
+                    if (e.conditionId === targetKey && pred(e)) {
+                        event = e;
+                        return true;
+                    }
+                }
+                return false;
+            }, left());
+            return { status, event, eventId, timedOut: !ok };
+        };
+
+        if (doAck) {
+            const res = await action("i=9111", (e) => e.acked === true);
+            const ack: Record<string, unknown> = { statusCode: statusJson(res.status), event: res.event, repeatStatusCode: null };
+            item.acknowledge = ack;
+            if (!isGood(res.status)) {
+                failWith(res.status, "service", "Acknowledge failed", EXIT_SERVICE);
+                return await finish();
+            }
+            // The same, now stale, EventId again: Bad_ConditionBranchAlreadyAcked or Bad_EventIdUnknown.
+            ack.repeatStatusCode = statusJson(await callStatus(c, conditionId, resolve(c, "i=9111"), [eventIdArg(res.eventId), comment]));
+            if (res.timedOut) {
+                failWith(StatusCodes.BadTimeout.value, "timeout", "timeout waiting for the acknowledged event", EXIT_TIMEOUT);
+                return await finish();
+            }
+        }
+        if (doConfirm) {
+            const res = await action("i=9113", (e) => e.confirmed === true);
+            item.confirm = { statusCode: statusJson(res.status), event: res.event };
+            if (!isGood(res.status)) {
+                failWith(res.status, "service", "Confirm failed", EXIT_SERVICE);
+                return await finish();
+            }
+            if (res.timedOut) {
+                failWith(StatusCodes.BadTimeout.value, "timeout", "timeout waiting for the confirmed event", EXIT_TIMEOUT);
+                return await finish();
+            }
+        }
+        if (doComment) {
+            const res = await action("i=9029", (e) => e.comment === commentText);
+            item.addComment = { statusCode: statusJson(res.status), event: res.event };
+            if (!isGood(res.status)) {
+                failWith(res.status, "service", "AddComment failed", EXIT_SERVICE);
+                return await finish();
+            }
+            if (res.timedOut) {
+                failWith(StatusCodes.BadTimeout.value, "timeout", "timeout waiting for the comment event", EXIT_TIMEOUT);
+                return await finish();
+            }
+        }
+        return await finish();
+    } finally {
+        await close(c);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -1654,6 +1950,7 @@ const COMMANDS: Record<string, Cmd> = {
     "node-management": cmdNodeManagement,
     "find-servers-on-network": cmdFindServersOnNetwork,
     "register-server": cmdRegisterServer,
+    alarms: cmdAlarms,
 };
 
 /** The client operations this adapter dispatches (print-capabilities must declare exactly these). */
@@ -1666,7 +1963,7 @@ const UNSUPPORTED_OPS: Record<string, string> = {
 export const CLIENT_USAGE =
     "usage: client <endpoints|find-servers|read|write|browse|translate|call|subscribe|subscription-lifecycle|" +
     "event-subscribe|history-read [--scenario continue]|republish|transfer-subscriptions|register-nodes|node-management|" +
-    "find-servers-on-network|register-server> --endpoint <url> [flags]";
+    "find-servers-on-network|register-server|alarms> --endpoint <url> [flags]";
 
 export async function clientCommand(argv: string[]): Promise<number> {
     if (argv.length < 1) {

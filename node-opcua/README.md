@@ -55,7 +55,10 @@ deadband / trigger), `subscription-lifecycle` (`revise`, `publishing-mode`,
 `--min-severity`), `history-read` (raw, continuation points,
 `--scenario continue`), `republish`, `transfer-subscriptions`,
 `register-nodes`, `node-management`, `register-server` (RegisterServer2 with
-fallback), `find-servers-on-network`.
+fallback), `find-servers-on-network`, `alarms` (ConditionRefresh on
+ConditionType with the RefreshStart / RefreshEnd bracket, then Acknowledge /
+Confirm / AddComment of a condition, each followed by its event; contract §1 /
+§4 `alarms`).
 
 **Client features:** `channel-lifetime`, `deadband`, `reverse-listen`
 (also with security), `application-uri`, `register-server2`.
@@ -71,8 +74,25 @@ user (`test-user`), `--reverse-connect` (`--reverse-connect-interval-ms`),
 `--register-with` (`--register-interval-ms`, unregistered on SIGTERM), ready
 file, SIGTERM → exit 0.
 
+**Alarms & Conditions** (`src/alarms.ts`, serverFeatures `alarms`, built in
+code, not from `fixture.json`): folder `s=Alarms` (Organizes from
+`s=Compatibility`), notifier `s=Alarms.Source` (EventNotifier
+SubscribeToEvents, `Server --HasEventSource--> Alarms.Source`), the condition
+`s=Alarms.InteropAlarm` of **AlarmConditionType** with the optional
+**ConfirmedState** / Confirm (ConditionName `InteropAlarm`, SourceName
+`Alarms.Source`, HasCondition from the source, InputNode null), armed at start
+(Enabled, Active, unacknowledged, unconfirmed, Retain, Severity 500, Message
+`interop-alarm`), and the method `s=Alarms.Reset` (HasComponent of
+`Alarms.Source`, no arguments) that re-arms it with a new event.
+Acknowledge, Confirm, AddComment, Enable, Disable, ConditionRefresh and
+ConditionRefresh2 are node-opcua's own handlers
+(`addressSpace.installAlarmsAndConditionsService()`). Two stack behaviours are
+overridden on the fixture alarm: Confirm keeps Retain true while the alarm is
+Active (node-opcua sets it false, deviation 7), and Enable does not throw
+(deviation 8).
+
 **Server features:** `deadband`, `percent-deadband`, `reverse-connect`,
-`register-with`.
+`register-with`, `alarms`.
 
 **Security profiles** declared (verified on the client and the server side):
 None/None, Basic256Sha256 Sign and SignAndEncrypt, Aes128_Sha256_RsaOaep and
@@ -124,6 +144,10 @@ The go-opcua tests and the cross-stack smoke skip or log these with the reason; 
 | 4 | UserName is offered on the None endpoint only with an encrypted password (a token policy with a SecurityPolicy URI); `allowUnsecurePassword` is not honoured. The adapter adds the Basic256Sha256 and Aes128 token policies to the None endpoint so the fixture user can log on over None | server endpoints | username tests over None |
 | 5 | The server's `RegisterServerManager` registers only over an LDS endpoint that carries a server certificate (it picks the most secure endpoint); against an LDS with a None-only endpoint it never registers. A failed registration is not reported: errors are only logged when the state changed meanwhile, and the manager goes to `REGISTERED` | `node-opcua-server/dist/register_server_manager.js` | `TestGoLDS_NodeOpcuaServerRegisters` (secured LDS variant) |
 | 6 | After a SecureChannel renewal the server keeps securing each response with the token of its request (`ServerSecureChannelLayer` `send_response`), so a Publish request sent before the renewal is answered under the old token after the client has switched to the new one; Part 6 §6.7.4 has the server switch once it receives a message with the new token. The open62541 1.5.9 client drops such a response once the old token's lifetime has passed (`SecurityToken timed out`) and its subscription stalls; the go-opcua, Milo, async-opcua and node-opcua clients continue | `node-opcua-secure-channel/dist/source/server/server_secure_channel_layer.js` | `scripts/smoke.sh cross` (`check_o62541_node_renewal_deviation`) |
+| 7 | Confirm sets Retain to false also while the alarm is still Active (Part 9 §5.5.2: an active Condition stays of interest); the adapter keeps Retain true while ActiveState is true | `node-opcua-address-space/dist/impl/alarms_and_conditions/ua_acknowledgeable_condition_impl.js` (`_confirm_branch`) | fixed in the adapter |
+| 8 | Enable (after Disable) of an AlarmConditionType instance without an input to evaluate throws `Unimplemented, please override` (Call → `BadInternalError`) | `ua_condition_impl.js` (`evaluateConditionsAfterEnabled`) | fixed in the adapter |
+| 9 | The RefreshStartEvent / RefreshEndEvent of ConditionRefresh are raised on the Server object only: an event item on another notifier (e.g. `s=Alarms.Source`) gets the refreshed conditions but no bracket, so `client alarms --node` other than `i=2253` times out waiting for RefreshEnd | `ua_condition_impl.js` (`_perform_condition_refresh`) | use `--node i=2253` |
+| 10 | A repeated Acknowledge with the now stale EventId is answered `Bad_EventIdUnknown` (the EventId changes with every condition event); an Acknowledge of an already acknowledged branch with its current EventId is answered `Good` (the `Bad_ConditionBranchAlreadyAcked` of `_setAckedState` is dropped by `_acknowledge_method`) | `ua_acknowledgeable_condition_impl.js` | logged |
 
 ## Testing
 

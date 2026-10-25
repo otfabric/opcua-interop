@@ -41,11 +41,12 @@ export const CLIENT_OPERATIONS = [
     "node-management",
     "find-servers-on-network",
     "register-server",
+    "alarms",
 ];
 
 export const CLIENT_FEATURES = ["channel-lifetime", "deadband", "register-server2", "reverse-listen", "application-uri"];
 
-export const SERVER_FEATURES = ["deadband", "percent-deadband", "reverse-connect", "register-with"];
+export const SERVER_FEATURES = ["deadband", "percent-deadband", "reverse-connect", "register-with", "alarms"];
 
 export const SECURITY_PROFILES: { policy: string; mode: string }[] = [
     { policy: "None", mode: "None" },

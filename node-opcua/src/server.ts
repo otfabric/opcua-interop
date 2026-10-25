@@ -25,6 +25,7 @@ import {
     VariantArrayType,
 } from "node-opcua";
 
+import { ALARM_NODE, ALARM_RESET, AlarmFixture, ALARMS_SOURCE, installAlarmFixture } from "./alarms.js";
 import { BehaviorDef, Fixture, loadFixture, NodeDef } from "./fixture.js";
 import { ADAPTER, ADAPTER_VERSION, bigToInt64, log, makeStatus, parseNodeIdString, parseTypeName } from "./util.js";
 import { stackVersion } from "./capabilities.js";
@@ -317,6 +318,20 @@ export class AddressSpaceBuilder {
             if (!this.nodes.has(this.resolve(b.target).toString())) this.problems.push(`behavior ${b.target}: target not in the address space`);
         }
         this.setDiagnostics();
+        this.buildAlarms();
+    }
+
+    alarms?: AlarmFixture;
+
+    /** The Alarms & Conditions fixture (serverFeatures "alarms"), next to s=Events below s=Compatibility. */
+    buildAlarms(): void {
+        try {
+            const compat = this.nodes.get(new NodeId(2 /* STRING */, "Compatibility" as never, this.ns.index).toString());
+            this.alarms = installAlarmFixture(this.addressSpace, this.ns, compat);
+        } catch (e) {
+            this.problems.push(`alarms fixture: ${(e as Error).message}`);
+            log("warn", `cannot create the alarms fixture: ${(e as Error).message}`);
+        }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -579,6 +594,9 @@ export async function fixtureProblems(fixture: Fixture): Promise<string[]> {
         }
         const history = builder.variable(HISTORY_NODE);
         if (history && !history.historizing) problems.push(`${HISTORY_NODE}: no history installed`);
+        for (const local of [ALARMS_SOURCE, ALARM_NODE, ALARM_RESET]) {
+            if (!server.engine.addressSpace!.findNode(new NodeId(2 /* STRING */, local as never, ns.index))) problems.push(`alarms fixture: ${local} missing`);
+        }
     } finally {
         await server.shutdown(0).catch(() => undefined);
         fs.rmSync(work, { recursive: true, force: true });
