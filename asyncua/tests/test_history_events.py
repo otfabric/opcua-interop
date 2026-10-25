@@ -84,7 +84,29 @@ class EventValueTest(unittest.TestCase):
         self.assertEqual(f[0], {"name": "EventId", "dataType": "ByteString", "builtInType": 15,
                                 "value": base64.b64encode(b"hist-evt-0").decode()})
         self.assertEqual(f[1]["value"]["name"], "BadNoData")
-        self.assertEqual(f[2], {"name": "Missing", "dataType": "Null", "builtInType": 0, "value": None})
+        self.assertEqual(len(f), 2)  # fewer fields from the server: fewer in the output
+
+
+class FlagTest(unittest.TestCase):
+    def run_op(self, *argv):
+        import asyncio
+        import contextlib
+        import io
+
+        from opcua_interop_asyncua import client
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = asyncio.run(client.run_async("history-read-events", ["--endpoint", "opc.tcp://127.0.0.1:1", *argv]))
+        return rc, json.loads(out.getvalue().splitlines()[-1])
+
+    def test_release_needs_a_continuation_point(self):
+        rc, out = self.run_op("--node", "i=2253", "--release-continuation-point")
+        self.assertEqual((rc, out["error"]["category"]), (2, "input"))
+
+    def test_continuation_point_takes_one_node(self):
+        rc, out = self.run_op("--node", "i=2253", "--node", "i=85", "--continuation-point", "AAAA")
+        self.assertEqual((rc, out["error"]["category"]), (2, "input"))
 
 
 if __name__ == "__main__":

@@ -200,9 +200,10 @@ def events_json(paths: list[str], data) -> list[dict]:
     for fl in getattr(data, "Events", None) or []:
         fields = []
         vals = fl.EventFields or []
-        for i, name in enumerate(paths):
+        # By index; a server that returns fewer fields gives fewer (no padding).
+        for name, v in zip(paths, vals):
             f = {"name": name}
-            f.update(variant_fields(vals[i] if i < len(vals) else None))
+            f.update(variant_fields(v))
             fields.append(f)
         events.append({"fields": fields})
     return events
@@ -269,6 +270,10 @@ async def cmd_history_read_events(args: Args, r: Result, conn_cls) -> int:
     max_pages = args.int("--max-pages", DEFAULT_MAX_PAGES)
     if max_pages < 1:
         raise InputError("--max-pages must be at least 1")
+    if release and cp is None:
+        raise InputError("--release-continuation-point needs --continuation-point")
+    if cp is not None and len(nodes) > 1:
+        raise InputError("--continuation-point takes one --node")
     ts = _timestamps(args)
     for n in nodes:
         parse_nodeid_syntax(n)
@@ -333,36 +338,38 @@ def _first_bad(items) -> ua.StatusCode:
 
 async def _continue(rd: _Reader, nid: ua.NodeId, max_pages: int, r: Result):
     """Pages of one node in one session until no continuation point (or
-    --max-pages), then release the last continuation point and try to reuse it
-    (as `history-read --scenario continue`)."""
+    --max-pages), then release the last continuation point the node returned
+    and read with it once more (both null when it returned none)."""
     pages = []
     cur = None
     last_cp = None
-    svc, item = ua.StatusCode(), ua.StatusCode()
+    svc, item, cp_out = ua.StatusCode(), ua.StatusCode(), None
     for _ in range(max_pages):
         svc, items = await rd.page([nid], [cur], False)
         item, cp_out, events = items[0]
-        pages.append({"statusCode": status_json(item if is_good(svc) else svc), "continuationPoint": cp_out, "events": events})
+        if not is_good(svc):
+            item = svc
+        pages.append({"statusCode": status_json(item), "continuationPoint": cp_out, "events": events})
         if not is_good(svc) or _bad(item) or not cp_out:
             break
         cur = base64.b64decode(cp_out)
         last_cp = cur
-    release_sc, reuse_sc = ua.StatusCode(), ua.StatusCode()
+    release_sc = reuse_sc = None
     if last_cp is not None:
         s, it = await rd.page([nid], [last_cp], True)
-        release_sc = it[0][0] if is_good(s) else s
+        release_sc = status_json(it[0][0] if is_good(s) else s)
         s, it = await rd.page([nid], [last_cp], False)
-        reuse_sc = it[0][0] if is_good(s) else s
-    else:
-        s, it = await rd.page([nid], [None], True)
-        release_sc = it[0][0] if is_good(s) else s
+        reuse_sc = status_json(it[0][0] if is_good(s) else s)
     r.add({
         "scenario": "continue",
         "nodeId": nodeid_str(nid),
+        "statusCode": status_json(item),
+        "continuationPoint": cp_out,
         "selectClauses": rd.paths,
+        "events": [e for p in pages for e in p["events"]],
         "pages": pages,
-        "releaseStatusCode": status_json(release_sc),
-        "reuseAfterReleaseStatusCode": status_json(reuse_sc),
+        "releaseStatusCode": release_sc,
+        "reuseAfterReleaseStatusCode": reuse_sc,
     })
     return svc, item
 

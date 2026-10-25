@@ -170,7 +170,12 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
         rc, out = await client_op("history-read-events", "--endpoint", endpoint, "--node", ev, *rng,
                                   "--num-values", "2", "--scenario", "continue")
         self.assertEqual(rc, 0, out)
-        self.assertEqual([len(p["events"]) for p in out["results"][0]["pages"]], [2, 2, 1])
+        item = out["results"][0]
+        self.assertEqual([len(p["events"]) for p in item["pages"]], [2, 2, 1])
+        self.assertEqual(ids(item), [f"hist-evt-{i}" for i in range(5)])
+        self.assertIsNone(item["continuationPoint"])
+        # asyncua's continuation points are stateless DateTimes (README "Historical events").
+        self.assertEqual((item["releaseStatusCode"]["name"], item["reuseAfterReleaseStatusCode"]["name"]), ("Good", "Good"))
 
         rc, out = await client_op("history-read-events", "--endpoint", endpoint, "--node", ev, *rng, "--of-type", "i=2130")
         self.assertEqual(ids(out["results"][0]), ["hist-evt-3"], out)
