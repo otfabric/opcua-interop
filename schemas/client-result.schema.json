@@ -13,7 +13,7 @@
     },
     "adapter": {
       "type": "string",
-      "enum": ["open62541", "milo", "async-opcua", "dotnet", "node-opcua", "asyncua"]
+      "enum": ["open62541", "milo", "async-opcua", "dotnet", "node-opcua", "asyncua", "dotnet-gds"]
     },
     "operation": {
       "type": "string",
@@ -23,7 +23,7 @@
         "history-read", "republish", "transfer-subscriptions",
         "register-nodes", "node-management",
         "find-servers-on-network", "register-server", "codec", "pubsub-discover",
-        "alarms", "push", "query"
+        "alarms", "push", "query", "gds-pull"
       ]
     },
     "success": {
@@ -56,7 +56,8 @@
           { "$ref": "#/$defs/registerServerResult" },
           { "$ref": "#/$defs/codecEncodeResult" },
           { "$ref": "#/$defs/codecDecodeResult" },
-          { "$ref": "#/$defs/codecNodeResult" }
+          { "$ref": "#/$defs/codecNodeResult" },
+          { "$ref": "#/$defs/gdsPullResult" }
         ]
       }
     },
@@ -602,6 +603,49 @@
         "dataValueXml":    { "$ref": "#/$defs/codecDocument" },
         "binary":          { "type": ["string", "null"] },
         "dataValueBinary": { "type": ["string", "null"] }
+      }
+    },
+    "gdsPullResult": {
+      "description": "client gds-pull (docs/CLIENT_CONTRACT.md §16.2). A key is present only when its step ran; FindApplications always runs.",
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [ { "required": ["findApplications"] }, { "required": ["findApplicationsStatus"] } ],
+      "properties": {
+        "findApplications":           { "type": "array", "items": { "type": "string" } },
+        "findApplicationsStatus":     { "$ref": "#/$defs/statusCode" },
+        "registered":                 { "type": "boolean" },
+        "registerStatus":             { "$ref": "#/$defs/statusCode" },
+        "applicationId":              { "type": "string" },
+        "requestKind":                { "type": "string", "enum": ["csr", "new-key-pair"] },
+        "startRequestStatus":         { "$ref": "#/$defs/statusCode" },
+        "requestId":                  { "type": "string" },
+        "finishRequestStatus":        { "$ref": "#/$defs/statusCode" },
+        "certificate":                { "type": "string" },
+        "privateKeyFormat":           { "type": "string" },
+        "privateKey":                 { "type": "string" },
+        "issuerCertificates":         { "type": "array", "items": { "type": "string" } },
+        "certificateGroups":          { "type": "array", "items": { "type": "string" } },
+        "getCertificateGroupsStatus": { "$ref": "#/$defs/statusCode" },
+        "trustListId":                { "type": "string" },
+        "getTrustListStatus":         { "$ref": "#/$defs/statusCode" },
+        "trustList": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "specifiedLists":      { "type": "integer", "minimum": 0 },
+            "trustedCertificates": { "type": "array", "items": { "type": "string" } },
+            "trustedCrls":         { "type": "array", "items": { "type": "string" } },
+            "issuerCertificates":  { "type": "array", "items": { "type": "string" } },
+            "issuerCrls":          { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "readTrustListStatus":        { "$ref": "#/$defs/statusCode" },
+        "getCertificateStatusStatus": { "$ref": "#/$defs/statusCode" },
+        "updateRequired":             { "type": "boolean" },
+        "revokeStatus":               { "$ref": "#/$defs/statusCode" },
+        "checkRevocationStatus":      { "$ref": "#/$defs/statusCode" },
+        "certificateStatus":          { "$ref": "#/$defs/statusCode" },
+        "unregisterStatus":           { "$ref": "#/$defs/statusCode" }
       }
     }
   }
