@@ -15,6 +15,7 @@ Objects (i=85)
     ├── DataValues    — variables with specific status codes and timestamp behavior
     ├── Diagnostics   — adapter name, stack version, fixture id
     ├── Events        — EventNotifier source emitting deterministic BaseEvents
+    ├── Alarms        — Alarms & Conditions condition (only adapters with serverFeatures "alarms")
     ├── History       — gate-compliant fixed raw HistoryRead samples
     ├── Analog        — AnalogItemType variables with EURange (deadband filters)
     └── PubSub        — writable PubSub fields / TargetVariables, one per type
@@ -133,6 +134,47 @@ in `pubsub/examples/` use these nodes (docs/CLIENT_CONTRACT.md §14).
 | Node | Behavior |
 |---|---|
 | `Events.Source` | EventNotifier; adapters emit a BaseEvent about every 2s with Severity=`500`, Message=`peer-event` (locale `en`), SourceName=`Events.Source` |
+
+## Alarms
+
+Alarms & Conditions (OPC UA Part 9) fixture, since adapter 0.12.0. Only the
+servers that declare `"alarms"` in `print-capabilities` → `serverFeatures`
+build it: UA-.NETStandard, node-opcua and open62541 (experimental A&C of
+v1.5.9). The nodes are **not** in `fixture.json` — every adapter realises the
+`fixture.json` nodes generically, and the condition needs the stack's own A&C
+model — so they are created in code; adapters without the feature simply have
+no `s=Alarms` folder.
+
+```
+Compatibility
+└── Alarms            (nsu=urn:otfabric:opcua-interop:model;s=Alarms, FolderType, Organizes)
+    └── Alarms.Source (s=Alarms.Source, BaseObjectType, EventNotifier SubscribeToEvents, Organizes)
+        ├── InteropAlarm  (s=Alarms.InteropAlarm, AlarmConditionType, HasComponent + HasCondition)
+        └── Reset         (s=Alarms.Reset, Method, HasComponent, no arguments)
+```
+
+`Alarms.Source` is a notifier of the Server object (HasNotifier Server →
+Alarms.Source; node-opcua: HasEventSource), so an event monitored item on
+`i=2253` receives the condition's events and its ConditionRefresh.
+
+| Property of `InteropAlarm` | Value |
+|---|---|
+| Type | AlarmConditionType (`i=2915`), with the optional ConfirmedState / Confirm |
+| ConditionName | `InteropAlarm` |
+| SourceNode / SourceName | `s=Alarms.Source` / `Alarms.Source` |
+| Initial state (and after `Reset`) | EnabledState true, ActiveState true, AckedState false, ConfirmedState false, Retain true, Severity `500`, Message `interop-alarm` (locale `en`), Comment empty |
+
+The stack's own handlers serve Acknowledge (`i=9111`), Confirm (`i=9113`),
+AddComment (`i=9029`), Enable (`i=9027`), Disable (`i=9028`) and
+ConditionRefresh (`i=3875` on ConditionType `i=2782`; ConditionRefresh2
+`i=12912` is the stack's too but not exercised by `client alarms`); each
+method reports a new condition event. Calling `Reset` on
+`s=Alarms.Source` re-arms the alarm (re-enables a disabled condition, new
+EventId, reports an event) and returns Good — call it first, the server
+container is shared by several tests. Per-stack differences (repeated
+Acknowledge status, Message after an action, RefreshStart/End on other
+notifiers, Time): docs/CLIENT_CONTRACT.md §13 "Alarm servers"; the client side
+is `client alarms` (§1 / §4).
 
 ## History
 

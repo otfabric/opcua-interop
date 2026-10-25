@@ -36,6 +36,7 @@ this contract. Changes that break it require a major schema version bump.
 | `find-servers-on-network` | FindServersOnNetwork against a Local Discovery Server (mDNS records) |
 | `register-server` | RegisterServer2 / RegisterServer of an arbitrary server description with an LDS |
 | `codec` | Encode / decode built-in values in the OPC UA JSON and XML DataEncodings (no session needed for literals); PubSub NetworkMessages (UADP / JSON, §14) |
+| `alarms` | Alarms & Conditions (Part 9): ConditionRefresh on an event monitored item, then optionally Acknowledge / Confirm / AddComment on the refreshed condition |
 
 Which of these (and which optional features) an image provides is declared by
 `print-capabilities` (§13). A feature the underlying stack does not implement is
@@ -212,6 +213,102 @@ expression surface.
 Adapter servers emit deterministic BaseEvents from `Events.Source`
 (Severity=500, Message=`peer-event`) about every 2 seconds. Against the Go
 server, peer tests may still call `EmitBaseEvent` for tighter timing.
+
+### `alarms` flags
+
+Alarms & Conditions (OPC UA Part 9) client baseline, all six adapters (since
+adapter 0.12.0). Generic Call services plus one event monitored item, so it
+works against any A&C server; the adapter servers with the alarm fixture
+declare `serverFeatures: "alarms"` (§13, fixtures/baseline/README.md "Alarms").
+
+```
+<image> client alarms --endpoint <url> [--node <nodeId>] [--condition-name <name>]
+        [--acknowledge] [--confirm] [--add-comment] [--comment <text>]
+        [--timeout-ms <n>] [--publishing-interval-ms <n>]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--node <nodeId>` | EventNotifier of the event monitored item | `i=2253` (Server) |
+| `--condition-name <name>` | Target = the refreshed condition with this ConditionName | first condition with Retain = true |
+| `--acknowledge` | Acknowledge the target, then repeat the call with the now stale EventId | off |
+| `--confirm` | Confirm the target (after the acknowledge) | off |
+| `--add-comment` | AddComment on the target (after acknowledge / confirm) | off |
+| `--comment <text>` | Comment of all three methods (LocalizedText, locale `en`) | `interop-comment` |
+| `--timeout-ms <n>` | Absolute budget of the whole command after connect | 15000 |
+| `--publishing-interval-ms <n>` | Requested publishing interval | 200 |
+
+`--acknowledge`, `--confirm` and `--add-comment` are presence flags; a following
+`true` / `false` (`1` / `0`) is accepted too. Global flags (security, user
+identity, …) as for every session command.
+
+Steps:
+
+1. CreateSubscription; CreateMonitoredItems with one event item on `--node`
+   (AttributeId EventNotifier, SamplingInterval 0, QueueSize 1000,
+   DiscardOldest true, MonitoringMode Reporting) and an EventFilter without
+   WhereClause and with these SelectClauses, in this order (BrowsePath in
+   namespace 0, AttributeId Value unless noted):
+
+   | # | TypeDefinitionId | BrowsePath | ConditionEntry field |
+   |---|------------------|------------|----------------------|
+   | 0 | BaseEventType `i=2041` | `EventId` | `eventId` |
+   | 1 | `i=2041` | `EventType` | `eventType` |
+   | 2 | `i=2041` | `SourceNode` | `sourceNode` |
+   | 3 | `i=2041` | `SourceName` | `sourceName` |
+   | 4 | `i=2041` | `Time` | `time` |
+   | 5 | `i=2041` | `Message` | `message` |
+   | 6 | `i=2041` | `Severity` | `severity` |
+   | 7 | ConditionType `i=2782` | `ConditionName` | `conditionName` |
+   | 8 | `i=2782` | `BranchId` | — |
+   | 9 | `i=2782` | `Retain` | `retain` |
+   | 10 | `i=2782` | `EnabledState`, `Id` | `enabled` |
+   | 11 | `i=2782` | `Comment` | `comment` |
+   | 12 | AcknowledgeableConditionType `i=2881` | `AckedState`, `Id` | `acked` |
+   | 13 | `i=2881` | `ConfirmedState`, `Id` | `confirmed` |
+   | 14 | AlarmConditionType `i=2915` | `ActiveState`, `Id` | `active` |
+   | 15 | `i=2782` | *(empty)*, AttributeId NodeId (1) | `conditionId` (Part 9 §5.5.2) |
+
+   The publish loop runs before CreateMonitoredItems, so no event is missed.
+2. Call ConditionRefresh: ObjectId `i=2782`, MethodId `i=3875`, input
+   `[UInt32 subscriptionId]`. `refresh.statusCode` is the CallMethodResult
+   status (or the service fault).
+3. Collect events until a RefreshEndEvent (EventType `i=2788`) arrives or the
+   timeout expires; `startSeen` records a RefreshStartEvent (`i=2787`). Every
+   event with a non-null ConditionId (field 15) that arrives after the
+   ConditionRefresh call and before the RefreshEnd is a refreshed condition
+   (`conditions`, deduplicated by conditionId keeping the last event, in
+   first-seen order). Events with a null ConditionId (e.g. the BaseEvents of
+   `Events.Source` arriving on the Server object) are ignored. Every condition
+   event, also later ones, updates the "latest event" of its conditionId.
+4. Target: the refreshed condition whose ConditionName is `--condition-name`,
+   else the first one with `retain = true`. An action is requested and there is
+   no target → `success: false`, `BadNodeIdUnknown`, exit 4.
+5. `--acknowledge`: Call ObjectId = target conditionId, MethodId `i=9111`
+   (AcknowledgeableConditionType_Acknowledge), inputs `[EventId (ByteString) of
+   the target's latest event, Comment (LocalizedText en, --comment)]`. If Good,
+   wait for the next event of that condition with `acked = true`. Then call
+   Acknowledge again with the same (now stale) EventId: `repeatStatusCode`
+   (servers answer `Bad_ConditionBranchAlreadyAcked` or `Bad_EventIdUnknown`,
+   see §13); it never affects `success`.
+6. `--confirm`: MethodId `i=9113` (AcknowledgeableConditionType_Confirm), same
+   inputs with the EventId of the target's latest event at that moment; if Good
+   wait for the event with `confirmed = true`.
+7. `--add-comment`: MethodId `i=9029` (ConditionType_AddComment), same inputs;
+   if Good wait for the event whose `comment` is `--comment`.
+8. DeleteSubscriptions, disconnect.
+
+A follow-up event is any matching event of the target that arrives after the
+method call was issued. The actions run in the order acknowledge → confirm →
+add-comment and stop at the first failure.
+
+`success` = refresh Good AND RefreshEnd seen AND every requested action Good
+with its follow-up event seen. `serviceResult` is Good on success, else the
+first failing status (CreateMonitoredItems, ConditionRefresh or the method),
+`BadTimeout` for a missing RefreshEnd or follow-up event, `BadNodeIdUnknown`
+for a missing target. Exit codes (§5): 0 success, 2 bad input (before
+connecting), 3 connect / transport, 4 service failure, 7 timeout. The result
+is printed in every case once the subscription exists.
 
 ### `history-read` flags
 
@@ -707,6 +804,43 @@ Operation name in the JSON envelope: `"subscription-lifecycle"`.
 
 If the timeout expires before `--events` arrive, emit whatever was collected,
 set `success: false`, and exit 7.
+
+### `alarms`
+
+```json
+"results": [
+  {
+    "nodeId":                  "i=2253",
+    "subscriptionId":          1,
+    "monitoredItemStatusCode": { "name": "Good", "code": 0, "severity": "Good" },
+    "refresh":    { "statusCode": { "name": "Good", "code": 0, "severity": "Good" }, "startSeen": true, "endSeen": true },
+    "conditions": [ <ConditionEntry>, ... ],
+    "target":     <ConditionEntry> | null,
+    "acknowledge": { "statusCode": {…}, "event": <ConditionEntry> | null, "repeatStatusCode": {…} | null } | null,
+    "confirm":     { "statusCode": {…}, "event": <ConditionEntry> | null } | null,
+    "addComment":  { "statusCode": {…}, "event": <ConditionEntry> | null } | null
+  }
+]
+```
+
+ConditionEntry (keys in this order):
+
+```json
+{ "conditionId": "ns=2;s=Alarms.InteropAlarm", "eventId": "wR6R9sSPvESOnQdbmEapRQ==", "eventType": "i=2915",
+  "sourceNode": "ns=2;s=Alarms.Source", "sourceName": "Alarms.Source", "conditionName": "InteropAlarm",
+  "time": "2026-10-25T01:35:19.464Z", "message": "interop-alarm", "severity": 500,
+  "retain": true, "enabled": true, "acked": true, "confirmed": false, "active": true, "comment": "interop-comment" }
+```
+
+NodeIds in the canonical form (§6), `eventId` base64, `time` the adapter's
+DateTime string (RFC 3339 UTC; the fractional digits are adapter-specific as in
+`event-subscribe`), `message` / `comment` the LocalizedText text only. A field
+whose event value is null, absent, a StatusCode (e.g. `confirmed` of a
+condition without ConfirmedState), of an unexpected type, or the null DateTime
+(1601-01-01, encoded 0) is JSON `null`. A non-requested action is `null`;
+`repeatStatusCode` is `null` unless the first Acknowledge was Good and its
+event arrived. When CreateMonitoredItems fails, `refresh` carries that status
+with `startSeen` / `endSeen` false.
 
 ### `history-read`
 
@@ -1257,6 +1391,7 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `pubsub` | server | ✓ | — | — | ✓ | — | — | `--pubsub-config` (§14); open62541 also the PubSub information model and SKS, UA-.NETStandard static keys only (§14.13) |
 | `transport-wss` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.wss://…` (§9); server `--wss-port` (§11) |
 | `transport-https` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.https://…` (§9); server `--https-port` (§11) |
+| `alarms` | server | ✓ (experimental) | — | — | ✓ | ✓ | — | the Alarms & Conditions fixture (`s=Alarms.*`, fixtures/baseline/README.md "Alarms"); Acknowledge / Confirm / AddComment / Enable / Disable / ConditionRefresh by the stack's own handlers (ConditionRefresh2 too, not exercised by `alarms`) |
 
 `transports` in `print-capabilities` lists the endpoint schemes the adapter
 dials and serves: `["opc.tcp"]`, UA-.NETStandard (adapter 0.11.0)
@@ -1264,6 +1399,48 @@ dials and serves: `["opc.tcp"]`, UA-.NETStandard (adapter 0.11.0)
 HTTPS transport (the libwebsockets provider `UA_ENABLE_LWS` is on master
 only), Milo 1.1.8 has incubating, unpublished client transports only, and
 async-opcua, node-opcua and asyncua implement `opc.tcp` only.
+
+The `alarms` client operation (§1 `alarms` flags) is in `clientOperations` of
+all six adapters since adapter 0.12.0:
+
+| Client operation | open62541 | Milo | async-opcua | UA-.NETStandard | node-opcua | asyncua |
+|------------------|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|
+| `alarms` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+**Alarm servers** (all three give `success: true` for
+`alarms --node i=2253 --condition-name InteropAlarm --acknowledge --confirm --add-comment`
+from every adapter client, after `s=Alarms.Reset`):
+
+| | UA-.NETStandard 2.0.1 | node-opcua 2.187.12 | open62541 1.5.9 |
+|---|---|---|---|
+| Condition | AlarmConditionType `s=Alarms.InteropAlarm`, ConfirmedState | AlarmConditionType `s=Alarms.InteropAlarm`, ConfirmedState | AlarmConditionType `s=Alarms.InteropAlarm`, ConfirmedState (always added by the stack) |
+| Server → Alarms.Source | HasNotifier (root notifier) | HasEventSource (node-opcua rejects a condition source that is only a HasNotifier target) | HasNotifier |
+| RefreshStart / RefreshEnd | also on `--node s=Alarms.Source` | only on the Server object (`--node i=2253`): on `s=Alarms.Source` the condition is refreshed but no RefreshEnd arrives (exit 7) | as node-opcua |
+| Repeated Acknowledge (stale EventId) | `BadConditionBranchAlreadyAcked` | `BadEventIdUnknown` | `BadEventIdUnknown` |
+| Message after an action | unchanged (`interop-alarm`) | `The alarm was acknowledged`, … | `The alarm was acknowledged`, `The alarm was confirmed`, `A comment was added` |
+| Time | new Time on every event | Time of the condition, not updated by the methods | not updated by Acknowledge; the Confirm event has the null DateTime (`time: null`) |
+
+All three set Comment to the Acknowledge / Confirm comment. open62541 runs the
+alarm fixture only because the image enables
+`UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS` (experimental in 1.5.9, full
+namespace zero); the adapter patches v1.5.9's `checkConditionRefreshArguments`
+to accept the UInt32 SubscriptionId the Call service converts to IntegerId
+(`open62541/amalgam/fix_condition_refresh_args.py`; unpatched ConditionRefresh
+returns `BadInvalidArgument`). Eclipse Milo 1.1.8 has no condition state
+machine (the Acknowledge / Confirm / AddComment / Enable / Disable methods of
+`opc-ua-sdk/sdk-server/.../model/objects/AcknowledgeableConditionType` /
+`ConditionType` are abstract generated stubs, and
+`OpcUaNamespace$ConditionRefreshMethodImpl` only posts RefreshStart /
+RefreshEnd); asyncua 2.1.0 replays registered conditions on ConditionRefresh
+(`asyncua/server/subscription_service.py`) but has no Acknowledge / Confirm /
+AddComment / Enable / Disable handlers; an async-opcua server fixture was not
+attempted. Those three servers do not declare `alarms`. On all three alarm
+servers Disable / Enable answer Good and then `BadConditionAlreadyDisabled` /
+`BadConditionAlreadyEnabled`; a disabled condition is not refreshed
+(`conditions: []`); `s=Alarms.Reset` re-enables it.
+Milo's client spells status names with an underscore (`Bad_EventIdUnknown`), as
+in all its results; compare `code`.
+
 
 Eclipse Milo 1.1.8 has no ReverseHello in its transports
 (`opc-ua-stack/stack-core/.../channel/messages/MessageType.java` knows only

@@ -237,11 +237,13 @@ server ... --pubsub-config /pubsub/udp-unicast-subscriber.json
 # UA-.NETStandard (v0.11.0): opc.https and opc.wss listeners next to opc.tcp
 # (needs --certificate / --private-key: the application certificate serves TLS)
 server ... --certificate /certs/cert.crt --private-key /certs/cert.key --https-port 4843 --wss-port 4844
+# UA-.NETStandard, node-opcua, open62541 (v0.12.0, serverFeatures "alarms"): no flag — the server
+# carries the Alarms & Conditions fixture s=Alarms.InteropAlarm (fixtures/baseline/README.md "Alarms")
 ```
 
 ### Client commands
 
-Eighteen client operations, plus `pubsub-discover` on the dotnet adapter (see `print-capabilities` → `clientOperations` and
+Nineteen client operations, plus `pubsub-discover` on the dotnet adapter (see `print-capabilities` → `clientOperations` and
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
 
 ```sh
@@ -258,6 +260,8 @@ client subscription-lifecycle --endpoint ... --node '...' \
                  --scenario revise|publishing-mode|monitoring-mode|delete
 client event-subscribe --endpoint ... --node '...' [--events 1] [--timeout-ms 10000] \
                  [--of-type i=2041] [--min-severity 100]
+client alarms    --endpoint ... [--node i=2253] [--condition-name InteropAlarm] \
+                 [--acknowledge] [--confirm] [--add-comment] [--comment interop-comment]
 client history-read --endpoint ... --node '...' --start <rfc3339> --end <rfc3339> \
                  [--num-values 0] [--timestamps Both] [--scenario continue]
 client republish --endpoint ... --subscription-id <n> --sequence-number <n>

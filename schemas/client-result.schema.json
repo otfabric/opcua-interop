@@ -22,7 +22,8 @@
         "call", "subscribe", "subscription-lifecycle", "event-subscribe",
         "history-read", "republish", "transfer-subscriptions",
         "register-nodes", "node-management",
-        "find-servers-on-network", "register-server", "codec", "pubsub-discover"
+        "find-servers-on-network", "register-server", "codec", "pubsub-discover",
+        "alarms"
       ]
     },
     "success": {
@@ -41,9 +42,11 @@
           { "$ref": "#/$defs/writeResult" },
           { "$ref": "#/$defs/browseResult" },
           { "$ref": "#/$defs/translateResult" },
+          { "$ref": "#/$defs/callResult" },
           { "$ref": "#/$defs/subscribeResult" },
           { "$ref": "#/$defs/subscriptionLifecycleResult" },
           { "$ref": "#/$defs/eventSubscribeResult" },
+          { "$ref": "#/$defs/alarmsResult" },
           { "$ref": "#/$defs/historyReadResult" },
           { "$ref": "#/$defs/republishResult" },
           { "$ref": "#/$defs/transferSubscriptionsResult" },
@@ -234,6 +237,7 @@
     "subscriptionLifecycleResult": {
       "type": "object",
       "required": ["subscriptionId"],
+      "not": { "required": ["refresh"] },
       "properties": {
         "subscriptionId":              { "type": "integer", "minimum": 0 },
         "requestedPublishingInterval": { "type": "number" },
@@ -309,6 +313,90 @@
             }
           }
         }
+      }
+    },
+    "callResult": {
+      "type": "object",
+      "required": ["objectNodeId", "methodNodeId", "statusCode", "outputArguments"],
+      "additionalProperties": false,
+      "properties": {
+        "objectNodeId":    { "type": "string" },
+        "methodNodeId":    { "type": "string" },
+        "statusCode":      { "$ref": "#/$defs/statusCode" },
+        "outputArguments": { "type": "array" }
+      }
+    },
+    "alarmsResult": {
+      "description": "client alarms (docs/CLIENT_CONTRACT.md §4 alarms). Added in adapter 0.11.0.",
+      "type": "object",
+      "required": ["nodeId", "subscriptionId", "monitoredItemStatusCode", "refresh", "conditions", "target", "acknowledge", "confirm", "addComment"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId":                  { "type": "string" },
+        "subscriptionId":          { "type": "integer", "minimum": 0 },
+        "monitoredItemStatusCode": { "$ref": "#/$defs/statusCode" },
+        "refresh": {
+          "type": "object",
+          "required": ["statusCode", "startSeen", "endSeen"],
+          "additionalProperties": false,
+          "properties": {
+            "statusCode": { "$ref": "#/$defs/statusCode" },
+            "startSeen":  { "type": "boolean" },
+            "endSeen":    { "type": "boolean" }
+          }
+        },
+        "conditions": { "type": "array", "items": { "$ref": "#/$defs/conditionEntry" } },
+        "target":     { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/conditionEntry" } ] },
+        "acknowledge": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["statusCode", "event", "repeatStatusCode"],
+              "additionalProperties": false,
+              "properties": {
+                "statusCode":       { "$ref": "#/$defs/statusCode" },
+                "event":            { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/conditionEntry" } ] },
+                "repeatStatusCode": { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/statusCode" } ] }
+              }
+            }
+          ]
+        },
+        "confirm":    { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/alarmAction" } ] },
+        "addComment": { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/alarmAction" } ] }
+      }
+    },
+    "alarmAction": {
+      "type": "object",
+      "required": ["statusCode", "event"],
+      "additionalProperties": false,
+      "properties": {
+        "statusCode": { "$ref": "#/$defs/statusCode" },
+        "event":      { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/conditionEntry" } ] }
+      }
+    },
+    "conditionEntry": {
+      "description": "One condition event (alarms SelectClauses 0..15); a field whose event value is null, absent or a StatusCode is null.",
+      "type": "object",
+      "required": ["conditionId", "eventId", "eventType", "sourceNode", "sourceName", "conditionName", "time",
+                   "message", "severity", "retain", "enabled", "acked", "confirmed", "active", "comment"],
+      "additionalProperties": false,
+      "properties": {
+        "conditionId":   { "type": ["string", "null"] },
+        "eventId":       { "type": ["string", "null"], "description": "base64" },
+        "eventType":     { "type": ["string", "null"] },
+        "sourceNode":    { "type": ["string", "null"] },
+        "sourceName":    { "type": ["string", "null"] },
+        "conditionName": { "type": ["string", "null"] },
+        "time":          { "type": ["string", "null"] },
+        "message":       { "type": ["string", "null"] },
+        "severity":      { "type": ["integer", "null"] },
+        "retain":        { "type": ["boolean", "null"] },
+        "enabled":       { "type": ["boolean", "null"] },
+        "acked":         { "type": ["boolean", "null"] },
+        "confirmed":     { "type": ["boolean", "null"] },
+        "active":        { "type": ["boolean", "null"] },
+        "comment":       { "type": ["string", "null"] }
       }
     },
     "historyReadResult": {
