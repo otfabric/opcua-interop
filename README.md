@@ -21,8 +21,8 @@ reference stacks:
 - **opcua-asyncio (Python)** — The asyncio OPC UA client and server
   library of FreeOpcUa (PyPI `asyncua`, since v0.9.0).
 - **UA-.NETStandard GDS (C#)** — The Global Discovery Server and GDS
-  client of UA-.NETStandard 1.5.378 (`dotnet-gds`, the Part 12 pull model,
-  since v0.14.0).
+  client of UA-.NETStandard 2.0.1 (`dotnet-gds`, the Part 12 pull model,
+  since v0.14.0; on 2.0.1 since v0.15.0).
 
 The infrastructure provides deterministic test fixtures, simulated
 OPC UA servers, reference client operations, secure communication,
@@ -159,7 +159,7 @@ opcua-interop/
 ├── dotnet/             # C# adapter on UA-.NETStandard (Dockerfile, csproj, source)
 ├── node-opcua/         # TypeScript adapter (Dockerfile, package.json, source)
 ├── asyncua/            # Python adapter on opcua-asyncio (Dockerfile, hashed requirements, source)
-├── dotnet-gds/         # C# GDS adapter on UA-.NETStandard 1.5.378 (Global Discovery Server, client gds-pull)
+├── dotnet-gds/         # C# GDS adapter on UA-.NETStandard 2.0.1 (Global Discovery Server, client gds-pull)
 ├── schemas/            # JSON Schemas for client results and print-capabilities
 ├── docs/               # Client command contract (CLIENT_CONTRACT.md)
 ├── pubsub/examples/    # PubSub configurations (--pubsub-config) used by the PubSub smoke
@@ -316,7 +316,7 @@ The `dotnet-gds` image (v0.14.0) is a separate adapter: its `server` is a Global
 Discovery Server (Part 12 §6 Directory and §7.9 pull certificate management,
 the stack's GlobalDiscoverySampleServer with auto-approved requests) and its
 client has `endpoints` and `gds-pull` only. It runs on UA-.NETStandard
-1.5.378.182, the last release with the GDS packages (2.0.x has none); see
+2.0.1 with `Opc.Ua.Gds.Server` / `Opc.Ua.Gds.Client` (v0.14.0: 1.5.378.182); see
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md) §16.
 
 `subscribe` takes a DataChangeFilter (`--deadband-absolute <x>` | `--deadband-percent <x>`,
@@ -638,7 +638,7 @@ adapter surface gets a new tag; published tags are not moved. Release notes and 
 | UA-.NETStandard (`dotnet`) | C# | OPC Foundation UA-.NETStandard 2.0.1 (NuGet `OPCFoundation.NetStandard.Opc.Ua.*`) on .NET 10 | The OPC Foundation reference implementation, the stack most commercial servers and clients build on |
 | node-opcua | TypeScript | node-opcua 2.187.12 (npm, Node.js 24 / OpenSSL) | JavaScript ecosystem stack, independent encoder/decoder and session/subscription engine; see [`node-opcua/README.md`](node-opcua/README.md) |
 | opcua-asyncio (`asyncua`) | Python | opcua-asyncio 2.1.0 (PyPI `asyncua`, `cryptography`) on CPython 3.14 | The most used Python stack, independent encoder/decoder and security code; see [`asyncua/README.md`](asyncua/README.md) |
-| UA-.NETStandard GDS (`dotnet-gds`) | C# | OPC Foundation UA-.NETStandard 1.5.378.182 with `Opc.Ua.Gds.Server.Common` / `Opc.Ua.Gds.Client.Common` on .NET 10 | The reference Global Discovery Server and GDS client (Part 12 pull model, §16); a separate image because the GDS packages have no 2.0.x release |
+| UA-.NETStandard GDS (`dotnet-gds`) | C# | OPC Foundation UA-.NETStandard 2.0.1 with `Opc.Ua.Gds.Server` / `Opc.Ua.Gds.Client` on .NET 10 | The reference Global Discovery Server and GDS client (Part 12 pull model, §16); a separate image (the GDS packages had no 2.0.x release until v0.14.0) |
 
 Feature support differs per stack and is declared by `print-capabilities`:
 

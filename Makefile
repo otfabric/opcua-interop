@@ -394,7 +394,7 @@ clean-asyncua:
 # ── UA-.NETStandard GDS (dotnet-gds) adapter ─────────────────────────────────
 #
 # The GDS pull model (Part 12 §6, §7.9; docs/CLIENT_CONTRACT.md §16) on
-# UA-.NETStandard 1.5.378.182: a Global Discovery Server and `client gds-pull`.
+# UA-.NETStandard 2.0.1: a Global Discovery Server and `client gds-pull`.
 # Its own block like asyncua's: the aggregate targets get it as a prerequisite.
 
 IMAGE_DOTNET_GDS = $(REGISTRY)/opcua-interop-dotnet-gds

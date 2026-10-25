@@ -196,6 +196,45 @@ Acknowledge status, Message after an action, RefreshStart/End on other
 notifiers, Time): docs/CLIENT_CONTRACT.md §13 "Alarm servers"; the client side
 is `client alarms` (§1 / §4).
 
+## Alarms (1.05)
+
+The Part 9 1.05 extension of the alarm fixture, since adapter 0.15.0, built by
+the servers that declare `"alarms-105"` in `serverFeatures`: UA-.NETStandard
+only. It sits next to `InteropAlarm`, which is unchanged.
+
+```
+Alarms
+├── Group              (s=Alarms.Group, AlarmGroupType i=16405, Organizes; AlarmGroupMember → ExtAlarm)
+└── Alarms.Source
+    ├── ExtAlarm       (s=Alarms.ExtAlarm, AlarmConditionType, HasComponent + HasCondition)
+    ├── Dialog         (s=Alarms.Dialog, DialogConditionType, HasComponent + HasCondition)
+    ├── ResetExt       (s=Alarms.ResetExt, Method, no arguments)
+    ├── Deactivate     (s=Alarms.Deactivate, Method, no arguments)
+    └── Branch         (s=Alarms.Branch, Method, output EventId: ByteString)
+```
+
+| Node | Content |
+|---|---|
+| `ExtAlarm` | ConditionName `ExtAlarm`, Severity `400`, Message `ext-alarm`; the optional SuppressedState, OutOfServiceState, SilenceState, LatchedState, ShelvingState (TimedShelve, OneShotShelve, Unshelve), AudibleEnabled, AudibleSound (AudioVariableType, value the ASCII bytes `interop-horn`, ListId `interop-sounds`) and the methods Silence, Suppress, Suppress2, Unsuppress, Unsuppress2, RemoveFromService, RemoveFromService2, PlaceInService, PlaceInService2, Reset, Reset2, GetGroupMemberships. No ConfirmedState: an acknowledged branch ends. |
+| `Dialog` | ConditionName `InteropDialog`, Prompt `interop-dialog`, ResponseOptionSet `[Yes, No]` (locale `en`), DefaultResponse / OkResponse `0`, CancelResponse `1`, the method Respond |
+| `Group` | GetGroupMemberships of ExtAlarm returns `[s=Alarms.Group]` |
+| `ResetExt` | re-arms ExtAlarm — enabled, active, unacknowledged, latched, not suppressed / silenced / out of service, unshelved, AudibleEnabled true, retained, no branches, new EventId — and the dialog (enabled, DialogState active, LastResponse `-1`); reports an event of each |
+| `Deactivate` | ExtAlarm inactive (it stays latched until Reset); reports an event |
+| `Branch` | creates a branch of ExtAlarm (BranchId a new GUID NodeId in the fixture namespace), reports it and returns its EventId |
+
+The condition methods are the stack's own handlers (UA-.NETStandard 2.0.1
+AlarmConditionState / DialogConditionState): a transition to the current
+state (e.g. a second Suppress) is `Bad_NothingToDo`; Reset / Reset2 need the
+alarm latched, inactive and acknowledged, else `Bad_InvalidState`; Respond
+answers `Bad_DialogResponseInvalid` for an index outside the
+ResponseOptionSet and `Bad_DialogNotActive` after a response. The adapter
+answers only the shelving request (OnShelve) and the response (OnRespond).
+The stack has no handler for TimedShelve2 / OneShotShelve2 / Unshelve2 and
+Respond2, so the fixture has none of them (a call is refused as a method the
+object does not have). Each method raises its AuditCondition*EventType; the
+server delivers audit events only with `--auditing` (CLIENT_CONTRACT §11) and
+to SignAndEncrypt sessions. Call `ResetExt` first: the container is shared.
+
 ## History
 
 Gate-compliant raw samples only (no DB, no update/delete, no aggregates/interpolation).

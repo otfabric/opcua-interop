@@ -22,34 +22,17 @@ namespace OpcUaInterop
     /// The adapter's Global Discovery Server: the stack's GlobalDiscoverySampleServer
     /// (ApplicationsNodeManager with autoApprove, a JSON applications database in a temporary
     /// directory, the default CertificateGroup) with the fixture users and the adapter's BuildInfo.
+    /// The sample server's UserName authenticator checks the password against the user database
+    /// (Bad_UserAccessDenied otherwise) and grants its roles (GdsRoleBasedIdentity).
     /// </summary>
     internal sealed class InteropGdsServer : GlobalDiscoverySampleServer
     {
         private readonly Fixture m_fixture;
-        private readonly IUserDatabase m_users;
 
-        public InteropGdsServer(Fixture fixture, JsonApplicationsDatabase database, ICertificateGroup group, IUserDatabase users)
-            : base(database, database, group, users, autoApprove: true)
+        public InteropGdsServer(Fixture fixture, JsonApplicationsDatabase database, ICertificateGroup group, IUserDatabase users, ITelemetryContext telemetry)
+            : base(database, database, group, users, telemetry, autoApprove: true)
         {
             m_fixture = fixture;
-            m_users = users;
-        }
-
-        protected override void OnServerStarted(IServerInternal server)
-        {
-            // the sample server's handler grants the user database roles (GdsRoleBasedIdentity);
-            // this one, registered after it, rejects unknown users and wrong passwords
-            base.OnServerStarted(server);
-            server.SessionManager.ImpersonateUser += RejectInvalidUser;
-        }
-
-        private void RejectInvalidUser(Opc.Ua.Server.ISession session, ImpersonateEventArgs args)
-        {
-            if (args.NewIdentity is UserNameIdentityToken token &&
-                !m_users.CheckCredentials(token.UserName, token.DecryptedPassword))
-            {
-                args.IdentityValidationError = new ServiceResult(StatusCodes.BadUserAccessDenied);
-            }
         }
 
         protected override ServerProperties LoadServerProperties()
@@ -141,7 +124,7 @@ namespace OpcUaInterop
             // ── PKI: the stack's directory stores, filled from the PEM test PKI ──
             string storeRoot = Pki.TempDir("opcua-dotnet-gds");
             string own = Path.Combine(storeRoot, "own");
-            var certIds = new CertificateIdentifierCollection();
+            var certIds = new List<CertificateIdentifier>();
             string applicationUri = fixture.Server.ApplicationUri;
             bool secure = certFile != null && keyFile != null;
             if (secure)
@@ -208,7 +191,7 @@ namespace OpcUaInterop
                     new CertificateGroupConfiguration
                     {
                         Id = "Default",
-                        CertificateTypes = new StringCollection(GroupCertificateTypes),
+                        CertificateTypes = GroupCertificateTypes,
                         SubjectName = "CN=opcua-interop dotnet-gds CA, O=OTFabric",
                         BaseStorePath = Path.Combine(gdsRoot, "CA", "default"),
                         DefaultCertificateHashSize = 256,
@@ -252,7 +235,7 @@ namespace OpcUaInterop
                     .AddServerCapabilities("GDS")
                     .AddServerProfile("http://opcfoundation.org/UA-Profile/Server/GlobalDiscoveryAndCertificateManagement2017")
                     .SetShutdownDelay(0)
-                    .AddSecurityConfiguration(certIds, storeRoot, rejectedRoot)
+                    .AddSecurityConfiguration(new ArrayOf<CertificateIdentifier>(certIds.ToArray()), storeRoot, rejectedRoot)
                     .SetAutoAcceptUntrustedCertificates(false)
                     .SetRejectSHA1SignedCertificates(true)
                     .SetRejectUnknownRevocationStatus(false)
@@ -267,7 +250,7 @@ namespace OpcUaInterop
                 config.ServerConfiguration.BaseAddresses = [baseAddress];
 
                 ApplicationInstance.MessageDlg = new AutoApproveDialog();
-                bool haveCert = await app.CheckApplicationInstanceCertificatesAsync(false).ConfigureAwait(false);
+                bool haveCert = await app.CheckApplicationInstanceCertificatesAsync(false, null).ConfigureAwait(false);
                 if (!haveCert)
                 {
                     Console.Error.WriteLine("[dotnet-gds] error: application instance certificate invalid");
@@ -290,7 +273,7 @@ namespace OpcUaInterop
                     Console.Error.WriteLine("[dotnet-gds] info: user " + u.Username + ": " + string.Join(", ", roles.Select(r => r.Name)));
                 }
 
-                var server = new InteropGdsServer(fixture, database, new CertificateGroup(telemetry), users);
+                var server = new InteropGdsServer(fixture, database, new CertificateGroup(telemetry), users, telemetry);
                 await app.StartAsync(server).ConfigureAwait(false);
 
                 foreach (EndpointDescription ep in server.GetEndpoints())

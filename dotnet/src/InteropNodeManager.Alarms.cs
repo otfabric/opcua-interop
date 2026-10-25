@@ -104,7 +104,8 @@ namespace OpcUaInterop
             m_alarm = alarm;
             m_alarmsSource = source;
             ArmAlarm(SystemContext, report: false);
-            return [folder, source];
+            List<NodeState> ext = CreateAlarm105Nodes(folder, source);
+            return [folder, source, .. ext];
         }
 
         private async ValueTask RegisterAlarmNotifierAsync(CancellationToken ct)

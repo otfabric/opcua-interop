@@ -1,16 +1,16 @@
 # opcua-interop adapter for the GDS of the OPC Foundation UA-.NETStandard stack
 # (Part 12 pull model: a Global Discovery Server and a GDS client).
 #
-# A separate project from dotnet/: the GDS packages (Opc.Ua.Gds.Server.Common,
-# Opc.Ua.Gds.Client.Common) have no 2.0.x release, so this adapter runs on
-# UA-.NETStandard 1.5.378.182 with every Opc.Ua package pinned to it.
+# A separate project from dotnet/ (its own capability document, the GDS server
+# instead of the fixture address space), on UA-.NETStandard 2.0.1 with every
+# Opc.Ua package (including Opc.Ua.Gds.Server / Opc.Ua.Gds.Client) pinned to it.
 #
 # The build stage runs on the build platform ($BUILDPLATFORM): the publish
 # output is portable IL (framework-dependent, no apphost), so a multi-platform
 # buildx run (linux/amd64 + linux/arm64) never compiles under emulation.
 ARG DOTNET_SDK_VERSION=10.0.402
 ARG DOTNET_RUNTIME_VERSION=10.0.13
-ARG OPCUA_VERSION=1.5.378.182
+ARG OPCUA_VERSION=2.0.1
 
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:${DOTNET_SDK_VERSION}-noble AS build
 ARG OPCUA_VERSION

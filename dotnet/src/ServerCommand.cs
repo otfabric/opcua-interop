@@ -174,6 +174,10 @@ namespace OpcUaInterop
                 Console.Error.WriteLine("[dotnet] error: --https-port / --wss-port need --certificate and --private-key (the TLS server certificate)");
                 return 1;
             }
+            // --auditing (adapter 0.15.0): Server/Auditing true, so audit events (e.g. the
+            // AuditCondition*Events of the alarm methods) reach event monitored items of
+            // SignAndEncrypt sessions (the stack's rule).
+            bool auditing = a.Has("--auditing");
             string registerWith = a.Get("--register-with");
             int registerIntervalMs = Math.Max(500, a.GetInt("--register-interval-ms", 30000));
 
@@ -356,6 +360,7 @@ namespace OpcUaInterop
                 // Without mutual TLS the stack offers None over HTTPS / WSS (TLS protects the
                 // messages); HTTPS then requires a user name (Anonymous is filtered out).
                 config.ServerConfiguration.HttpsMutualTls = false;
+                config.ServerConfiguration.AuditingEnabled = auditing;
 
                 ApplicationInstance.MessageDlg = new AutoApproveDialog();
                 bool haveCert = await app.CheckApplicationInstanceCertificatesAsync(false, null).ConfigureAwait(false);
@@ -363,6 +368,28 @@ namespace OpcUaInterop
                 {
                     Console.Error.WriteLine("[dotnet] error: application instance certificate invalid");
                     return 6;
+                }
+
+                if (secure)
+                {
+                    // An empty certificate slot (adapter 0.15.0) for CreateSelfSignedCertificate
+                    // (Part 12 §7.10.6): UA-.NETStandard creates a certificate for an empty slot only
+                    // and refuses to delete the only application certificate. The
+                    // DefaultApplicationGroup's CertificateTypes come from these identifiers, so an
+                    // RsaMinApplicationCertificateType identifier whose store holds no certificate
+                    // is an empty slot. Added after CheckApplicationInstanceCertificatesAsync, which
+                    // would otherwise create a certificate for it; no endpoint uses the type (no
+                    // Basic128Rsa15 / Basic256 policy).
+                    string emptyStore = Path.Combine(storeRoot, "own-rsamin");
+                    Directory.CreateDirectory(emptyStore);
+                    config.SecurityConfiguration.ApplicationCertificates = config.SecurityConfiguration.ApplicationCertificates.AddItem(
+                        new CertificateIdentifier
+                        {
+                            StoreType = CertificateStoreType.Directory,
+                            StorePath = emptyStore,
+                            SubjectName = "CN=opcua-interop dotnet server RsaMin, O=OTFabric",
+                            CertificateType = ObjectTypeIds.RsaMinApplicationCertificateType
+                        });
                 }
 
                 var server = new InteropServer(telemetry, fixture);

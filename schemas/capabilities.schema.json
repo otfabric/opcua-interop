@@ -60,12 +60,13 @@
     },
     "serverFeatures": {
       "type": "array",
-      "description": "Optional server-side features (docs/CLIENT_CONTRACT.md §13). Added in adapter 0.7.0; pubsub in 0.8.0; alarms in 0.11.0; push-management in 0.13.0; gds-pull in 0.14.0; alarms-branches and alarms-audible in 0.15.0.",
+      "description": "Optional server-side features (docs/CLIENT_CONTRACT.md §13). Added in adapter 0.7.0; pubsub in 0.8.0; alarms in 0.11.0; push-management in 0.13.0; gds-pull in 0.14.0; alarms-branches, alarms-audible, alarms-105, auditing, pubsub-multicast-loopback in 0.15.0.",
       "items": {
         "type": "string",
         "enum": ["deadband", "percent-deadband", "reverse-connect", "ecc-security", "ecc-user-token",
                  "lds", "mdns", "register-with", "node-management", "pubsub", "alarms",
-                 "push-management", "gds-pull", "alarms-branches", "alarms-audible"]
+                 "push-management", "gds-pull", "alarms-branches", "alarms-audible",
+                 "alarms-105", "auditing", "pubsub-multicast-loopback"]
       }
     },
     "codec": {

@@ -79,7 +79,7 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ### Summary
 
-The node-opcua adapter's `client push` reaches the rest of Part 12 1.05 push management, a new `client query` runs the Query service set, and the node-opcua alarm fixture gains condition branches and an audible sound.
+Push management and the GDS pull model reach more clients: `client push` (with the Part 12 1.05 flags) is now on node-opcua, asyncua, async-opcua, Eclipse Milo and open62541, and `client gds-pull` on asyncua, async-opcua, Milo and open62541. A new `client query` runs the Query service set (node-opcua, async-opcua). The node-opcua alarm fixture gains condition branches and an audible sound. The UA-.NETStandard server gets the Part 9 1.05 alarm fixture, server auditing, an empty certificate slot and PubSub multicast loopback; the `dotnet-gds` adapter moves to UA-.NETStandard 2.0.1.
 
 ### Added
 
@@ -100,14 +100,29 @@ The node-opcua adapter's `client push` reaches the rest of Part 12 1.05 push man
 - **open62541 `client push`** (clientOperations `push`; clientFeatures `push-groups`, `push-certificates`, `push-transaction-diagnostics`): every flag of §1 "push flags", as `UA_Client_call` requests on the standard NodeIds of ServerConfiguration and of the group's TrustList on one session, because open62541 v1.5.9 has no push client API. The adapter decodes TransactionErrorType itself.
 - **open62541 `client gds-pull`** (clientOperations `gds-pull`, §16.2): the GDS pull model as `UA_Client_call` requests on the GDS Directory. The adapter encodes ApplicationRecordDataType itself and makes the PKCS #10 request with OpenSSL (a fresh RSA 2048 or ECC P-256 key).
 - `schemas/capabilities.schema.json`: the five new feature strings. `schemas/client-result.schema.json`: the operations `push` and `query`.
+- **Alarms (1.05) fixture** of the dotnet server (serverFeatures `alarms-105`, fixtures/baseline/README.md "Alarms (1.05)"): `s=Alarms.ExtAlarm` with SuppressedState, OutOfServiceState, SilenceState, LatchedState, ShelvingState, AudibleEnabled / AudibleSound and their methods; the dialog `s=Alarms.Dialog`; the alarm group `s=Alarms.Group`; the fixture methods `ResetExt`, `Deactivate` and `Branch`.
+- **`--auditing`** server flag of the dotnet adapter (serverFeatures `auditing`, CLIENT_CONTRACT.md §11): it turns server auditing on, so the AuditCondition*Events of the alarm methods reach SignAndEncrypt sessions.
+- **Empty certificate slot:** a secure dotnet server (`--certificate`) also lists RsaMinApplicationCertificateType in the CertificateTypes of its DefaultApplicationGroup, with no certificate in it. UA-.NETStandard runs CreateSelfSignedCertificate only for an empty slot, and it refuses to delete its only application certificate.
+- **PubSub multicast loopback** of the dotnet server (serverFeatures `pubsub-multicast-loopback`, CLIENT_CONTRACT.md §14.13): `UdpTransportOptions.MulticastLoopback` is on, so a subscriber on the publisher's host receives its multicast.
 
 ### Changed
 
 - **node-opcua alarm fixture:** the Retain override of Confirm, which keeps an active alarm retained, now applies to the condition itself only. A confirmed branch is not retained, and node-opcua deletes it.
+- **dotnet-gds** now runs on UA-.NETStandard 2.0.1, with `Opc.Ua.Gds.Server` / `Opc.Ua.Gds.Client`, the 2.0 names of the `*.Common` packages. CLIENT_CONTRACT.md §16.3 records the differences:
+  - The ECC CA's CRL is well formed.
+  - CheckRevocationStatus answers BadCertificateRevoked from the GDS CRL.
+  - The GDS namespace indexes are swapped: ns=2 is GDS, ns=3 is applications.
+  - Certificate requests need SignAndEncrypt.
+  - FindApplications is open to Anonymous. The smoke test now checks that an anonymous RegisterApplication is refused.
+  - RequestIds are no longer reused.
 
 ### Not supported
 
 - The node-opcua server serves neither the Query service set nor the Part 12 1.05 methods that the new `push` flags call. The flags are for servers that implement them, such as go-opcua.
+
+### Notes
+
+- In the UA-.NETStandard 2.0.1 server, TimedShelve2 / OneShotShelve2 / Unshelve2 and Respond2 have no handler, so the fixture has none of them.
 
 ---
 

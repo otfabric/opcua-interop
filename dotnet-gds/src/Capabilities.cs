@@ -10,7 +10,7 @@ namespace OpcUaInterop
         public const string AdapterVersion = "0.14.0";
 
         /// <summary>The UA-.NETStandard release the csproj pins.</summary>
-        public const string PinnedStackVersion = "1.5.378.182";
+        public const string PinnedStackVersion = "2.0.1";
 
         /// <summary>The UA-.NETStandard package version the adapter runs on.</summary>
         public static string StackVersion
