@@ -34,6 +34,7 @@ namespace OpcUaInterop
             Section("pubsub codec", CheckPubSubCodec);
             Section("alarms", CheckAlarms);
             Section("push / gds-pull flags", CheckPushFlags);
+            Section("history events", CheckHistoryEvents);
             if (File.Exists(fixturePath))
             {
                 Section("fixture " + fixturePath, () => CheckFixture(fixturePath));
@@ -143,6 +144,71 @@ namespace OpcUaInterop
             Check(pubsub.GetProperty("supported").GetBoolean(), "capabilities pubsub.supported is true");
             Check(pubsub.GetProperty("codecOps").EnumerateArray().Select(e => e.GetString()).SequenceEqual(PubSubCodec.Operations),
                 "capabilities pubsub.codecOps are the implemented codec operations");
+        }
+
+        // ── history events ──────────────────────────────────────────────────
+
+        private static void CheckHistoryEvents()
+        {
+            using (JsonDocument doc = JsonDocument.Parse(Capabilities.Document()))
+            {
+                JsonElement root = doc.RootElement;
+                string[] ops = root.GetProperty("clientOperations").EnumerateArray().Select(e => e.GetString()).ToArray();
+                Check(ops.Contains("history-read-events") && ops.Contains("history-update-events"),
+                    "capabilities clientOperations has history-read-events and history-update-events");
+                string[] features = root.GetProperty("serverFeatures").EnumerateArray().Select(e => e.GetString()).ToArray();
+                Check(features.Contains("history-events") && features.Contains("history-events-update"),
+                    "capabilities serverFeatures has history-events and history-events-update");
+                Check(root.GetProperty("serverServices").EnumerateArray().Any(e => e.GetString() == "HistoryUpdate"),
+                    "capabilities serverServices has HistoryUpdate");
+            }
+            Check(ClientCommand.DefaultHistoryEventSelect.SequenceEqual(
+                ["EventId", "EventType", "SourceNode", "SourceName", "Time", "ReceiveTime", "Message", "Severity"]),
+                "history-read-events default SelectClauses");
+            SimpleAttributeOperand op = ClientCommand.SelectOperand("2:Foo/Bar");
+            Check(op.TypeDefinitionId == ObjectTypeIds.BaseEventType && op.AttributeId == Attributes.Value &&
+                op.BrowsePath.Count == 2 && op.BrowsePath[0] == new QualifiedName("Foo", 2) && op.BrowsePath[1] == new QualifiedName("Bar", 0),
+                "--select 2:Foo/Bar is BaseEventType / [2:Foo, 0:Bar] / Value");
+            ContentFilter none = ClientCommand.EventWhere(NodeId.Null, null);
+            Check(none.Elements.Count == 0, "no --of-type / --min-severity: empty WhereClause");
+            ContentFilter both = ClientCommand.EventWhere(ObjectTypeIds.SystemEventType, 300);
+            Check(both.Elements.Count == 3 && both.Elements[0].FilterOperator == FilterOperator.And &&
+                both.Elements[1].FilterOperator == FilterOperator.OfType && both.Elements[2].FilterOperator == FilterOperator.GreaterThanOrEqual,
+                "--of-type and --min-severity: And(1, 2) first, then OfType, GreaterThanOrEqual");
+            Check(ClientCommand.EventTimestamps("Neither") == TimestampsToReturn.Neither && ClientCommand.EventTimestamps(null) == TimestampsToReturn.Both,
+                "--timestamps is case-insensitive, default both");
+
+            var ev = ClientCommand.ParseEventJson(
+                "{\"EventId\":{\"type\":\"ByteString\",\"value\":\"aGlzdC1ldnQtOQ==\"},\"EventType\":{\"type\":\"NodeId\",\"value\":\"i=2041\"}," +
+                "\"Time\":{\"type\":\"DateTime\",\"value\":\"2026-07-24T10:00:30Z\"},\"Severity\":{\"type\":\"UInt16\",\"value\":700}," +
+                "\"Message\":{\"type\":\"LocalizedText\",\"value\":{\"text\":\"x\"}},\"SourceName\":\"src\"}");
+            Variant V(string path) => ClientCommand.EventFieldVariant(ev.First(f => f.Path == path), s => NodeIds.Parse(s));
+            Check(ev.Count == 6 && ev[0].Path == "EventId", "--event keeps the field order");
+            Check(V("EventId").TryGetValue(out ByteString id) && System.Text.Encoding.ASCII.GetString(id.Span.ToArray()) == "hist-evt-9", "--event ByteString is Base64");
+            Check(V("EventType").TryGetValue(out NodeId et) && et == ObjectTypeIds.BaseEventType, "--event NodeId");
+            Check(V("Time").TryGetValue(out DateTimeUtc t) && t.ToDateTime() == new DateTime(2026, 7, 24, 10, 0, 30, DateTimeKind.Utc), "--event DateTime");
+            Check(V("Severity").TryGetValue(out ushort sev) && sev == 700, "--event UInt16");
+            Check(V("Message").TryGetValue(out LocalizedText lt) && lt.Text == "x", "--event LocalizedText");
+            Check(V("SourceName").TryGetValue(out string sn) && sn == "src", "--event plain string is a String");
+            foreach (string bad in new[] { "[]", "{\"Severity\":{\"type\":\"UInt16\",\"value\":70000}}", "{\"EventId\":{\"type\":\"ByteString\",\"value\":\"%%\"}}", "{\"\":1}" })
+            {
+                bool refused = false;
+                try
+                {
+                    ClientCommand.ParseEventJson(bad);
+                }
+                catch (InputException)
+                {
+                    refused = true;
+                }
+                Check(refused, "--event " + bad + " is an input error");
+            }
+
+            var seed = InteropNodeManager.HistoryEventSeed();
+            Check(seed.Count == 5 && seed[0].EventId == "hist-evt-0" && seed[0].Severity == 100 &&
+                seed[3].EventType == ObjectTypeIds.SystemEventType && seed[4].Time == new DateTime(2026, 7, 24, 10, 0, 20, DateTimeKind.Utc) &&
+                seed[4].Message == "history-event-4" && seed.Count(e => e.EventType == ObjectTypeIds.BaseEventType) == 4,
+                "History.Events seed: hist-evt-0…4, 5 s apart, Severity 100…500, #3 SystemEventType");
         }
 
         // ── push / gds-pull flags ───────────────────────────────────────────

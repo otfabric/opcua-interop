@@ -20,7 +20,7 @@ namespace OpcUaInterop
             "endpoints", "find-servers", "read", "write", "browse", "translate", "call", "subscribe",
             "subscription-lifecycle", "event-subscribe", "history-read", "republish", "transfer-subscriptions",
             "register-nodes", "node-management", "find-servers-on-network", "register-server", "codec",
-            "pubsub-discover", "alarms", "push", "gds-pull"
+            "pubsub-discover", "alarms", "push", "gds-pull", "history-read-events", "history-update-events"
         ];
 
         public static async Task<int> RunAsync(string[] args)
@@ -70,6 +70,8 @@ namespace OpcUaInterop
                     "subscription-lifecycle" => await LifecycleAsync(c).ConfigureAwait(false),
                     "event-subscribe" => await EventSubscribeAsync(c).ConfigureAwait(false),
                     "history-read" => await HistoryReadAsync(c).ConfigureAwait(false),
+                    "history-read-events" => await HistoryReadEventsAsync(c).ConfigureAwait(false),
+                    "history-update-events" => await HistoryUpdateEventsAsync(c).ConfigureAwait(false),
                     "republish" => await RepublishAsync(c).ConfigureAwait(false),
                     "transfer-subscriptions" => await TransferAsync(c).ConfigureAwait(false),
                     "register-nodes" => await RegisterNodesAsync(c).ConfigureAwait(false),

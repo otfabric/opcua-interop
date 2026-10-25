@@ -64,7 +64,9 @@ namespace OpcUaInterop
                 // transport-https / transport-wss: --https-port / --wss-port (needs --certificate)
                 ["serverFeatures"] = Json.Strings(["deadband", "percent-deadband", "register-with", "node-management", "pubsub",
                     "transport-https", "transport-wss", "alarms", "push-management",
-                    "alarms-105", "auditing", "pubsub-multicast-loopback"]),
+                    "alarms-105", "auditing", "pubsub-multicast-loopback",
+                    // s=History.Events: HistoryRead / HistoryUpdate of events (stack historian, in memory)
+                    "history-events", "history-events-update"]),
                 ["codec"] = new JsonObject
                 {
                     ["formats"] = Json.Strings(["json", "xml"]),
@@ -79,7 +81,7 @@ namespace OpcUaInterop
                     "Read", "Write", "Call", "RegisterNodes", "UnregisterNodes", "AddNodes", "DeleteNodes",
                     "CreateSubscription", "ModifySubscription", "SetPublishingMode", "Publish", "Republish",
                     "TransferSubscriptions", "DeleteSubscriptions", "CreateMonitoredItems", "ModifyMonitoredItems",
-                    "SetMonitoringMode", "SetTriggering", "DeleteMonitoredItems", "HistoryRead"]),
+                    "SetMonitoringMode", "SetTriggering", "DeleteMonitoredItems", "HistoryRead", "HistoryUpdate"]),
                 ["securityProfiles"] = profiles,
                 ["userTokenTypes"] = Json.Strings(["Anonymous", "UserName"])
             };

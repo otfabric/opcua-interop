@@ -15,7 +15,8 @@ namespace OpcUaInterop
     /// <summary>
     /// The fixture address space (fixtures/baseline/README.md) as a classic CustomNodeManager2:
     /// folders / objects, variables, methods, behaviours (counter / toggle / ramp / fixed-status),
-    /// BaseEvent emission on Events.Source and raw history on History.Temperature.
+    /// BaseEvent emission on Events.Source, raw history on History.Temperature and event history on
+    /// History.Events (InteropNodeManager.HistoryEvents.cs).
     /// </summary>
     internal sealed partial class InteropNodeManager : AsyncCustomNodeManager
     {
@@ -56,6 +57,7 @@ namespace OpcUaInterop
                 }
                 m_timers.Clear();
                 m_historian.Dispose();
+                m_eventHistorian?.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -205,6 +207,7 @@ namespace OpcUaInterop
                 }
 
                 List<NodeState> alarmNodes = CreateAlarmNodes(externalReferences);
+                alarmNodes.AddRange(CreateHistoryEventNodes(externalReferences));
 
                 foreach ((Fixture.NodeDef _, NodeState state) in defs)
                 {
@@ -225,6 +228,7 @@ namespace OpcUaInterop
                 await RegisterAlarmNotifierAsync(cancellationToken).ConfigureAwait(false);
 
                 SetupHistory();
+                ResetHistoryEvents();
                 SetupBehaviors();
                 SetupEventEmission();
             }
@@ -645,6 +649,10 @@ namespace OpcUaInterop
             if (m_historyTemperature != null && node.NodeId == m_historyTemperature.NodeId)
             {
                 return m_historian;
+            }
+            if (m_historyEvents != null && node.NodeId == m_historyEvents.NodeId)
+            {
+                return m_eventHistorian;
             }
             return null;
         }
