@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use der::{Decode, Encode};
+use der::{Decode, Encode, Reader, SliceReader};
 use opcua::crypto::{CertificateStore, X509};
 use rsa::pkcs1v15::{Signature, VerifyingKey};
 use rsa::signature::Verifier;
@@ -211,14 +211,33 @@ fn time_valid(cert: &x509_cert::Certificate) -> bool {
     v.not_before.to_system_time() <= now && now <= v.not_after.to_system_time()
 }
 
-/// Validate a peer certificate (DER) against trust anchors (DER): exact
-/// match, or issued (one level) by one of them, within its validity period.
+/// The first certificate of a DER certificate chain, parsed, and its DER
+/// bytes. A ServerCertificate may be the certificate followed by its issuers,
+/// DER certificates concatenated (Part 6 §6.2.3; UA-.NETStandard 2.0.1 servers
+/// send it so); a single certificate is a chain of one.
+fn decode_leaf(chain: &[u8]) -> der::Result<(x509_cert::Certificate, &[u8])> {
+    let mut r = SliceReader::new(chain)?;
+    let cert = x509_cert::Certificate::decode(&mut r)?;
+    let used = u32::from(r.position()) as usize;
+    Ok((cert, &chain[..used]))
+}
+
+/// The DER bytes of the first certificate of a chain (see `decode_leaf`), or
+/// the input unchanged when it does not start with a certificate.
+pub fn leaf_der(chain: &[u8]) -> &[u8] {
+    decode_leaf(chain).map(|(_, leaf)| leaf).unwrap_or(chain)
+}
+
+/// Validate a peer certificate (DER, or a DER chain whose first certificate is
+/// the peer's) against trust anchors (DER): exact match, or issued (one level)
+/// by one of them, within its validity period. The issuers that follow the
+/// leaf in a chain are not used: the anchors decide.
 pub fn validate_against(cert_der: &[u8], anchors: &[Vec<u8>]) -> Result<(), String> {
-    if anchors.iter().any(|a| a.as_slice() == cert_der) {
+    let (cert, leaf) =
+        decode_leaf(cert_der).map_err(|e| format!("peer certificate cannot be parsed: {e}"))?;
+    if anchors.iter().any(|a| a.as_slice() == leaf) {
         return Ok(());
     }
-    let cert = x509_cert::Certificate::from_der(cert_der)
-        .map_err(|e| format!("peer certificate cannot be parsed: {e}"))?;
     if !time_valid(&cert) {
         return Err("peer certificate is outside its validity period".into());
     }
@@ -273,6 +292,23 @@ mod tests {
         assert!(validate_against(&leaf, &[other.clone()]).is_err());
         assert!(validate_against(&leaf, &[]).is_err());
         assert!(validate_against(&ca, &[other]).is_err());
+    }
+
+    #[test]
+    fn chain_is_validated_by_its_leaf() {
+        // leaf followed by its issuer, as a UA-.NETStandard 2.0.1 server sends
+        // its ServerCertificate.
+        let (ca, leaf, other) = (der("ca.crt"), der("leaf.crt"), der("other.crt"));
+        let chain = [leaf.clone(), ca.clone()].concat();
+        assert_eq!(leaf_der(&chain), leaf.as_slice());
+        assert_eq!(leaf_der(&leaf), leaf.as_slice());
+        assert_eq!(leaf_der(b"not a certificate"), b"not a certificate");
+        assert!(validate_against(&chain, &[ca.clone()]).is_ok(), "issued by a listed CA");
+        assert!(validate_against(&chain, &[leaf.clone()]).is_ok(), "exact match of the leaf");
+        assert!(validate_against(&chain, &[other]).is_err());
+        // The CA that follows the leaf is no trust anchor.
+        assert!(validate_against(&chain, &[]).is_err());
+        assert!(validate_against(&leaf[..leaf.len() - 1], &[ca]).is_err(), "truncated");
     }
 
     #[test]

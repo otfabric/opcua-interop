@@ -429,7 +429,8 @@ async fn connect(spec: &ConnectSpec) -> Result<Conn, Failure> {
         let server_der = ep.server_certificate.value.clone().unwrap_or_default();
         match crate::pki::validate_against(&server_der, &anchors) {
             Ok(()) => {
-                if let Ok(x) = opcua::crypto::X509::from_der(&server_der) {
+                // The leaf of a chain (X509::from_der takes one certificate).
+                if let Ok(x) = opcua::crypto::X509::from_der(crate::pki::leaf_der(&server_der)) {
                     let _ = crate::pki::trust_in_stack(&pki.0, &x);
                 }
             }
