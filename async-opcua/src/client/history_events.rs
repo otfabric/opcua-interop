@@ -205,14 +205,14 @@ pub fn event_field_lists(
 }
 
 fn fields_json(paths: &[String], fields: &[Variant]) -> Value {
-    let fs: Vec<Value> = paths
+    // Only the fields the server returned (by index), not padded to the
+    // SelectClauses.
+    let fs: Vec<Value> = fields
         .iter()
         .enumerate()
-        .map(|(i, name)| {
-            let (dt, bit, val) = match fields.get(i) {
-                Some(v) => variant_json(v),
-                None => ("Null".to_owned(), 0, Value::Null),
-            };
+        .map(|(i, v)| {
+            let name = paths.get(i).map(String::as_str).unwrap_or("");
+            let (dt, bit, val) = variant_json(v);
             obj(vec![
                 ("name", json!(name)),
                 ("dataType", json!(dt)),
@@ -329,6 +329,12 @@ pub async fn op_history_read_events(opts: &Opts) -> Envelope {
             b64_decode(c).map_err(|_| Failure::input("--continuation-point is not Base64"))?;
         }
         let release = opts.flag("--release-continuation-point")?;
+        if release && cp.is_none() {
+            return Err(Failure::input("--release-continuation-point needs --continuation-point"));
+        }
+        if cp.is_some() && nodes.len() > 1 {
+            return Err(Failure::input("--continuation-point takes exactly one --node"));
+        }
         let ts = timestamps_ci(opts)?;
         let scenario = opts.get("--scenario").map(str::to_owned);
         if let Some(s) = &scenario {
@@ -365,6 +371,7 @@ pub async fn op_history_read_events(opts: &Opts) -> Envelope {
             if scenario.is_some() {
                 let num = if num == 0 { 2 } else { num };
                 let mut pages = Vec::new();
+                let mut all_events = Vec::new();
                 let mut cur: Option<String> = None;
                 let mut last_cp: Option<String> = None;
                 let (mut last_svc, mut last_item) = (StatusCode::Good, StatusCode::Good);
@@ -372,6 +379,7 @@ pub async fn op_history_read_events(opts: &Opts) -> Envelope {
                     let p = read_page(&conn, &id, &rs, num, cur.as_deref(), false).await?;
                     last_svc = p.svc;
                     last_item = p.item;
+                    all_events.extend(p.events.iter().cloned());
                     pages.push(obj(vec![
                         ("statusCode", status_json(p.item)),
                         ("continuationPoint", json!(p.cp)),
@@ -389,20 +397,14 @@ pub async fn op_history_read_events(opts: &Opts) -> Envelope {
                         break;
                     }
                 }
-                let mut release_sc = StatusCode::Good;
-                let mut reuse_sc = StatusCode::Good;
-                if let Some(c) = &cur {
+                // Release / reuse only when the server returned a continuation
+                // point: the live one (--max-pages reached) or the last one seen.
+                let (mut release_sc, mut reuse_sc) = (Value::Null, Value::Null);
+                if let Some(c) = cur.as_ref().or(last_cp.as_ref()) {
                     let rel = read_page(&conn, &id, &rs, num, Some(c), true).await?;
-                    release_sc = if rel.svc.is_good() { rel.item } else { rel.svc };
+                    release_sc = status_json(if rel.svc.is_good() { rel.item } else { rel.svc });
                     let re = read_page(&conn, &id, &rs, num, Some(c), false).await?;
-                    reuse_sc = if re.svc.is_good() { re.item } else { re.svc };
-                } else if !pages.is_empty() {
-                    let rel = read_page(&conn, &id, &rs, num, None, true).await?;
-                    release_sc = if rel.svc.is_good() { rel.item } else { rel.svc };
-                    if let Some(c) = &last_cp {
-                        let re = read_page(&conn, &id, &rs, num, Some(c), false).await?;
-                        reuse_sc = if re.svc.is_good() { re.item } else { re.svc };
-                    }
+                    reuse_sc = status_json(if re.svc.is_good() { re.item } else { re.svc });
                 }
                 let st = if last_svc.is_good() { last_item } else { last_svc };
                 if !st.is_good() {
@@ -412,10 +414,13 @@ pub async fn op_history_read_events(opts: &Opts) -> Envelope {
                 env.results.push(obj(vec![
                     ("scenario", json!("continue")),
                     ("nodeId", json!(fmt_node_id(&id))),
+                    ("statusCode", status_json(st)),
+                    ("continuationPoint", json!(cur)),
                     ("selectClauses", json!(paths)),
+                    ("events", Value::Array(all_events)),
                     ("pages", Value::Array(pages)),
-                    ("releaseStatusCode", status_json(release_sc)),
-                    ("reuseAfterReleaseStatusCode", status_json(reuse_sc)),
+                    ("releaseStatusCode", release_sc),
+                    ("reuseAfterReleaseStatusCode", reuse_sc),
                 ]));
                 continue;
             }
@@ -513,8 +518,11 @@ pub async fn op_history_update_events(opts: &Opts) -> Envelope {
                 if crate::common::is_transport(e.status()) || crate::common::is_timeout(e.status()) {
                     return Err(svc_err(e, "HistoryUpdate"));
                 }
+                // A service fault: no result items.
                 env.service_result = e.status();
-                (e.status(), Vec::new())
+                env.success = false;
+                env.error = Some((Category::Service, format!("HistoryUpdate: {e}")));
+                return Ok(env);
             }
             Ok(resp) => {
                 env.service_result = resp.response_header.service_result;

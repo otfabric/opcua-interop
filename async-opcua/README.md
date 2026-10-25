@@ -116,14 +116,19 @@ HistoryRead with `ReadEventDetails` for all `--node`s through the generic
 `--select` paths from BaseEventType (`ns:Name` segments for namespace `ns`),
 and `--of-type` / `--min-severity` build the WhereClause with element 0 as the
 root (`And(1, 2)` when both are given). `--scenario continue` pages with
-`--num-values` (0 → 2) up to `--max-pages` (8) on one session, then releases
-the last continuation point and tries to reuse it, as `history-read` does.
+`--num-values` (0 → 2) up to `--max-pages` (8) on one session; the item also carries all pages' `events`
+and the last page's `statusCode` / `continuationPoint`. When the server
+returned a continuation point, the last one is released and then reused
+(`releaseStatusCode` / `reuseAfterReleaseStatusCode`, else `null`). Events
+carry only the fields the server returned (not padded to the SelectClauses).
+`--release-continuation-point` without `--continuation-point`, and
+`--continuation-point` with more than one `--node`, are input errors (exit 2).
 `history-update-events` sends `UpdateEventDetails` (insert / replace /
 update, the `--event` objects in `--select` order, a path an event lacks is a
 null Variant; without `--select` the paths are the events' keys in first-seen
 order) or `DeleteEventDetails` (`--event-id`) through the generic
 `HistoryUpdate` builder; `operationResults` are reported as the server sent
-them. No deviation from the contract: the stack's builders send exactly the
+them, and a service fault gives `results: []`. No deviation from the contract: the stack's builders send exactly the
 requested details. The async-opcua server keeps no event history (no
 `History.Events`, no `history-events` server feature): async-opcua 0.19 has
 no historian for events, only the node manager hooks.
