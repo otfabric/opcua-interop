@@ -120,6 +120,8 @@ namespace OpcUaInterop
             ("severity", JsonValue.Create(Severity(code))));
 
         public static JsonObject Json(StatusCode sc) => Json(sc.Code);
+
+        public static JsonObject Good => Json(0u);
     }
 
     /// <summary>Thrown for invalid command-line input (exit 2).</summary>

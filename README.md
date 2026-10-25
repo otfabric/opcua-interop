@@ -310,6 +310,8 @@ client gds-pull  --endpoint ... --security-mode SignAndEncrypt --username ... --
                  [--app-uri urn:x] [--app-type Server|Client|ClientAndServer] [--discovery-url ...] \
                  [--request csr|new-key-pair] [--certificate-type RsaSha256|NistP256] \
                  [--revoke] [--unregister] [--finish-timeout-ms 30000]   # dotnet-gds (v0.14.0), §16
+# UA-.NETStandard dotnet (v0.15.0): client push (every flag above) as plain Calls on one session,
+# client gds-pull with the stack's GlobalDiscoveryServerClient (Opc.Ua.Gds.Client 2.0.1)
 ```
 
 The `dotnet-gds` image (v0.14.0) is a separate adapter: its `server` is a Global

@@ -1581,9 +1581,9 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `transport-https` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.https://…` (§9); server `--https-port` (§11) |
 | `push-management` | server | ✓ | — | — | ✓ | ✓ | — | ServerConfiguration push certificate management (Part 12 §7, §15) with `--certificate` / `--private-key` / `--pki-dir`; fixture users get the well-known roles of their `roles` (SecurityAdmin) |
 | `gds-pull` | server | — | — | — | — | — | — | `dotnet-gds` only (§16): the server is a Global Discovery Server (Directory, DefaultApplicationGroup, pull certificate management) |
-| `push-groups` | client | — | — | — | — | ✓ | — | `push --group`, `--certificate-type-id` (adapter 0.15.0, §1 "push flags") |
-| `push-certificates` | client | — | — | — | — | ✓ | — | `push --get-certificates`, `--create-self-signed`, `--delete-certificate`, `--update-certificate` (PEM / PFX key), `--reset-to-defaults`, `--cancel` (adapter 0.15.0) |
-| `push-transaction-diagnostics` | client | — | — | — | — | ✓ | — | `push --transaction-diagnostics` (adapter 0.15.0) |
+| `push-groups` | client | — | — | — | ✓ | ✓ | — | `push --group`, `--certificate-type-id` (adapter 0.15.0, §1 "push flags") |
+| `push-certificates` | client | — | — | — | ✓ | ✓ | — | `push --get-certificates`, `--create-self-signed`, `--delete-certificate`, `--update-certificate` (PEM / PFX key), `--reset-to-defaults`, `--cancel` (adapter 0.15.0) |
+| `push-transaction-diagnostics` | client | — | — | — | ✓ | ✓ | — | `push --transaction-diagnostics` (adapter 0.15.0) |
 | `alarms-branches` | server | — | — | — | — | ✓ | — | the alarm fixture's `s=Alarms.Clear`: condition branches (fixtures/baseline/README.md "Alarms", adapter 0.15.0) |
 | `alarms-audible` | server | — | — | — | — | ✓ | — | InteropAlarm has AudibleEnabled / AudibleSound (AudioVariableType with ListId; adapter 0.15.0) |
 | `alarms` | server | ✓ (experimental) | — | — | ✓ | ✓ | — | the Alarms & Conditions fixture (`s=Alarms.*`, fixtures/baseline/README.md "Alarms"); Acknowledge / Confirm / AddComment / Enable / Disable / ConditionRefresh by the stack's own handlers (ConditionRefresh2 too, not exercised by `alarms`) |
@@ -1604,9 +1604,9 @@ all six adapters since adapter 0.12.0:
 | Client operation | open62541 | Milo | async-opcua | UA-.NETStandard | node-opcua | asyncua |
 |------------------|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|
 | `alarms` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `push` (adapter 0.13.0, §15) | — | — | — | — | ✓ | — |
+| `push` (adapter 0.13.0, §15) | — | — | — | ✓ (0.15.0) | ✓ | — |
 | `query` (adapter 0.15.0) | — | — | — | — | ✓ | — |
-| `gds-pull` (adapter 0.14.0, §16) | — | — | — | — (`dotnet-gds` ✓) | — | — |
+| `gds-pull` (adapter 0.14.0, §16) | — | — | — | ✓ (0.15.0; `dotnet-gds` ✓) | — | — |
 
 **Alarm servers** (all three give `success: true` for
 `alarms --node i=2253 --condition-name InteropAlarm --acknowledge --confirm --add-comment`

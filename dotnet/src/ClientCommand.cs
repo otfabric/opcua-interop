@@ -20,7 +20,7 @@ namespace OpcUaInterop
             "endpoints", "find-servers", "read", "write", "browse", "translate", "call", "subscribe",
             "subscription-lifecycle", "event-subscribe", "history-read", "republish", "transfer-subscriptions",
             "register-nodes", "node-management", "find-servers-on-network", "register-server", "codec",
-            "pubsub-discover", "alarms"
+            "pubsub-discover", "alarms", "push", "gds-pull"
         ];
 
         public static async Task<int> RunAsync(string[] args)
@@ -53,6 +53,9 @@ namespace OpcUaInterop
                     // Same usage text as the reference adapters: consumers probe it for "--scenario continue".
                     throw new InputException("missing --endpoint, --node, --start, or --end [--scenario continue]");
                 }
+                // the push / gds-pull flags are validated before connecting (exit 2)
+                PushOptions push = op == "push" ? PushOptions.Parse(a) : null;
+                GdsPullOptions pull = op == "gds-pull" ? GdsPullOptions.Parse(a) : null;
                 c = await ClientContext.CreateAsync(a).ConfigureAwait(false);
                 return op switch
                 {
@@ -74,6 +77,8 @@ namespace OpcUaInterop
                     "find-servers-on-network" => await FindServersOnNetworkAsync(c).ConfigureAwait(false),
                     "register-server" => await RegisterServerAsync(c).ConfigureAwait(false),
                     "alarms" => await AlarmsAsync(c).ConfigureAwait(false),
+                    "push" => await PushCommand.RunAsync(c, push).ConfigureAwait(false),
+                    "gds-pull" => await GdsPull.RunAsync(c, pull).ConfigureAwait(false),
                     _ => 1
                 };
             }
@@ -115,7 +120,7 @@ namespace OpcUaInterop
             }
         }
 
-        private static bool IsTransport(uint code)
+        internal static bool IsTransport(uint code)
         {
             uint bits = code & 0xFFFF0000;
             return bits == StatusCodes.BadNotConnected.Code || bits == StatusCodes.BadConnectionClosed.Code ||

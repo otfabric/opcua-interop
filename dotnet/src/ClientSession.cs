@@ -211,8 +211,8 @@ namespace OpcUaInterop
             }
         }
 
-        /// <summary>Selects the endpoint (§9) and opens a session.</summary>
-        public async Task<ISession> ConnectAsync()
+        /// <summary>Selects the endpoint of --security-policy / --security-mode and the transport of --endpoint (§9).</summary>
+        public async Task<EndpointDescription> SelectEndpointAsync()
         {
             ArrayOf<EndpointDescription> eps;
             try
@@ -243,13 +243,23 @@ namespace OpcUaInterop
             }
             // dial the URL we were given (the advertised host may not resolve here)
             chosen.EndpointUrl = EndpointUrl;
+            return chosen;
+        }
 
-            IUserIdentity identity = new UserIdentity();
+        /// <summary>The user identity of --username / --password (Anonymous without --username).</summary>
+        public IUserIdentity Identity()
+        {
             string user = Args.Get("--username");
-            if (user != null)
-            {
-                identity = new UserIdentity(user, Encoding.UTF8.GetBytes(Args.Get("--password") ?? string.Empty));
-            }
+            return user == null
+                ? new UserIdentity()
+                : new UserIdentity(user, Encoding.UTF8.GetBytes(Args.Get("--password") ?? string.Empty));
+        }
+
+        /// <summary>Selects the endpoint (§9) and opens a session.</summary>
+        public async Task<ISession> ConnectAsync()
+        {
+            EndpointDescription chosen = await SelectEndpointAsync().ConfigureAwait(false);
+            IUserIdentity identity = Identity();
 
             var ec = EndpointConfiguration.Create(Config);
             ec.OperationTimeout = Math.Max(RequestTimeoutMs, 1000);
