@@ -92,6 +92,7 @@ The node-opcua adapter's `client push` reaches the rest of Part 12 1.05 push man
 - **node-opcua alarm fixture** (fixtures/baseline/README.md "Alarms"):
   - The method `s=Alarms.Clear` returns InteropAlarm to normal, and the stack keeps the unacknowledged state in a condition branch (serverFeatures `alarms-branches`). `s=Alarms.Reset` drops the branches.
   - InteropAlarm has AudibleEnabled and AudibleSound, an AudioVariableType with ListId (serverFeatures `alarms-audible`).
+- **Eclipse Milo `client push` and `client gds-pull`** (§1 "push flags", §4 `push`, §15, §16.2; clientOperations `push`, `gds-pull`, clientFeatures `push-groups`, `push-certificates`, `push-transaction-diagnostics`). Milo 1.1.8 has neither a push nor a GDS client, so both commands are plain Calls on one session: the ServerConfiguration methods on their standard NodeIds, the TrustList found by TranslateBrowsePaths and decoded with Milo's TrustListDataType codec, the GDS Directory methods in the namespace `http://opcfoundation.org/UA/GDS/`, a hand-encoded ApplicationRecordDataType and a Bouncy Castle CSR (RSA 2048 / ECC P-256). The certificates, CSRs and keys in these results are plain Base64 strings (§7).
 - `schemas/capabilities.schema.json`: the five new feature strings. `schemas/client-result.schema.json`: the operations `push` and `query`.
 
 ### Changed

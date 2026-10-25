@@ -92,7 +92,7 @@ public class ClientCommand {
             System.err.println("usage: client <endpoints|find-servers|read|write|browse|translate|"
                 + "call|subscribe|subscription-lifecycle|event-subscribe|alarms|history-read|"
                 + "republish|transfer-subscriptions|register-nodes|node-management|"
-                + "find-servers-on-network|register-server|codec> ...");
+                + "find-servers-on-network|register-server|push|gds-pull|codec> ...");
             return 1;
         }
         String op = args[0];
@@ -119,6 +119,8 @@ public class ClientCommand {
                 case "node-management":        return cmdNodeManagement(rest);
                 case "find-servers-on-network": return cmdFindServersOnNetwork(rest);
                 case "register-server":        return cmdRegisterServer(rest);
+                case "push":                   return PushCommand.cmdPush(rest);
+                case "gds-pull":               return PushCommand.cmdGdsPull(rest);
                 case "codec":                  return CodecCommand.run(rest);
                 default:
                     System.err.println("unknown client subcommand: " + op);
@@ -2493,14 +2495,14 @@ public class ClientCommand {
         }
     }
 
-    private static String findArg(String[] args, String flag) {
+    static String findArg(String[] args, String flag) {
         for (int i = 0; i < args.length - 1; i++) {
             if (flag.equals(args[i])) return args[i + 1];
         }
         return null;
     }
 
-    private static List<String> findAllArgs(String[] args, String flag) {
+    static List<String> findAllArgs(String[] args, String flag) {
         List<String> result = new ArrayList<>();
         for (int i = 0; i < args.length - 1; i++) {
             if (flag.equals(args[i])) result.add(args[i + 1]);

@@ -310,6 +310,7 @@ client gds-pull  --endpoint ... --security-mode SignAndEncrypt --username ... --
                  [--app-uri urn:x] [--app-type Server|Client|ClientAndServer] [--discovery-url ...] \
                  [--request csr|new-key-pair] [--certificate-type RsaSha256|NistP256] \
                  [--revoke] [--unregister] [--finish-timeout-ms 30000]   # dotnet-gds (v0.14.0), §16
+# Milo (v0.15.0): client push (every flag above) and client gds-pull, as plain Calls (Milo 1.1.8 has neither client)
 ```
 
 The `dotnet-gds` image (v0.14.0) is a separate adapter: its `server` is a Global
