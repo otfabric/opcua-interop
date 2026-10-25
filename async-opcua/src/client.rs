@@ -40,8 +40,25 @@ use crate::values::{
 
 // ── Flags ───────────────────────────────────────────────────────────────────
 
-/// Flags that may be given without a value (then "true").
-const BARE_FLAGS: [&str; 3] = ["--acknowledge", "--confirm", "--add-comment"];
+/// Flags that may be given without a value (then "true"): `alarms`, `push`,
+/// `query` and `gds-pull` presence flags.
+const BARE_FLAGS: [&str; 15] = [
+    "--acknowledge",
+    "--confirm",
+    "--add-comment",
+    "--issuer",
+    "--csr",
+    "--apply",
+    "--cancel",
+    "--get-certificates",
+    "--create-self-signed",
+    "--reset-to-defaults",
+    "--transaction-diagnostics",
+    "--include-subtypes",
+    "--release-continuation-point",
+    "--revoke",
+    "--unregister",
+];
 
 pub struct Opts {
     pairs: Vec<(String, String)>,
@@ -104,6 +121,11 @@ impl Opts {
             Some("false") | Some("0") => Ok(false),
             Some(v) => Err(Failure::input(format!("invalid value for {k}: '{v}' (true|false)"))),
         }
+    }
+
+    /// A presence flag (`--apply`, or `--apply true|false`).
+    fn flag(&self, k: &str) -> Result<bool, Failure> {
+        self.bool(k, false)
     }
 
     fn secs(&self, k: &str, default: f64) -> Result<Duration, Failure> {
@@ -558,7 +580,7 @@ fn svc_err(e: opcua::types::Error, what: &str) -> Failure {
 
 // ── Entry ───────────────────────────────────────────────────────────────────
 
-pub const OPERATIONS: [&str; 17] = [
+pub const OPERATIONS: [&str; 20] = [
     "endpoints",
     "find-servers",
     "read",
@@ -576,6 +598,9 @@ pub const OPERATIONS: [&str; 17] = [
     "register-nodes",
     "node-management",
     "register-server",
+    "push",
+    "query",
+    "gds-pull",
 ];
 
 pub async fn run(args: &[String]) -> i32 {
@@ -620,6 +645,9 @@ pub async fn run(args: &[String]) -> i32 {
         "register-nodes" => run_op(sub, rest, |o| Box::pin(op_register_nodes(o))).await,
         "node-management" => run_op(sub, rest, |o| Box::pin(op_node_management(o))).await,
         "register-server" => run_op(sub, rest, |o| Box::pin(op_register_server(o))).await,
+        "push" => run_op(sub, rest, |o| Box::pin(push::op_push(o))).await,
+        "query" => run_op(sub, rest, |o| Box::pin(query::op_query(o))).await,
+        "gds-pull" => run_op(sub, rest, |o| Box::pin(gds_pull::op_gds_pull(o))).await,
         other => {
             let env = Envelope::new(other).fail(&Failure::input(format!(
                 "unknown or unsupported client subcommand '{other}'"
@@ -662,6 +690,13 @@ macro_rules! with_conn {
         }
     }};
 }
+
+// Part 12 push management, the Query service set and the GDS pull model
+// (CLIENT_CONTRACT §15, §1 "query flags", §16.2); after `with_conn!`.
+mod gds_pull;
+mod part12;
+mod push;
+mod query;
 
 // ── endpoints / find-servers ────────────────────────────────────────────────
 

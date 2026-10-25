@@ -92,6 +92,9 @@ The node-opcua adapter's `client push` reaches the rest of Part 12 1.05 push man
 - **node-opcua alarm fixture** (fixtures/baseline/README.md "Alarms"):
   - The method `s=Alarms.Clear` returns InteropAlarm to normal, and the stack keeps the unacknowledged state in a condition branch (serverFeatures `alarms-branches`). `s=Alarms.Reset` drops the branches.
   - InteropAlarm has AudibleEnabled and AudibleSound, an AudioVariableType with ListId (serverFeatures `alarms-audible`).
+- **async-opcua `client push`** (clientOperations `push`; clientFeatures `push-groups`, `push-certificates`, `push-transaction-diagnostics`): every flag of §1 "push flags", as plain Calls on the standard NodeIds of ServerConfiguration and of the group's TrustList, because async-opcua 0.19 has no push client.
+- **async-opcua `client gds-pull`** (clientOperations `gds-pull`, §16.2): the GDS pull model as plain Calls on the GDS Directory. The adapter encodes ApplicationRecordDataType itself and makes the PKCS #10 request with a fresh RSA 2048 or ECC P-256 key.
+- **async-opcua `client query`** (clientOperations `query`): QueryFirst / QueryNext sent on the session's secure channel with the session's request header, because the async-opcua Session has no Query API.
 - `schemas/capabilities.schema.json`: the five new feature strings. `schemas/client-result.schema.json`: the operations `push` and `query`.
 
 ### Changed

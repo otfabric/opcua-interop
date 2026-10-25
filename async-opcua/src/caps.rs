@@ -26,7 +26,11 @@ pub fn document() -> serde_json::Value {
         "transports": ["opc.tcp"],
         "encodings": ["binary"],
         "clientOperations": crate::client::OPERATIONS.iter().chain(["find-servers-on-network"].iter()).collect::<Vec<_>>(),
-        "clientFeatures": ["channel-lifetime", "deadband", "reverse-listen", "application-uri", "register-server2"],
+        // push-*: the `client push` flags of adapter 0.15.0 (CLIENT_CONTRACT §1 "push flags", §15).
+        "clientFeatures": [
+            "channel-lifetime", "deadband", "reverse-listen", "application-uri", "register-server2",
+            "push-groups", "push-certificates", "push-transaction-diagnostics"
+        ],
         "serverFeatures": ["deadband", "percent-deadband", "reverse-connect", "register-with", "node-management"],
         "pubsub": {
             "supported": false,
@@ -67,8 +71,18 @@ mod tests {
         assert!(!ops.contains(&json!("codec")), "no codec operation");
         assert!(ops.contains(&json!("find-servers-on-network")));
         assert!(ops.contains(&json!("alarms")), "client alarms operation");
+        for op in ["push", "query", "gds-pull"] {
+            assert!(ops.contains(&json!(op)), "client {op} operation");
+        }
+        let client: Vec<&str> = c["clientFeatures"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        for f in ["push-groups", "push-certificates", "push-transaction-diagnostics"] {
+            assert!(client.contains(&f), "clientFeatures {f}");
+        }
         let server: Vec<&str> = c["serverFeatures"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
         assert!(!server.contains(&"alarms"), "async-opcua 0.19 has no A&C server");
+        for f in ["push-management", "gds-pull"] {
+            assert!(!server.contains(&f), "async-opcua 0.19 has no {f} server");
+        }
         assert_eq!(c["pubsub"]["supported"], json!(false));
         assert!(c.get("codec").is_none());
         let features: Vec<&str> = c["clientFeatures"].as_array().unwrap().iter().chain(c["serverFeatures"].as_array().unwrap()).map(|v| v.as_str().unwrap()).collect();
