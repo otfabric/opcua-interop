@@ -12,7 +12,7 @@ from asyncua.crypto import security_policies as sp
 from asyncua.crypto import uacrypto
 from asyncua.ua.uaerrors import UaStatusCodeError
 
-from . import pki
+from . import pki, push
 from .common import (
     Args,
     AdapterError,
@@ -57,6 +57,8 @@ OPERATIONS = [
     "node-management",
     "find-servers-on-network",
     "register-server",
+    "push",
+    "gds-pull",
 ]
 
 POLICIES = {
@@ -1579,6 +1581,14 @@ async def cmd_register_server(args: Args, r: Result) -> int:
     return 0
 
 
+async def cmd_push(args: Args, r: Result) -> int:
+    return await push.cmd_push(args, r, Conn)
+
+
+async def cmd_gds_pull(args: Args, r: Result) -> int:
+    return await push.cmd_gds_pull(args, r, Conn)
+
+
 COMMANDS = {
     "endpoints": cmd_endpoints,
     "find-servers": cmd_find_servers,
@@ -1598,6 +1608,8 @@ COMMANDS = {
     "node-management": cmd_node_management,
     "find-servers-on-network": cmd_find_servers_on_network,
     "register-server": cmd_register_server,
+    "push": cmd_push,
+    "gds-pull": cmd_gds_pull,
 }
 
 UNSUPPORTED_OPS = {

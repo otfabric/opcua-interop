@@ -35,9 +35,20 @@ def capabilities() -> dict:
         # deadband: the client sends DataChangeFilters (absolute / percent / trigger).
         # application-uri: --application-uri, else the URI SAN of --certificate.
         # register-server2: `register-server` calls RegisterServer2 (fallback RegisterServer).
+        # push-groups / push-certificates / push-transaction-diagnostics: the
+        # `client push` flags of adapter 0.15.0 (§1 "push flags", §15), plain
+        # Calls / Reads on the standard ServerConfiguration NodeIds.
         # Not listed: reverse-listen (no ReverseHello), ECC (no ECC policies),
         # codec-* (no JSON / XML DataEncoding).
-        "clientFeatures": ["channel-lifetime", "deadband", "application-uri", "register-server2"],
+        "clientFeatures": [
+            "channel-lifetime",
+            "deadband",
+            "application-uri",
+            "register-server2",
+            "push-groups",
+            "push-certificates",
+            "push-transaction-diagnostics",
+        ],
         # register-with: Server.register_to_discovery (RegisterServer). Not listed:
         # deadband / percent-deadband (asyncua compares the absolute deadband with the
         # previous *sample* instead of the last reported value and ignores percent
