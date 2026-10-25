@@ -49,6 +49,7 @@ OPERATIONS = [
     "subscribe",
     "subscription-lifecycle",
     "event-subscribe",
+    "alarms",
     "history-read",
     "republish",
     "transfer-subscriptions",
@@ -923,6 +924,277 @@ async def cmd_event_subscribe(args: Args, r: Result) -> int:
         await conn.close()
 
 
+# ── alarms (Part 9: ConditionRefresh, Acknowledge, Confirm, AddComment) ─────────
+
+# (TypeDefinitionId, BrowsePath, AttributeId) in the contract's order (§4 `alarms`).
+_BASE_EVENT, _CONDITION, _ACKABLE, _ALARM = 2041, 2782, 2881, 2915
+ALARM_SELECT = [
+    (_BASE_EVENT, ["EventId"], ua.AttributeIds.Value),
+    (_BASE_EVENT, ["EventType"], ua.AttributeIds.Value),
+    (_BASE_EVENT, ["SourceNode"], ua.AttributeIds.Value),
+    (_BASE_EVENT, ["SourceName"], ua.AttributeIds.Value),
+    (_BASE_EVENT, ["Time"], ua.AttributeIds.Value),
+    (_BASE_EVENT, ["Message"], ua.AttributeIds.Value),
+    (_BASE_EVENT, ["Severity"], ua.AttributeIds.Value),
+    (_CONDITION, ["ConditionName"], ua.AttributeIds.Value),
+    (_CONDITION, ["BranchId"], ua.AttributeIds.Value),
+    (_CONDITION, ["Retain"], ua.AttributeIds.Value),
+    (_CONDITION, ["EnabledState", "Id"], ua.AttributeIds.Value),
+    (_CONDITION, ["Comment"], ua.AttributeIds.Value),
+    (_ACKABLE, ["AckedState", "Id"], ua.AttributeIds.Value),
+    (_ACKABLE, ["ConfirmedState", "Id"], ua.AttributeIds.Value),
+    (_ALARM, ["ActiveState", "Id"], ua.AttributeIds.Value),
+    (_CONDITION, [], ua.AttributeIds.NodeId),  # ConditionId (Part 9 §5.5.2)
+]
+REFRESH_START, REFRESH_END = 2787, 2788
+CONDITION_TYPE, CONDITION_REFRESH = 2782, 3875
+METHOD_ACKNOWLEDGE, METHOD_CONFIRM, METHOD_ADD_COMMENT = 9111, 9113, 9029
+BAD_NODEID_UNKNOWN = 0x80340000
+
+
+def _presence_flag(args: Args, flag: str) -> bool:
+    """`--acknowledge` alone, or `--acknowledge true|false`."""
+    if not args.has(flag):
+        return False
+    i = args.argv.index(flag)
+    nxt = args.argv[i + 1].lower() if i + 1 < len(args.argv) else ""
+    if nxt in ("false", "0", "no"):
+        return False
+    return True
+
+
+def _field(fields, i):
+    if i >= len(fields):
+        return None
+    v = fields[i]
+    if v is None or v.Value is None or v.VariantType in (ua.VariantType.Null, ua.VariantType.StatusCode):
+        return None
+    if isinstance(v.Value, (list, tuple)):
+        return None
+    return v
+
+
+def _f_nodeid(fields, i):
+    v = _field(fields, i)
+    if v is None or not isinstance(v.Value, ua.NodeId):
+        return None
+    return nodeid_str(v.Value)
+
+
+def _f_type(fields, i, vt, conv):
+    v = _field(fields, i)
+    if v is None or v.VariantType != vt:
+        return None
+    return conv(v.Value)
+
+
+def _f_text(fields, i):
+    v = _field(fields, i)
+    if v is None:
+        return None
+    if isinstance(v.Value, ua.LocalizedText):
+        return v.Value.Text
+    if isinstance(v.Value, str):
+        return v.Value
+    return None
+
+
+def _b64(b) -> str:
+    return base64.b64encode(bytes(b)).decode("ascii")
+
+
+def _condition_entry(fields) -> dict:
+    """ConditionEntry of the contract (§4 `alarms`), from the 16 select clauses."""
+    return {
+        "conditionId": _f_nodeid(fields, 15),
+        "eventId": _f_type(fields, 0, ua.VariantType.ByteString, _b64),
+        "eventType": _f_nodeid(fields, 1),
+        "sourceNode": _f_nodeid(fields, 2),
+        "sourceName": _f_type(fields, 3, ua.VariantType.String, str),
+        "conditionName": _f_type(fields, 7, ua.VariantType.String, str),
+        "time": _f_type(fields, 4, ua.VariantType.DateTime, fmt_datetime),
+        "message": _f_text(fields, 5),
+        "severity": _f_type(fields, 6, ua.VariantType.UInt16, int),
+        "retain": _f_type(fields, 9, ua.VariantType.Boolean, bool),
+        "enabled": _f_type(fields, 10, ua.VariantType.Boolean, bool),
+        "acked": _f_type(fields, 12, ua.VariantType.Boolean, bool),
+        "confirmed": _f_type(fields, 13, ua.VariantType.Boolean, bool),
+        "active": _f_type(fields, 14, ua.VariantType.Boolean, bool),
+        "comment": _f_text(fields, 11),
+    }
+
+
+def _event_type_id(fields):
+    v = _field(fields, 1)
+    if v is None or not isinstance(v.Value, ua.NodeId):
+        return None
+    nid = v.Value
+    if int(nid.NamespaceIndex or 0) != 0 or not isinstance(nid.Identifier, int):
+        return None
+    return nid.Identifier
+
+
+async def cmd_alarms(args: Args, r: Result) -> int:
+    node = args.get("--node", "i=2253")
+    cond_name = args.get("--condition-name")
+    do_ack = _presence_flag(args, "--acknowledge")
+    do_confirm = _presence_flag(args, "--confirm")
+    do_comment = _presence_flag(args, "--add-comment")
+    comment = args.get("--comment", "interop-comment")
+    timeout_ms = args.int("--timeout-ms", 15000)
+    pi = args.float("--publishing-interval-ms", 200.0)
+    parse_nodeid_syntax(node)
+    conn = Conn(args)
+    await conn.connect()
+    try:
+        nid = await conn.resolve(node)
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        ef = ua.EventFilter()
+        ef.SelectClauses = [
+            ua.SimpleAttributeOperand(
+                TypeDefinitionId=ua.NodeId(tid),
+                BrowsePath=[ua.QualifiedName(p, 0) for p in path],
+                AttributeId=attr,
+            )
+            for tid, path, attr in ALARM_SELECT
+        ]
+        ef.WhereClause = ua.ContentFilter(Elements=[])
+        sub = await Sub(conn).create(pi)
+        m = await sub.monitor(nid, sampling=0.0, queue=1000, discard=True, flt=ef, attr=ua.AttributeIds.EventNotifier)
+        item = {
+            "nodeId": nodeid_str(nid),
+            "subscriptionId": sub.id,
+            "monitoredItemStatusCode": status_json(m.StatusCode),
+            "refresh": {"statusCode": status_json(m.StatusCode), "startSeen": False, "endSeen": False},
+            "conditions": [],
+            "target": None,
+            "acknowledge": None,
+            "confirm": None,
+            "addComment": None,
+        }
+        r.add(item)
+        if not is_good(m.StatusCode):
+            await sub.delete()
+            r.set_service(m.StatusCode).fail("service", "CreateMonitoredItems rejected the event monitored item")
+            return 4
+
+        # Every received event in arrival order: (fields, ConditionEntry); the
+        # latest ConditionEntry per ConditionId (its EventId is used for the methods).
+        received: list[tuple[list, dict]] = []
+        latest: dict[str, dict] = {}
+
+        async def pump() -> bool:
+            pr = await sub.next(deadline - time.monotonic())
+            if pr is None:
+                return False
+            for fields in _events(pr, 1):
+                fields = list(fields)
+                entry = _condition_entry(fields)
+                received.append((fields, entry))
+                if entry["conditionId"] is not None:
+                    latest[entry["conditionId"]] = entry
+            return True
+
+        async def wait_for(idx: int, pred) -> dict | None:
+            while True:
+                while idx < len(received):
+                    e = received[idx][1]
+                    idx += 1
+                    if pred(e):
+                        return e
+                if not await pump():
+                    return None
+
+        async def call(obj: ua.NodeId, method: int, inputs: list) -> ua.StatusCode:
+            req = ua.CallMethodRequest(ObjectId=obj, MethodId=ua.NodeId(method), InputArguments=inputs)
+            try:
+                return (await conn.session.call([req]))[0].StatusCode
+            except UaStatusCodeError as e:
+                return ua.StatusCode(e.code)
+
+        # ConditionRefresh (Part 9 §5.5.7) on ConditionType.
+        idx = len(received)
+        refresh_sc = await call(
+            ua.NodeId(CONDITION_TYPE), CONDITION_REFRESH, [ua.Variant(sub.id, ua.VariantType.UInt32)]
+        )
+        refresh = {"statusCode": status_json(refresh_sc), "startSeen": False, "endSeen": False}
+        item["refresh"] = refresh
+        if not is_good(refresh_sc):
+            await sub.delete()
+            r.set_service(refresh_sc).fail("service", "ConditionRefresh failed")
+            return 4
+        conditions: dict[str, dict] = {}  # first-seen order, last event wins
+        while not refresh["endSeen"]:
+            while idx < len(received) and not refresh["endSeen"]:
+                fields, e = received[idx]
+                idx += 1
+                et = _event_type_id(fields)
+                if et == REFRESH_START:
+                    refresh["startSeen"] = True
+                elif et == REFRESH_END:
+                    refresh["endSeen"] = True
+                elif e["conditionId"] is not None:
+                    conditions[e["conditionId"]] = e
+            if not refresh["endSeen"] and not await pump():
+                break
+        item["conditions"] = list(conditions.values())
+        if not refresh["endSeen"]:
+            await sub.delete()
+            r.set_service(BAD_TIMEOUT).fail("timeout", "timeout waiting for the RefreshEndEvent")
+            return 7
+
+        target = None
+        for e in item["conditions"]:
+            if (e["conditionName"] == cond_name) if cond_name is not None else (e["retain"] is True):
+                target = e
+                break
+        item["target"] = target
+        actions = []
+        if do_ack:
+            actions.append(("acknowledge", METHOD_ACKNOWLEDGE, lambda e: e["acked"] is True))
+        if do_confirm:
+            actions.append(("confirm", METHOD_CONFIRM, lambda e: e["confirmed"] is True))
+        if do_comment:
+            actions.append(("addComment", METHOD_ADD_COMMENT, lambda e: e["comment"] == comment))
+        if target is None:
+            await sub.delete()
+            if actions:
+                r.set_service(BAD_NODEID_UNKNOWN).fail("service", "no matching condition in the ConditionRefresh")
+                return 4
+            return 0
+
+        cid_str = target["conditionId"]
+        cid = await conn.resolve(cid_str)
+        lt = ua.LocalizedText(Text=comment, Locale="en")
+        for key, method, pred in actions:
+            e_latest = latest.get(cid_str, target)
+            eid = base64.b64decode(e_latest["eventId"]) if e_latest["eventId"] else b""
+            mark = len(received)
+            inputs = [ua.Variant(eid, ua.VariantType.ByteString), ua.Variant(lt, ua.VariantType.LocalizedText)]
+            sc = await call(cid, method, inputs)
+            out = {"statusCode": status_json(sc), "event": None}
+            if key == "acknowledge":
+                out["repeatStatusCode"] = None
+            item[key] = out
+            if not is_good(sc):
+                await sub.delete()
+                r.set_service(sc).fail("service", f"{key} failed")
+                return 4
+            ev = await wait_for(mark, lambda e: e["conditionId"] == cid_str and pred(e))
+            out["event"] = ev
+            if key == "acknowledge":
+                # The same (now stale) EventId again: BadConditionBranchAlreadyAcked / BadEventIdUnknown.
+                out["repeatStatusCode"] = status_json(await call(cid, method, inputs))
+            if ev is None:
+                await sub.delete()
+                r.set_service(BAD_TIMEOUT).fail("timeout", f"timeout waiting for the {key} event")
+                return 7
+        await sub.delete()
+        return 0
+    finally:
+        await conn.close()
+
+
 async def _history_page(conn: Conn, nid, start, end, num, bounds, ts, cp: bytes | None, release: bool):
     d = ua.ReadRawModifiedDetails()
     d.IsReadModified = False
@@ -1317,6 +1589,7 @@ COMMANDS = {
     "subscribe": cmd_subscribe,
     "subscription-lifecycle": cmd_subscription_lifecycle,
     "event-subscribe": cmd_event_subscribe,
+    "alarms": cmd_alarms,
     "history-read": cmd_history_read,
     "republish": cmd_republish,
     "transfer-subscriptions": cmd_transfer_subscriptions,

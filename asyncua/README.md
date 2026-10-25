@@ -51,9 +51,9 @@ docker run --rm ghcr.io/otfabric/opcua-interop-asyncua:dev \
 
 | | |
 |---|---|
-| `clientOperations` | `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`, `subscribe`, `subscription-lifecycle`, `event-subscribe`, `history-read`, `republish`, `transfer-subscriptions`, `register-nodes`, `node-management`, `find-servers-on-network`, `register-server` (everything except `codec`) |
+| `clientOperations` | `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`, `subscribe`, `subscription-lifecycle`, `event-subscribe`, `alarms`, `history-read`, `republish`, `transfer-subscriptions`, `register-nodes`, `node-management`, `find-servers-on-network`, `register-server` (everything except `codec`) |
 | `clientFeatures` | `channel-lifetime`, `deadband` (the client sends DataChangeFilters), `application-uri`, `register-server2` |
-| `serverFeatures` | `register-with` (RegisterServer / RegisterServer2 with an LDS) |
+| `serverFeatures` | `register-with` (RegisterServer / RegisterServer2 with an LDS); no `alarms`: asyncua 2.1.0 answers ConditionRefresh (`asyncua/server/subscription_service.py` replays the condition events it was given) but implements no condition state machine (no Acknowledge / Confirm / AddComment / Enable / Disable handlers), so the server has no `Alarms.*` fixture |
 | `securityProfiles` | None; Basic128Rsa15, Basic256, Basic256Sha256, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss, Sign and SignAndEncrypt |
 | `userTokenTypes` | Anonymous, UserName |
 | `pubsub` | `supported: false` |
