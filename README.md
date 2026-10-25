@@ -258,7 +258,7 @@ server ... --certificate /certs/cert.crt --private-key /certs/cert.key --https-p
 
 ### Client commands
 
-Nineteen client operations, plus `pubsub-discover` on the dotnet adapter and `push` and `query` on node-opcua (see `print-capabilities` → `clientOperations` and
+Nineteen client operations, plus `pubsub-discover` on the dotnet adapter, `push` and `query` on node-opcua and `push` and `gds-pull` on open62541 (see `print-capabilities` → `clientOperations` and
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
 
 ```sh
@@ -283,7 +283,7 @@ client push      --endpoint ... --security-mode SignAndEncrypt --username ... --
                  [--group Application|Https|UserToken] [--get-certificates] \
                  [--create-self-signed --subject CN=x --dns host] [--delete-certificate <typeId>] \
                  [--update-certificate cert.der [--update-private-key key.pfx] [--issuer-certificate ca.der]] \
-                 [--reset-to-defaults] [--cancel] [--transaction-diagnostics]   # node-opcua (v0.15.0)
+                 [--reset-to-defaults] [--cancel] [--transaction-diagnostics]   # node-opcua, open62541 (v0.15.0)
 client query     --endpoint ... --type-definition '<typeId>' [--include-subtypes] \
                  [--data-to-return '.Serial'] [--data-to-return '#BrowseName'] [--max-data-sets 2] \
                  [--release-continuation-point]           # node-opcua (v0.15.0), QueryFirst / QueryNext
@@ -309,7 +309,7 @@ client pubsub-discover --url opc.udp://<host>:<port> [--type DataSetMetaData|Dat
 client gds-pull  --endpoint ... --security-mode SignAndEncrypt --username ... --password ... \
                  [--app-uri urn:x] [--app-type Server|Client|ClientAndServer] [--discovery-url ...] \
                  [--request csr|new-key-pair] [--certificate-type RsaSha256|NistP256] \
-                 [--revoke] [--unregister] [--finish-timeout-ms 30000]   # dotnet-gds (v0.14.0), §16
+                 [--revoke] [--unregister] [--finish-timeout-ms 30000]   # dotnet-gds (v0.14.0), open62541 (v0.15.0), §16
 ```
 
 The `dotnet-gds` image (v0.14.0) is a separate adapter: its `server` is a Global

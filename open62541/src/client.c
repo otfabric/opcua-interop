@@ -4675,7 +4675,7 @@ int client_run(int argc, char **argv) {
             "usage: client <endpoints|find-servers|read|write|browse|translate|"
             "call|subscribe|subscription-lifecycle|event-subscribe|alarms|history-read|"
             "republish|transfer-subscriptions|register-nodes|node-management|"
-            "find-servers-on-network|register-server|codec> ...\n");
+            "find-servers-on-network|register-server|codec|push|gds-pull> ...\n");
         return 2;
     }
 
@@ -4746,6 +4746,8 @@ int client_run(int argc, char **argv) {
     if (strcmp(sub, "find-servers-on-network") == 0) return cmd_find_servers_on_network(argc - 1, argv + 1);
     if (strcmp(sub, "register-server")        == 0) return cmd_register_server(argc - 1, argv + 1);
     if (strcmp(sub, "codec")                  == 0) return cmd_codec(argc - 1, argv + 1);
+    if (strcmp(sub, "push")                   == 0) return cmd_push(argc - 1, argv + 1);
+    if (strcmp(sub, "gds-pull")               == 0) return cmd_gds_pull(argc - 1, argv + 1);
     fprintf(stderr, "unknown client subcommand: %s\n", sub);
     return 2;
 }

@@ -92,6 +92,8 @@ The node-opcua adapter's `client push` reaches the rest of Part 12 1.05 push man
 - **node-opcua alarm fixture** (fixtures/baseline/README.md "Alarms"):
   - The method `s=Alarms.Clear` returns InteropAlarm to normal, and the stack keeps the unacknowledged state in a condition branch (serverFeatures `alarms-branches`). `s=Alarms.Reset` drops the branches.
   - InteropAlarm has AudibleEnabled and AudibleSound, an AudioVariableType with ListId (serverFeatures `alarms-audible`).
+- **open62541 `client push`** (clientOperations `push`; clientFeatures `push-groups`, `push-certificates`, `push-transaction-diagnostics`): every flag of §1 "push flags", as `UA_Client_call` requests on the standard NodeIds of ServerConfiguration and of the group's TrustList on one session, because open62541 v1.5.9 has no push client API. The adapter decodes TransactionErrorType itself.
+- **open62541 `client gds-pull`** (clientOperations `gds-pull`, §16.2): the GDS pull model as `UA_Client_call` requests on the GDS Directory. The adapter encodes ApplicationRecordDataType itself and makes the PKCS #10 request with OpenSSL (a fresh RSA 2048 or ECC P-256 key).
 - `schemas/capabilities.schema.json`: the five new feature strings. `schemas/client-result.schema.json`: the operations `push` and `query`.
 
 ### Changed
