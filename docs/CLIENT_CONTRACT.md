@@ -1084,6 +1084,17 @@ both the requested policy URI and mode. If no matching endpoint exists, exit 3.
 
 No arbitrary fallback to the first available endpoint.
 
+The endpoint must also be of the transport of `--endpoint`: an `opc.tcp://`
+URL selects a `uatcp-uasc-uabinary` endpoint, `opc.wss://` (or `wss://`) a
+`wss-uasc-uabinary` endpoint and `opc.https://` (or `https://`) an
+`https-uabinary` endpoint (Part 6 §7.4, §7.5; adapters that declare
+`transport-wss` / `transport-https`, §13). An endpoint without a
+TransportProfileUri counts by the scheme of its URL. The JSON twins of the
+WSS / HTTPS endpoints (`wss-uajson`, `https-uajson`, the OpenAPI profiles) are
+never selected. Over TLS the client validates the server's TLS certificate
+against `--trust-list` (without `--trust-list` every certificate is accepted,
+as for the application certificate).
+
 With `--reverse-listen` the endpoint list is read on the reverse connection
 itself; the same matching rules apply.
 
@@ -1139,6 +1150,8 @@ supplied. The server must exit with code 6.
 | `--mdns-capability <cap>` | mDNS / RegisterServer2 server capability (repeatable) | `NA` (`--lds`: `LDS`) |
 | `--register-with <lds-url>` | Register with an LDS: RegisterServer2, falling back to RegisterServer; repeated periodically; unregistered (`IsOnline=false`) on SIGTERM | — |
 | `--register-interval-ms <n>` | Re-registration period | 30000 |
+| `--https-port <n>` | UA-.NETStandard: also listen for `opc.https://<advertised-host>:<n><endpoint-path>` (Part 6 §7.4, https-uabinary, Kestrel). Needs `--certificate` / `--private-key`: the application certificate serves TLS. Without mutual TLS the stack offers SecurityPolicy None only and requires a UserName token (Anonymous is filtered out of HTTPS endpoints) | 0 (off) |
+| `--wss-port <n>` | UA-.NETStandard: also listen for `opc.wss://<advertised-host>:<n><endpoint-path>` (Part 6 §7.5, wss-uasc-uabinary, sub-protocol `opcua+uacp`). Needs `--certificate` / `--private-key`; SecurityPolicy None only (TLS protects the channel), Anonymous and UserName | 0 (off) |
 | `--pubsub-config <file>` | open62541: OPC UA PubSub (Part 14) configuration — a JSON file with a `PubSubConfigurationDataType`, security groups and SKS settings (§14). Applied after startup; the ready file is only written once it is applied; an invalid configuration exits 1. UA-.NETStandard: the same file on Opc.Ua.PubSub, without SKS and information model (§14.13). Milo, async-opcua, node-opcua, asyncua: refused (exit 2) | — |
 
 Notes on the discovery flags:
@@ -1242,6 +1255,15 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `register-with` | server | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `--register-with` |
 | `node-management` | server | ✓ | — | ✓ | ✓ | — | — | AddNodes / DeleteNodes served |
 | `pubsub` | server | ✓ | — | — | ✓ | — | — | `--pubsub-config` (§14); open62541 also the PubSub information model and SKS, UA-.NETStandard static keys only (§14.13) |
+| `transport-wss` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.wss://…` (§9); server `--wss-port` (§11) |
+| `transport-https` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.https://…` (§9); server `--https-port` (§11) |
+
+`transports` in `print-capabilities` lists the endpoint schemes the adapter
+dials and serves: `["opc.tcp"]`, UA-.NETStandard (adapter 0.11.0)
+`["opc.tcp", "opc.https", "opc.wss"]`. open62541 1.5.9 has no WebSocket or
+HTTPS transport (the libwebsockets provider `UA_ENABLE_LWS` is on master
+only), Milo 1.1.8 has incubating, unpublished client transports only, and
+async-opcua, node-opcua and asyncua implement `opc.tcp` only.
 
 Eclipse Milo 1.1.8 has no ReverseHello in its transports
 (`opc-ua-stack/stack-core/.../channel/messages/MessageType.java` knows only

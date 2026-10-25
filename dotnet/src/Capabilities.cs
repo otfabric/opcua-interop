@@ -47,7 +47,7 @@ namespace OpcUaInterop
                 ["stack"] = new JsonObject { ["name"] = "opcfoundation-uanetstandard", ["version"] = StackVersion },
                 ["fixtureSchemaVersions"] = Json.Strings(["1.0"]),
                 ["roles"] = Json.Strings(["client", "server"]),
-                ["transports"] = Json.Strings(["opc.tcp"]),
+                ["transports"] = Json.Strings(["opc.tcp", "opc.https", "opc.wss"]),
                 ["encodings"] = Json.Strings(["binary"]),
                 ["clientOperations"] = Json.Strings(ClientCommand.Operations),
                 // Not listed: reverse-listen (ReverseConnectManager not wired), ecc-security /
@@ -55,9 +55,13 @@ namespace OpcUaInterop
                 // certificates).
                 ["clientFeatures"] = Json.Strings([
                     "channel-lifetime", "deadband", "application-uri", "register-server2",
-                    "codec-json", "codec-xml", "codec-json-verbose", "codec-pubsub"]),
+                    "codec-json", "codec-xml", "codec-json-verbose", "codec-pubsub",
+                    // --endpoint opc.https://… / opc.wss://… (https-uabinary, wss-uasc-uabinary)
+                    "transport-https", "transport-wss"]),
                 // Not listed: reverse-connect, lds, mdns, ecc-security (see above).
-                ["serverFeatures"] = Json.Strings(["deadband", "percent-deadband", "register-with", "node-management", "pubsub"]),
+                // transport-https / transport-wss: --https-port / --wss-port (needs --certificate)
+                ["serverFeatures"] = Json.Strings(["deadband", "percent-deadband", "register-with", "node-management", "pubsub",
+                    "transport-https", "transport-wss"]),
                 ["codec"] = new JsonObject
                 {
                     ["formats"] = Json.Strings(["json", "xml"]),

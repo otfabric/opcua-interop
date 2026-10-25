@@ -223,11 +223,15 @@ namespace OpcUaInterop
             {
                 throw new TransportException("GetEndpoints " + EndpointUrl + ": " + e.Message, e.StatusCode.Code);
             }
+            // the transport of --endpoint: opc.tcp, opc.wss (wss-uasc-uabinary) or opc.https
+            // (https-uabinary); the JSON twins of the WSS / HTTPS endpoints are skipped
+            string profile = TransportProfileOf(EndpointUrl);
             EndpointDescription chosen = null;
             foreach (EndpointDescription ep in eps)
             {
                 if (ep.SecurityPolicyUri == PolicyUri && ep.SecurityMode == Mode &&
-                    (ep.TransportProfileUri == null || ep.TransportProfileUri == Profiles.UaTcpTransport || ep.EndpointUrl.StartsWith("opc.tcp", StringComparison.Ordinal)))
+                    (ep.TransportProfileUri == profile ||
+                     (string.IsNullOrEmpty(ep.TransportProfileUri) && TransportProfileOf(ep.EndpointUrl) == profile)))
                 {
                     chosen = ep;
                     break;
@@ -272,6 +276,18 @@ namespace OpcUaInterop
             }
             Session.OperationTimeout = Math.Max(RequestTimeoutMs, 1000);
             return Session;
+        }
+
+        /// <summary>The binary transport profile of an endpoint URL, by its scheme.</summary>
+        public static string TransportProfileOf(string url)
+        {
+            string scheme = url == null ? string.Empty : url.Split("://")[0].ToLowerInvariant();
+            return scheme switch
+            {
+                "opc.wss" or "wss" => Profiles.UaWssTransport,
+                "opc.https" or "https" => Profiles.HttpsBinaryTransport,
+                _ => Profiles.UaTcpTransport
+            };
         }
 
         /// <summary>Resolves a --node argument (nsu= through the session NamespaceArray).</summary>

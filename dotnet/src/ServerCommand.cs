@@ -9,6 +9,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Opc.Ua;
+using Opc.Ua.Bindings;
 using Opc.Ua.Configuration;
 using Opc.Ua.Identity;
 using Opc.Ua.Server;
@@ -146,6 +147,15 @@ namespace OpcUaInterop
             {
                 Console.Error.WriteLine("[dotnet] warn: --ecc-dir ignored: UA-.NETStandard 2.0.1 does not accept the test PKI's RSA-CA-signed ECC application certificates");
             }
+            // opc.https / opc.wss listeners (Part 6 §7.4, §7.5) on ports of their own, next to
+            // opc.tcp; 0 = off. TLS uses the application instance certificate.
+            int httpsPort = a.GetInt("--https-port", 0);
+            int wssPort = a.GetInt("--wss-port", 0);
+            if ((httpsPort != 0 || wssPort != 0) && !HasIdentity(certFile, keyFile))
+            {
+                Console.Error.WriteLine("[dotnet] error: --https-port / --wss-port need --certificate and --private-key (the TLS server certificate)");
+                return 1;
+            }
             string registerWith = a.Get("--register-with");
             int registerIntervalMs = Math.Max(500, a.GetInt("--register-interval-ms", 30000));
 
@@ -271,9 +281,18 @@ namespace OpcUaInterop
                     ApplicationType = ApplicationType.Server
                 };
                 baseAddress = "opc.tcp://" + advertisedHost + ":" + bindPort.ToString(Inv.C) + path;
+                var baseAddresses = new List<string> { baseAddress };
+                if (httpsPort != 0)
+                {
+                    baseAddresses.Add("opc.https://" + advertisedHost + ":" + httpsPort.ToString(Inv.C) + path);
+                }
+                if (wssPort != 0)
+                {
+                    baseAddresses.Add("opc.wss://" + advertisedHost + ":" + wssPort.ToString(Inv.C) + path);
+                }
                 IApplicationConfigurationBuilderServerSelected sb = app
                     .Build(applicationUri, fixture.Server.ProductUri)
-                    .AsServer([baseAddress])
+                    .AsServer(baseAddresses.ToArray())
                     .AddUnsecurePolicyNone();
                 foreach ((MessageSecurityMode mode, string uri) in policies)
                 {
@@ -315,7 +334,10 @@ namespace OpcUaInterop
 
                 // the builder replaces "localhost" with the host name; the contract advertises
                 // --advertised-host verbatim (default localhost)
-                config.ServerConfiguration.BaseAddresses = new[] { baseAddress };
+                config.ServerConfiguration.BaseAddresses = baseAddresses.ToArray();
+                // Without mutual TLS the stack offers None over HTTPS / WSS (TLS protects the
+                // messages); HTTPS then requires a user name (Anonymous is filtered out).
+                config.ServerConfiguration.HttpsMutualTls = false;
 
                 ApplicationInstance.MessageDlg = new AutoApproveDialog();
                 bool haveCert = await app.CheckApplicationInstanceCertificatesAsync(false, null).ConfigureAwait(false);
@@ -326,6 +348,14 @@ namespace OpcUaInterop
                 }
 
                 var server = new InteropServer(telemetry, fixture);
+                if (httpsPort != 0 || wssPort != 0)
+                {
+                    // non-DI host: register the Kestrel listeners of Opc.Ua.Bindings.Https
+                    DefaultTransportBindingRegistry bindings = DefaultTransportBindingRegistry.WithDefaultTcp();
+                    bindings.RegisterListenerFactory(new OpcHttpsTransportListenerFactory());
+                    bindings.RegisterListenerFactory(new OpcWssTransportListenerFactory());
+                    server.TransportBindings = bindings;
+                }
                 await app.StartAsync(server).ConfigureAwait(false);
 
                 // §14.1: the PubSub configuration is in place before the ready file is written.
@@ -416,6 +446,8 @@ namespace OpcUaInterop
                 return 1;
             }
         }
+
+        private static bool HasIdentity(string certFile, string keyFile) => certFile != null && keyFile != null;
 
         private static string RefusalReason(string flag) => flag switch
         {

@@ -233,6 +233,10 @@ server ... --register-with opc.tcp://lds:4840/opcua-interop
 
 # open62541 (v0.8.0), UA-.NETStandard (v0.10.0): OPC UA PubSub configuration, see "PubSub" below
 server ... --pubsub-config /pubsub/udp-unicast-subscriber.json
+
+# UA-.NETStandard (v0.11.0): opc.https and opc.wss listeners next to opc.tcp
+# (needs --certificate / --private-key: the application certificate serves TLS)
+server ... --certificate /certs/cert.crt --private-key /certs/cert.key --https-port 4843 --wss-port 4844
 ```
 
 ### Client commands
@@ -284,7 +288,10 @@ The open62541 client can wait for a reverse connection instead of dialling
 (`--security-policy ECC_nistP256 --certificate <identity>/ecc-nistp256/cert.crt ...`).
 
 The dotnet client speaks the RSA policies only (no `--reverse-listen`, no ECC; see
-"Reference stacks" below).
+"Reference stacks" below). Since v0.11.0 it also dials `opc.wss://` (wss-uasc-uabinary)
+and `opc.https://` (https-uabinary) endpoints, validating the server's TLS certificate
+against `--trust-list` (`print-capabilities` → `clientFeatures`: `transport-wss`,
+`transport-https`).
 
 The asyncua (opcua-asyncio) client speaks the RSA policies only and has no `codec`
 (no `--reverse-listen`, no ECC; see [`asyncua/README.md`](asyncua/README.md)).

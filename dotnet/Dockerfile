@@ -15,12 +15,14 @@ RUN dotnet restore -p:OpcUaVersion=${OPCUA_VERSION}
 COPY src/ ./
 RUN dotnet publish -c Release --no-restore -p:OpcUaVersion=${OPCUA_VERSION} -p:UseAppHost=false -o /app
 
-FROM mcr.microsoft.com/dotnet/runtime:${DOTNET_RUNTIME_VERSION}-alpine3.24 AS runtime
+# The ASP.NET Core runtime: the opc.https / opc.wss listeners of
+# Opc.Ua.Bindings.Https are hosted by Kestrel.
+FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_RUNTIME_VERSION}-alpine3.24 AS runtime
 # The .NET images ship the non-root user "app" (UID 1654).
 RUN mkdir -p /run/opcua-interop/pki && chown -R app:app /run/opcua-interop
 COPY --from=build /app /app
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_gcServer=0
 USER app
-EXPOSE 4840
+EXPOSE 4840 4843 4844
 ENTRYPOINT ["dotnet", "/app/opcua-interop-dotnet.dll"]
