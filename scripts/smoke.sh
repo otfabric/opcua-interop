@@ -1332,7 +1332,8 @@ run_cross_asyncua_smoke() {
 # The GDS server of the dotnet-gds image on a feature network (fixtures/gds,
 # the dotnet-server identity of the test PKI) and its own client gds-pull
 # against it: CSR and new key pair over Basic256Sha256/SignAndEncrypt with the
-# gds-admin user, revoke and unregister; anonymous FindApplications is denied.
+# gds-admin user, revoke and unregister; anonymous RegisterApplication is denied
+# (UA-.NETStandard 2.0.1 lets anyone call FindApplications, Part 12 §6.5.3).
 run_dotnet_gds_smoke() {
     local img="$1"
 
@@ -1377,8 +1378,9 @@ run_dotnet_gds_smoke() {
     done
 
     out=$(feat_client "${img}" - gds-pull --endpoint "${ep}" "${sec[@]}") || true
-    feat_expect "dotnet-gds→dotnet-gds: anonymous FindApplications denied" \
-        '.success == false and .serviceResult.name == "BadUserAccessDenied" and .results[0].findApplicationsStatus.name == "BadUserAccessDenied"' "${out}"
+    feat_expect "dotnet-gds→dotnet-gds: anonymous RegisterApplication denied" \
+        '.success == false and .serviceResult.name == "BadUserAccessDenied" and .results[0].findApplications == []
+         and .results[0].registerStatus.name == "BadUserAccessDenied"' "${out}"
 
     feature_cleanup
     trap - EXIT

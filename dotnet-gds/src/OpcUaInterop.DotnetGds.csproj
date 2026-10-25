@@ -12,17 +12,16 @@
     <PredefinedCulturesOnly>false</PredefinedCulturesOnly>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CS1591;CS0618</NoWarn>
-    <!-- UA-.NETStandard 1.5.378.182: the GDS packages (Gds.Client.Common, Gds.Server.Common)
-         have no 2.0.x release. Every Opc.Ua package is pinned to exactly this version. -->
-    <OpcUaVersion Condition="'$(OpcUaVersion)' == ''">1.5.378.182</OpcUaVersion>
+    <!-- UA-.NETStandard 2.0.1 (the GDS packages are Opc.Ua.Gds.Client / Opc.Ua.Gds.Server since 2.0;
+         1.5.378 shipped them as Gds.Client.Common / Gds.Server.Common). Every Opc.Ua package is
+         pinned to exactly this version. -->
+    <OpcUaVersion Condition="'$(OpcUaVersion)' == ''">2.0.1</OpcUaVersion>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Core" Version="[$(OpcUaVersion)]" />
-    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Security.Certificates" Version="[$(OpcUaVersion)]" />
-    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Configuration" Version="[$(OpcUaVersion)]" />
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Server" Version="[$(OpcUaVersion)]" />
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Client" Version="[$(OpcUaVersion)]" />
-    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Gds.Client.Common" Version="[$(OpcUaVersion)]" />
-    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Gds.Server.Common" Version="[$(OpcUaVersion)]" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Configuration" Version="[$(OpcUaVersion)]" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Gds.Client" Version="[$(OpcUaVersion)]" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Gds.Server" Version="[$(OpcUaVersion)]" />
   </ItemGroup>
 </Project>

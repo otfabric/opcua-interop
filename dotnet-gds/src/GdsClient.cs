@@ -62,7 +62,7 @@ namespace OpcUaInterop
             }
             catch (ServiceResultException e)
             {
-                bool transport = IsTransport(e.StatusCode);
+                bool transport = IsTransport(e.StatusCode.Code);
                 new Result(op).Success(false).ServiceResult(e.StatusCode)
                     .Error(transport ? "transport" : "service", e.Message).Print();
                 return transport ? 3 : 4;
@@ -105,14 +105,14 @@ namespace OpcUaInterop
 
         private static async Task<int> EndpointsAsync(ClientContext c)
         {
-            EndpointDescriptionCollection eps;
+            ArrayOf<EndpointDescription> eps;
             try
             {
                 eps = await c.GetEndpointsAsync().ConfigureAwait(false);
             }
             catch (ServiceResultException e)
             {
-                throw new TransportException("GetEndpoints " + c.EndpointUrl + ": " + e.Message, e.StatusCode);
+                throw new TransportException("GetEndpoints " + c.EndpointUrl + ": " + e.Message, e.StatusCode.Code);
             }
             var r = new Result("endpoints");
             foreach (EndpointDescription ep in eps)
@@ -230,11 +230,11 @@ namespace OpcUaInterop
                     }
                     catch (OperationCanceledException)
                     {
-                        throw new TransportException("connect timeout (" + c.EndpointUrl + ")", StatusCodes.BadTimeout);
+                        throw new TransportException("connect timeout (" + c.EndpointUrl + ")", StatusCodes.BadTimeout.Code);
                     }
                     catch (ServiceResultException e)
                     {
-                        throw new TransportException("connect " + c.EndpointUrl + ": " + e.Message, e.StatusCode);
+                        throw new TransportException("connect " + c.EndpointUrl + ": " + e.Message, e.StatusCode.Code);
                     }
                 }
                 gds.Session.OperationTimeout = Math.Max(c.RequestTimeoutMs, 1000);
@@ -262,7 +262,7 @@ namespace OpcUaInterop
             string message = null;
 
             // runs one step; a ServiceResultException is the step's Bad status
-            async Task<T> Step<T>(string statusKey, Func<Task<T>> call)
+            async Task<T> Step<T>(string statusKey, Func<ValueTask<T>> call)
             {
                 try
                 {
@@ -275,7 +275,7 @@ namespace OpcUaInterop
                 }
                 catch (ServiceResultException e)
                 {
-                    if (GdsClientCommand.IsTransport(e.StatusCode))
+                    if (GdsClientCommand.IsTransport(e.StatusCode.Code))
                     {
                         throw;
                     }
@@ -284,7 +284,7 @@ namespace OpcUaInterop
                         item[statusKey] = StatusNames.Json(e.StatusCode);
                     }
                     message = statusKey + ": " + e.Message;
-                    throw new StepFailed(e.StatusCode);
+                    throw new StepFailed(e.StatusCode.Code);
                 }
             }
 
@@ -293,7 +293,7 @@ namespace OpcUaInterop
             try
             {
                 // FindApplications
-                ApplicationRecordDataType[] found = await Step("findApplicationsStatus", () => gds.FindApplicationAsync(o.AppUri)).ConfigureAwait(false)
+                ApplicationRecordDataType[] found = (await Step("findApplicationsStatus", () => gds.FindApplicationAsync(o.AppUri)).ConfigureAwait(false)).ToArray()
                     ?? [];
                 item.Remove("findApplicationsStatus");
                 item["findApplications"] = Json.Strings(found.Select(r => Canonical.NodeId(r.ApplicationId)));
@@ -311,10 +311,10 @@ namespace OpcUaInterop
                     {
                         ApplicationUri = o.AppUri,
                         ApplicationType = o.AppType,
-                        ApplicationNames = [new LocalizedText("en-US", o.AppName)],
+                        ApplicationNames = new[] { new LocalizedText("en-US", o.AppName) },
                         ProductUri = "urn:opcua-interop:dotnet-gds",
-                        DiscoveryUrls = new StringCollection(o.AppType == ApplicationType.Client ? [] : o.DiscoveryUrls),
-                        ServerCapabilities = o.AppType == ApplicationType.Client ? [] : ["NA"]
+                        DiscoveryUrls = o.AppType == ApplicationType.Client ? Array.Empty<string>() : o.DiscoveryUrls.ToArray(),
+                        ServerCapabilities = o.AppType == ApplicationType.Client ? Array.Empty<string>() : new[] { "NA" }
                     };
                     applicationId = await Step("registerStatus", () => gds.RegisterApplicationAsync(record)).ConfigureAwait(false);
                     item["registered"] = true;
@@ -327,19 +327,19 @@ namespace OpcUaInterop
                 if (o.Request == "csr")
                 {
                     byte[] csr = CreateCsr(o);
-                    requestId = await Step("startRequestStatus", () => gds.StartSigningRequestAsync(applicationId, groupId, o.CertificateTypeId, csr)).ConfigureAwait(false);
+                    requestId = await Step("startRequestStatus", () => gds.StartSigningRequestAsync(applicationId, groupId, o.CertificateTypeId, ByteString.From(csr))).ConfigureAwait(false);
                 }
                 else
                 {
                     requestId = await Step("startRequestStatus", () => gds.StartNewKeyPairRequestAsync(
-                        applicationId, groupId, o.CertificateTypeId, "CN=" + o.AppName, ["localhost"], "PEM", null)).ConfigureAwait(false);
+                        applicationId, groupId, o.CertificateTypeId, "CN=" + o.AppName, new[] { "localhost" }, "PEM", null)).ConfigureAwait(false);
                 }
                 item["requestId"] = Canonical.NodeId(requestId);
 
                 // FinishRequest until it issues (Bad_NothingToDo = pending)
-                byte[] certificate;
-                byte[] privateKey;
-                byte[][] issuers;
+                ByteString certificate;
+                ByteString privateKey;
+                ArrayOf<ByteString> issuers;
                 var deadline = DateTime.UtcNow.AddMilliseconds(o.FinishTimeoutMs);
                 while (true)
                 {
@@ -353,23 +353,23 @@ namespace OpcUaInterop
                     {
                         await Task.Delay(200).ConfigureAwait(false);
                     }
-                    catch (ServiceResultException e) when (!GdsClientCommand.IsTransport(e.StatusCode))
+                    catch (ServiceResultException e) when (!GdsClientCommand.IsTransport(e.StatusCode.Code))
                     {
                         item["finishRequestStatus"] = StatusNames.Json(e.StatusCode);
                         message = "finishRequest: " + e.Message;
-                        throw new StepFailed(e.StatusCode);
+                        throw new StepFailed(e.StatusCode.Code);
                     }
                 }
-                item["certificate"] = certificate == null ? null : Convert.ToBase64String(certificate);
+                item["certificate"] = certificate.IsNull ? null : Convert.ToBase64String(certificate.Span);
                 if (o.Request == "new-key-pair")
                 {
                     item["privateKeyFormat"] = "PEM";
-                    item["privateKey"] = privateKey == null ? null : Convert.ToBase64String(privateKey);
+                    item["privateKey"] = privateKey.IsNull ? null : Convert.ToBase64String(privateKey.Span);
                 }
-                item["issuerCertificates"] = Json.Strings((issuers ?? []).Select(Convert.ToBase64String));
+                item["issuerCertificates"] = B64(issuers);
 
                 // GetCertificateGroups
-                NodeId[] groups = await Step("getCertificateGroupsStatus", () => gds.GetCertificateGroupsAsync(applicationId)).ConfigureAwait(false);
+                NodeId[] groups = (await Step("getCertificateGroupsStatus", () => gds.GetCertificateGroupsAsync(applicationId)).ConfigureAwait(false)).ToArray();
                 item.Remove("getCertificateGroupsStatus");
                 item["certificateGroups"] = Json.Strings((groups ?? []).Select(Canonical.NodeId));
 
@@ -392,7 +392,7 @@ namespace OpcUaInterop
                         await gds.RevokeCertificateAsync(applicationId, certificate).ConfigureAwait(false);
                         return true;
                     }).ConfigureAwait(false);
-                    (StatusCode certStatus, DateTime _) = await Step("checkRevocationStatus", () => gds.CheckRevocationStatusAsync(certificate)).ConfigureAwait(false);
+                    (StatusCode certStatus, DateTimeUtc _) = await Step("checkRevocationStatus", () => gds.CheckRevocationStatusAsync(certificate)).ConfigureAwait(false);
                     item["certificateStatus"] = StatusNames.Json(certStatus);
                 }
 
@@ -421,9 +421,11 @@ namespace OpcUaInterop
             return 0;
         }
 
+        private static JsonArray B64(ArrayOf<ByteString> c) =>
+            Json.Strings((c.ToArray() ?? []).Select(b => Convert.ToBase64String(b.Span)));
+
         private static JsonObject TrustListJson(TrustListDataType tl)
         {
-            static JsonArray B64(ByteStringCollection c) => Json.Strings((c ?? new ByteStringCollection()).Select(Convert.ToBase64String));
             return new JsonObject
             {
                 ["specifiedLists"] = tl.SpecifiedLists,
@@ -464,7 +466,8 @@ namespace OpcUaInterop
     /// <summary>
     /// Session factory that dials the endpoint as selected (the GDS client otherwise updates it
     /// from the server, which replaces the URL with the server's advertised host) and skips the
-    /// domain check (container host names are not in the test certificates).
+    /// domain check (container host names are not in the test certificates). Still needed on
+    /// 2.0.1: GlobalDiscoveryServerClient.ConnectAsync passes updateBeforeConnect: true.
     /// </summary>
     internal sealed class NoUpdateSessionFactory : DefaultSessionFactory
     {
@@ -480,7 +483,7 @@ namespace OpcUaInterop
             string sessionName,
             uint sessionTimeout,
             IUserIdentity identity,
-            IList<string> preferredLocales,
+            ArrayOf<string> preferredLocales,
             CancellationToken ct = default)
         {
             return base.CreateAsync(configuration, endpoint, false, false, sessionName, sessionTimeout, identity, preferredLocales, ct);
@@ -489,7 +492,7 @@ namespace OpcUaInterop
 
     /// <summary>
     /// Client application configuration and endpoint selection (§9) from the global client
-    /// flags (§1). Adapted from dotnet/src/ClientSession.cs to the 1.5.378 API.
+    /// flags (§1). Adapted from dotnet/src/ClientSession.cs.
     /// </summary>
     internal sealed class ClientContext : IAsyncDisposable
     {
@@ -559,7 +562,7 @@ namespace OpcUaInterop
             c.Telemetry = OpcUaInterop.Telemetry.Create("dotnet-gds");
             string root = Pki.TempDir("opcua-dotnet-gds-client");
             string applicationUri = a.Get("--application-uri");
-            var certIds = new CertificateIdentifierCollection();
+            var certIds = new List<CertificateIdentifier>();
             if (certFile != null && keyFile != null)
             {
                 X509Certificate2 cert;
@@ -619,7 +622,7 @@ namespace OpcUaInterop
                 .Build(applicationUri, "urn:otfabric:opcua-interop:dotnet-gds")
                 .SetOperationTimeout(Math.Max(c.RequestTimeoutMs, 1000))
                 .AsClient()
-                .AddSecurityConfiguration(certIds, root, Path.Combine(root, "rejected"))
+                .AddSecurityConfiguration(new ArrayOf<CertificateIdentifier>(certIds.ToArray()), root, Path.Combine(root, "rejected"))
                 // without --trust-list every server certificate is accepted (as the dotnet adapter does)
                 .SetAutoAcceptUntrustedCertificates(trust.Count == 0)
                 .SetRejectSHA1SignedCertificates(true)
@@ -629,25 +632,22 @@ namespace OpcUaInterop
                 .CreateAsync()
                 .ConfigureAwait(false);
             ApplicationInstance.MessageDlg = new AutoApproveDialog();
-            if (!await app.CheckApplicationInstanceCertificatesAsync(false).ConfigureAwait(false))
+            if (!await app.CheckApplicationInstanceCertificatesAsync(false, null).ConfigureAwait(false))
             {
                 throw new InternalFailure("client application instance certificate rejected by the stack");
             }
-            bool acceptAll = trust.Count == 0;
-            c.Config.CertificateValidator.CertificateValidation += (sender, e) =>
+            if (c.Config.CertificateManager is CertificateManager cm)
             {
                 // the endpoint host (host.docker.internal / a container name) is not in the test
                 // certificates' SANs: domain checks are not part of the interop contract
-                if (acceptAll || e.Error.StatusCode == StatusCodes.BadCertificateHostNameInvalid)
-                {
-                    e.Accept = true;
-                }
-            };
+                bool acceptAll = trust.Count == 0;
+                cm.AcceptError = (cert, error) => acceptAll || error.StatusCode == StatusCodes.BadCertificateHostNameInvalid;
+            }
             return c;
         }
 
         /// <summary>GetEndpoints on --endpoint.</summary>
-        public async Task<EndpointDescriptionCollection> GetEndpointsAsync()
+        public async Task<ArrayOf<EndpointDescription>> GetEndpointsAsync()
         {
             var ec = EndpointConfiguration.Create(Config);
             ec.OperationTimeout = Math.Max(RequestTimeoutMs, 1000);
@@ -655,15 +655,16 @@ namespace OpcUaInterop
             DiscoveryClient dc;
             try
             {
-                dc = await DiscoveryClient.CreateAsync(Config, new Uri(EndpointUrl), ec, DiagnosticsMasks.None, cts.Token).ConfigureAwait(false);
+                dc = await DiscoveryClient.CreateAsync(new Uri(EndpointUrl), ec, Config, DiagnosticsMasks.None, cts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                throw new TransportException("connect timeout (" + EndpointUrl + ")", StatusCodes.BadTimeout);
+                throw new TransportException("connect timeout (" + EndpointUrl + ")", StatusCodes.BadTimeout.Code);
             }
             try
             {
-                return await dc.GetEndpointsAsync(null, CancellationToken.None).ConfigureAwait(false);
+                GetEndpointsResponse r = await dc.GetEndpointsAsync(null, EndpointUrl, default, default, CancellationToken.None).ConfigureAwait(false);
+                return r.Endpoints;
             }
             finally
             {
@@ -682,16 +683,16 @@ namespace OpcUaInterop
         /// <summary>Selects the endpoint of --security-policy / --security-mode (§9).</summary>
         public async Task<EndpointDescription> SelectEndpointAsync()
         {
-            EndpointDescriptionCollection eps;
+            ArrayOf<EndpointDescription> eps;
             try
             {
                 eps = await GetEndpointsAsync().ConfigureAwait(false);
             }
             catch (ServiceResultException e)
             {
-                throw new TransportException("GetEndpoints " + EndpointUrl + ": " + e.Message, e.StatusCode);
+                throw new TransportException("GetEndpoints " + EndpointUrl + ": " + e.Message, e.StatusCode.Code);
             }
-            EndpointDescription chosen = eps.FirstOrDefault(ep =>
+            EndpointDescription chosen = (eps.ToArray() ?? []).FirstOrDefault(ep =>
                 ep.SecurityPolicyUri == PolicyUri && ep.SecurityMode == Mode &&
                 (string.IsNullOrEmpty(ep.TransportProfileUri) || ep.TransportProfileUri == Profiles.UaTcpTransport));
             if (chosen == null)

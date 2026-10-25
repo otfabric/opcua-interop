@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// opcua-interop GDS adapter for the OPC Foundation UA-.NETStandard stack (1.5.378):
+    /// opcua-interop GDS adapter for the OPC Foundation UA-.NETStandard stack (2.0.1):
     ///   server             start the Global Discovery Server (Part 12 pull model)
     ///   client &lt;op&gt;        run one client operation (endpoints, gds-pull; docs/CLIENT_CONTRACT.md §16)
     ///   validate-fixture   validate a fixture file
@@ -108,7 +108,7 @@ namespace OpcUaInterop
             {
                 Check(false, "capabilities: " + e.Message);
             }
-            Check(StatusNames.Name(Opc.Ua.StatusCodes.BadNothingToDo) == "BadNothingToDo", "status code names");
+            Check(StatusNames.Name(Opc.Ua.StatusCodes.BadNothingToDo.Code) == "BadNothingToDo", "status code names");
             Check(Canonical.NodeId(new Opc.Ua.NodeId(615u, 2)) == "ns=2;i=615", "canonical NodeId");
 
             string fixture = a.Get("--fixture") ?? "/fixtures/gds/fixture.json";
@@ -134,19 +134,28 @@ namespace OpcUaInterop
     {
         public static string NodeId(Opc.Ua.NodeId n)
         {
-            if (n == null || (Opc.Ua.NodeId.IsNull(n) && n.IdType == Opc.Ua.IdType.Numeric))
+            if (n.IsNull && n.IdType == Opc.Ua.IdType.Numeric)
             {
                 return "i=0";
             }
             string prefix = n.NamespaceIndex == 0 ? string.Empty : "ns=" + n.NamespaceIndex.ToString(Inv.C) + ";";
-            return n.IdType switch
+            switch (n.IdType)
             {
-                Opc.Ua.IdType.Numeric => prefix + "i=" + ((uint)n.Identifier).ToString(Inv.C),
-                Opc.Ua.IdType.String => prefix + "s=" + (string)n.Identifier,
-                Opc.Ua.IdType.Guid => prefix + "g=" + n.Identifier.ToString().ToLowerInvariant(),
-                Opc.Ua.IdType.Opaque => prefix + "b=" + Convert.ToBase64String((byte[])n.Identifier),
-                _ => n.ToString()
-            };
+                case Opc.Ua.IdType.Numeric:
+                    n.TryGetValue(out uint num);
+                    return prefix + "i=" + num.ToString(Inv.C);
+                case Opc.Ua.IdType.String:
+                    n.TryGetValue(out string s);
+                    return prefix + "s=" + s;
+                case Opc.Ua.IdType.Guid:
+                    n.TryGetValue(out Guid g);
+                    return prefix + "g=" + g.ToString("D").ToLowerInvariant();
+                case Opc.Ua.IdType.Opaque:
+                    n.TryGetValue(out Opc.Ua.ByteString b);
+                    return prefix + "b=" + Convert.ToBase64String(b.Span);
+                default:
+                    return n.ToString();
+            }
         }
     }
 }
