@@ -39,7 +39,7 @@ this contract. Changes that break it require a major schema version bump.
 | `alarms` | Alarms & Conditions (Part 9): ConditionRefresh on an event monitored item, then optionally Acknowledge / Confirm / AddComment on the refreshed condition |
 | `push` | Push certificate management (Part 12 §7, §15): read a certificate group's TrustList, AddCertificate / RemoveCertificate, GetCertificates, CreateSelfSignedCertificate, DeleteCertificate, UpdateCertificate, CreateSigningRequest, GetRejectedList, ResetToServerDefaults, ApplyChanges / CancelChanges, TransactionDiagnostics |
 | `query` | Query service set (Part 4 §5.9): QueryFirst for one NodeTypeDescription, then QueryNext with the continuation point until none is left |
-| `gds-pull` | GDS pull model (Part 12 §6, §7.9, §16), `dotnet-gds` only: FindApplications / RegisterApplication, StartSigningRequest or StartNewKeyPairRequest, FinishRequest, GetCertificateGroups, GetTrustList + TrustList read, GetCertificateStatus, RevokeCertificate / CheckRevocationStatus, UnregisterApplication |
+| `gds-pull` | GDS pull model (Part 12 §6, §7.9, §16), `dotnet-gds` (adapter 0.14.0) and asyncua, async-opcua, Milo, open62541 and dotnet (adapter 0.15.0): FindApplications / RegisterApplication, StartSigningRequest or StartNewKeyPairRequest, FinishRequest, GetCertificateGroups, GetTrustList + TrustList read, GetCertificateStatus, RevokeCertificate / CheckRevocationStatus, UnregisterApplication |
 
 Which of these (and which optional features) an image provides is declared by
 `print-capabilities` (§13). A feature the underlying stack does not implement is
@@ -316,8 +316,10 @@ is printed in every case once the subscription exists.
 ### `push` flags
 
 Push certificate management client (Part 12 §7) against the ServerConfiguration
-object (`i=12637`) of the server, node-opcua only (adapter 0.13.0; the
-flags marked 0.15.0 since adapter 0.15.0, §15). The methods need an encrypted
+object (`i=12637`) of the server: node-opcua since adapter 0.13.0 (the
+flags marked 0.15.0 since adapter 0.15.0), asyncua, async-opcua, Eclipse Milo,
+open62541 and UA-.NETStandard (`dotnet`) since adapter 0.15.0 with every flag
+below (§15). The methods need an encrypted
 channel and a user with the SecurityAdmin role, so the command is run with
 `--security-policy … --security-mode SignAndEncrypt` and `--username` /
 `--password`.
@@ -372,7 +374,7 @@ be read.
 
 ### `query` flags
 
-Query service set (Part 4 §5.9), node-opcua only (adapter 0.15.0,
+Query service set (Part 4 §5.9), node-opcua and async-opcua (adapter 0.15.0,
 `clientOperations` `query`). One QueryFirst with one NodeTypeDescription, no
 View (the whole address space) and an empty ContentFilter (every node of the
 type), then QueryNext while the server returns a continuation point.
@@ -1581,9 +1583,9 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `transport-https` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.https://…` (§9); server `--https-port` (§11) |
 | `push-management` | server | ✓ | — | — | ✓ | ✓ | — | ServerConfiguration push certificate management (Part 12 §7, §15) with `--certificate` / `--private-key` / `--pki-dir`; fixture users get the well-known roles of their `roles` (SecurityAdmin) |
 | `gds-pull` | server | — | — | — | — | — | — | `dotnet-gds` only (§16): the server is a Global Discovery Server (Directory, DefaultApplicationGroup, pull certificate management) |
-| `push-groups` | client | — | — | — | ✓ | ✓ | — | `push --group`, `--certificate-type-id` (adapter 0.15.0, §1 "push flags") |
-| `push-certificates` | client | — | — | — | ✓ | ✓ | — | `push --get-certificates`, `--create-self-signed`, `--delete-certificate`, `--update-certificate` (PEM / PFX key), `--reset-to-defaults`, `--cancel` (adapter 0.15.0) |
-| `push-transaction-diagnostics` | client | — | — | — | ✓ | ✓ | — | `push --transaction-diagnostics` (adapter 0.15.0) |
+| `push-groups` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `push --group`, `--certificate-type-id` (adapter 0.15.0, §1 "push flags") |
+| `push-certificates` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `push --get-certificates`, `--create-self-signed`, `--delete-certificate`, `--update-certificate` (PEM / PFX key), `--reset-to-defaults`, `--cancel` (adapter 0.15.0) |
+| `push-transaction-diagnostics` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `push --transaction-diagnostics` (adapter 0.15.0) |
 | `alarms-branches` | server | — | — | — | — | ✓ | — | the alarm fixture's `s=Alarms.Clear`: condition branches (fixtures/baseline/README.md "Alarms", adapter 0.15.0) |
 | `alarms-audible` | server | — | — | — | — | ✓ | — | InteropAlarm has AudibleEnabled / AudibleSound (AudioVariableType with ListId; adapter 0.15.0) |
 | `alarms` | server | ✓ (experimental) | — | — | ✓ | ✓ | — | the Alarms & Conditions fixture (`s=Alarms.*`, fixtures/baseline/README.md "Alarms"); Acknowledge / Confirm / AddComment / Enable / Disable / ConditionRefresh by the stack's own handlers (ConditionRefresh2 too, not exercised by `alarms`) |
@@ -1599,14 +1601,15 @@ only), Milo 1.1.8 has incubating, unpublished client transports only, and
 async-opcua, node-opcua and asyncua implement `opc.tcp` only.
 
 The `alarms` client operation (§1 `alarms` flags) is in `clientOperations` of
-all six adapters since adapter 0.12.0:
+all six adapters since adapter 0.12.0; `push`, `query` and `gds-pull` are in
+those of the adapters below:
 
 | Client operation | open62541 | Milo | async-opcua | UA-.NETStandard | node-opcua | asyncua |
 |------------------|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|
 | `alarms` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `push` (adapter 0.13.0, §15) | — | — | — | ✓ (0.15.0) | ✓ | — |
-| `query` (adapter 0.15.0) | — | — | — | — | ✓ | — |
-| `gds-pull` (adapter 0.14.0, §16) | — | — | — | ✓ (0.15.0; `dotnet-gds` ✓) | — | — |
+| `push` (adapter 0.13.0, §15; the others since 0.15.0) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `query` (adapter 0.15.0) | — | — | ✓ | — | ✓ | — |
+| `gds-pull` (§16; `dotnet-gds` since adapter 0.14.0, the others since 0.15.0) | ✓ | ✓ | ✓ | ✓ (`dotnet-gds` ✓) | — | ✓ |
 
 **Alarm servers** (all three give `success: true` for
 `alarms --node i=2253 --condition-name InteropAlarm --acknowledge --confirm --add-comment`
@@ -1700,8 +1703,9 @@ CA of `<pki-dir>/trusted/certs` with its CRL, as for open62541 and Milo. See
 `node-opcua/README.md` for the stack deviations the go-opcua suite found.
 
 opcua-asyncio (PyPI `asyncua` 2.1.0, adapter name `asyncua`, added in adapter
-0.9.0) declares `channel-lifetime`, `deadband`, `application-uri` and
-`register-server2` on the client side and only `register-with` on the
+0.9.0) declares `channel-lifetime`, `deadband`, `application-uri`,
+`register-server2` and (since adapter 0.15.0) `push-groups`,
+`push-certificates` and `push-transaction-diagnostics` on the client side and only `register-with` on the
 server side. It has no ECC `SecurityPolicy`, no ReverseHello, no LDS / mDNS
 server and no PubSub: the client refuses `ECC_*` policies and
 `--reverse-listen` (exit 2), the server refuses `--reverse-connect`, `--lds`,
@@ -2466,7 +2470,7 @@ a test adds such a user to a copy of the baseline fixture, e.g.
 |---|---|---|---|
 | Implementation | `UA_ENABLE_GDS_PUSHMANAGEMENT` (in-memory certificate group of `UA_ServerConfig_setDefaultWithSecurityPolicies`) | the stack's ConfigurationNodeManager | `installPushCertificateManagementOnServer` (node-opcua-server-configuration), `closeChannelsOnApplyChanges: false` |
 | Access | any session on a SignAndEncrypt channel (no roles in v1.5.9) | SecurityAdmin (fixture roles), SignAndEncrypt; others `BadUserAccessDenied` | as UA-.NETStandard |
-| CertificateTypes | RsaMin, RsaSha256 | RsaSha256 | RsaSha256 |
+| CertificateTypes | RsaMin, RsaSha256 | RsaMin (empty slot), RsaSha256 | RsaSha256 |
 | SupportedPrivateKeyFormats | PEM, DER | PFX, PEM | PEM |
 | ApplyChanges without a pending change | `BadNothingToDo` | Good | `BadNothingToDo` |
 | After ApplyChanges | the channels whose certificates changed are closed shortly after the response | — | open channels keep the old certificate |
@@ -2488,11 +2492,18 @@ requests on the standard NodeIds of ServerConfiguration
 and reads the TransactionDiagnostics variables (`push-transaction-diagnostics`).
 The node-opcua server answers these 1.05 methods with `Bad_MethodInvalid` or
 `Bad_InternalError` (unbound) and cannot encode its TransactionDiagnostics;
-they are meant for servers that implement Part 12 1.05. UA-.NETStandard's push client
-(ServerPushConfigurationClient, NuGet
-`OPCFoundation.NetStandard.Opc.Ua.Gds.Client.Common`) has no 2.0.1 release,
-open62541 v1.5.9 has no push client API; the other adapters do not offer
-`push`.
+they are meant for servers that implement Part 12 1.05.
+
+Since adapter 0.15.0 `client push`, with every flag of §1 "push flags" and the
+§4 `push` result, is also on asyncua, async-opcua, Eclipse Milo,
+open62541 and UA-.NETStandard (`dotnet`) (clientOperations `push`,
+clientFeatures `push-groups`, `push-certificates`,
+`push-transaction-diagnostics`). None of opcua-asyncio 2.1.0, async-opcua
+0.19, Milo 1.1.8 or open62541 v1.5.9 has a push client, and UA-.NETStandard's
+(ServerPushConfigurationClient) is not used, so these adapters send plain Call requests on the standard NodeIds of
+ServerConfiguration and of the group's TrustList (OpenWithMasks / Read /
+Close), on one session, and decode the TrustListDataType and the
+TransactionDiagnostics themselves where the stack has no codec for them.
 
 ---
 
@@ -2617,15 +2628,25 @@ plus the GDS administrator).
 <image> client gds-pull --endpoint <url> [global flags (§1)] [gds-pull flags]
 ```
 
-The pull-model client of Part 12 §6.6 / §7.9 with the stack's
-`GlobalDiscoveryServerClient` (`Opc.Ua.Gds.Client`). Global flags as
+The pull-model client of Part 12 §6.6 / §7.9. `dotnet-gds` (adapter 0.14.0)
+uses the stack's `GlobalDiscoveryServerClient` (`Opc.Ua.Gds.Client`), and so
+does the `dotnet` adapter since 0.15.0 (Opc.Ua.Gds.Client 2.0.1). Since
+adapter 0.15.0 asyncua, async-opcua, Eclipse Milo and open62541 also have
+`gds-pull` (clientOperations): their stacks have no GDS client, so they run
+the same steps as plain Call requests on the Directory of the GDS namespace
+`http://opcfoundation.org/UA/GDS/` (its index read from the NamespaceArray),
+encode ApplicationRecordDataType themselves and make the PKCS #10 request
+with their own crypto library (`cryptography`, the RustCrypto `x509-cert` /
+`rsa` / `p256` crates, Bouncy Castle, OpenSSL). They take the same flags and give
+the same `results`. For `dotnet-gds` and `dotnet`, global flags as
 in §1: `--security-policy`, `--security-mode`, `--certificate`,
 `--private-key`, `--trust-list`, `--username`, `--password`,
 `--application-uri`, `--connect-timeout`, `--request-timeout`,
 `--disconnect-timeout` (RSA policies only). The session is created on the
 endpoint of `--security-policy` / `--security-mode` that GetEndpoints lists,
 dialled at `--endpoint` (§9); the domain check of the server certificate is
-skipped, and without `--trust-list` every server certificate is accepted.
+skipped, and without `--trust-list` every server certificate is accepted. The
+other adapters connect as for their other client commands (§1, §9).
 Most GDS methods need a user with the GDS roles, and the certificate
 requests a SignAndEncrypt channel (§16.1), so a run normally has
 `--username` / `--password` and SignAndEncrypt.
@@ -2651,7 +2672,8 @@ Steps, stopping at the first Bad status:
 2. **RegisterApplication** if nothing was found: ApplicationUri = app uri,
    ApplicationType, ApplicationNames `[en-US: <name>]` where `<name>` is the
    last `:` / `/` segment of the app uri (`"opcua-interop gds-pull app"` if
-   empty), ProductUri `urn:opcua-interop:dotnet-gds`, DiscoveryUrls (none for
+   empty), ProductUri `urn:opcua-interop:<adapter>` (`urn:opcua-interop:dotnet-gds`,
+   `…:dotnet`, `…:asyncua`, `…:async-opcua`, `…:milo`, `…:open62541`), DiscoveryUrls (none for
    `Client`), ServerCapabilities `["NA"]` (none for `Client`). If a record was
    found, its ApplicationId (the first one) is used and nothing is registered.
 3. **StartSigningRequest** (DefaultApplicationGroup, the certificate type, a
