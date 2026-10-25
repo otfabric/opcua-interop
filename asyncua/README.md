@@ -136,8 +136,17 @@ list would stop. `pki.py` loads the files itself and hands them to asyncua's
   A ServerCertificate that is a chain (leaf, then issuers, as UA-.NETStandard
   2.0.1 servers send it) is reduced to its leaf before it is handed to
   `Client.set_security`, which reads its `server_certificate` as a single
-  certificate (since 0.15.1; 0.15.0 failed with `ExtraData`,
+  certificate (since 0.16.0; 0.15.0 failed with `ExtraData`,
   CLIENT_CONTRACT.md §16.3).
+- **Browse view:** `client browse` sends the null ViewDescription (Part 4
+  §7.45: ViewId null, Timestamp null, ViewVersion 0), with Timestamp set to
+  `ua.get_win_epoch()` as asyncua's own `Node.get_references` does
+  (`common/node.py:475`). asyncua 2.1.0's `ua.ViewDescription()` fills
+  Timestamp with the current time (`ua/uaprotocol_auto.py`, also used as is by
+  `Client.browse_nodes`, `client/client.py:1503`); a Timestamp without a
+  ViewId names no view version, and UA-.NETStandard and async-opcua servers
+  answer `BadViewTimestampInvalid`. Adapter 0.15.0 and earlier sent it so
+  (open62541, Milo and asyncua servers ignore the Timestamp).
 
 ## Stack deviations found by the go-opcua interop suite
 

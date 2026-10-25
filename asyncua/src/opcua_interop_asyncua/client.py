@@ -442,6 +442,20 @@ async def cmd_write(args: Args, r: Result) -> int:
         await conn.close()
 
 
+def null_view() -> ua.ViewDescription:
+    """The null ViewDescription (Part 4 §7.45): the whole address space, no view,
+    no version. asyncua 2.1.0's ViewDescription() defaults its Timestamp to the
+    current time, which a null ViewId does not allow: UA-.NETStandard and
+    async-opcua servers answer Browse with BadViewTimestampInvalid. A null
+    DateTime is 1601-01-01 (encoded as 0, Part 6 §5.2.2.5), as asyncua's own
+    Node.get_references sets it."""
+    v = ua.ViewDescription()
+    v.ViewId = ua.NodeId()
+    v.Timestamp = ua.get_win_epoch()
+    v.ViewVersion = 0
+    return v
+
+
 async def cmd_browse(args: Args, r: Result) -> int:
     node = args.get("--node", "i=85")
     parse_nodeid_syntax(node)
@@ -457,7 +471,7 @@ async def cmd_browse(args: Args, r: Result) -> int:
         bd.NodeClassMask = args.int("--node-class-mask", 0)
         bd.ResultMask = args.int("--result-mask", 63)
         p = ua.BrowseParameters()
-        p.View = ua.ViewDescription()
+        p.View = null_view()
         p.RequestedMaxReferencesPerNode = args.int("--max-refs", 0)
         p.NodesToBrowse = [bd]
         first = (await conn.session.browse(p))[0]
