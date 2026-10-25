@@ -41,7 +41,10 @@ mode, fixture node manager), `client.rs` (client operations), `discovery.rs`
 (RegisterServer2 / RegisterServer / FindServersOnNetwork on a session-less
 channel), `values.rs` / `nodeid.rs` (§6, §7, §12), `pki.rs` (certificates and
 trust), `caps.rs` (`print-capabilities`), `fixture.rs`, `selftest.rs` (`test`),
-`common.rs` (envelope, exit codes, `ADAPTER_VERSION`).
+`common.rs` (envelope, exit codes, `ADAPTER_VERSION`); `client/push.rs`,
+`client/gds_pull.rs`, `client/query.rs` and `client/part12.rs` (method
+calls and the TrustList file shared by push and gds-pull) for the operations
+async-opcua has no client API for.
 
 ## What it provides
 
@@ -53,10 +56,31 @@ deadband / trigger), `subscription-lifecycle` (`revise`, `publishing-mode`,
 `--min-severity`), `history-read` (raw, continuation points,
 `--scenario continue`), `republish`, `transfer-subscriptions`,
 `register-nodes`, `node-management`, `register-server` (RegisterServer2 with
-fallback), `find-servers-on-network`.
+fallback), `find-servers-on-network`, `alarms`, and since 0.15.0:
+
+- `push` (§1 "push flags", §15): the trust list of `--group`
+  (OpenWithMasks / Read / Close of its TrustList), AddCertificate /
+  RemoveCertificate, GetCertificates, CreateSelfSignedCertificate,
+  DeleteCertificate, UpdateCertificate (PEM / PFX `--update-private-key`),
+  CreateSigningRequest, GetRejectedList, ResetToServerDefaults, ApplyChanges
+  / CancelChanges and TransactionDiagnostics. async-opcua 0.19 has no push
+  client: every step is a plain Call on the standard NodeIds of
+  ServerConfiguration and of the group's TrustList, on one session.
+- `gds-pull` (§16.2): FindApplications / RegisterApplication,
+  StartSigningRequest (a PKCS #10 request with a fresh RSA 2048 or ECC P-256
+  key, RustCrypto `x509-cert` / `p256`) or StartNewKeyPairRequest,
+  FinishRequest, GetCertificateGroups, GetTrustList and the TrustList read,
+  GetCertificateStatus, RevokeCertificate / CheckRevocationStatus,
+  UnregisterApplication: plain Calls on the GDS Directory; the adapter encodes
+  and decodes ApplicationRecordDataType itself (a GDS-namespace type the stack
+  does not know).
+- `query` (§1 "query flags"): QueryFirst / QueryNext. The Session has no
+  Query API; the requests are sent on the session's secure channel
+  (`Session::channel().send`) with the session's request header.
 
 **Client features:** `channel-lifetime`, `deadband`, `reverse-listen`
-(also with security), `application-uri`, `register-server2`.
+(also with security), `application-uri`, `register-server2`, `push-groups`,
+`push-certificates`, `push-transaction-diagnostics` (0.15.0).
 
 **Server:** the baseline fixture address space in namespace
 `urn:otfabric:opcua-interop:model` (scalars, arrays incl. the 3×2 matrix,
