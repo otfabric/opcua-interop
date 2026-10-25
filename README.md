@@ -258,7 +258,7 @@ server ... --certificate /certs/cert.crt --private-key /certs/cert.key --https-p
 
 ### Client commands
 
-Nineteen client operations, plus `pubsub-discover` on the dotnet adapter and `push` and `query` on node-opcua (see `print-capabilities` → `clientOperations` and
+Nineteen client operations, plus `pubsub-discover` on the dotnet adapter, `push` on node-opcua and asyncua, `query` on node-opcua and `gds-pull` on dotnet-gds and asyncua (see `print-capabilities` → `clientOperations` and
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
 
 ```sh
@@ -283,7 +283,7 @@ client push      --endpoint ... --security-mode SignAndEncrypt --username ... --
                  [--group Application|Https|UserToken] [--get-certificates] \
                  [--create-self-signed --subject CN=x --dns host] [--delete-certificate <typeId>] \
                  [--update-certificate cert.der [--update-private-key key.pfx] [--issuer-certificate ca.der]] \
-                 [--reset-to-defaults] [--cancel] [--transaction-diagnostics]   # node-opcua (v0.15.0)
+                 [--reset-to-defaults] [--cancel] [--transaction-diagnostics]   # node-opcua, asyncua (v0.15.0)
 client query     --endpoint ... --type-definition '<typeId>' [--include-subtypes] \
                  [--data-to-return '.Serial'] [--data-to-return '#BrowseName'] [--max-data-sets 2] \
                  [--release-continuation-point]           # node-opcua (v0.15.0), QueryFirst / QueryNext
@@ -334,7 +334,8 @@ against `--trust-list` (`print-capabilities` → `clientFeatures`: `transport-ws
 `transport-https`).
 
 The asyncua (opcua-asyncio) client speaks the RSA policies only and has no `codec`
-(no `--reverse-listen`, no ECC; see [`asyncua/README.md`](asyncua/README.md)).
+(no `--reverse-listen`, no ECC; see [`asyncua/README.md`](asyncua/README.md)). Since v0.15.0
+it has `push` (all the flags above) and `gds-pull` (§16.2), built on plain Calls.
 
 Every client command also accepts `--channel-lifetime-ms <n>` to request a short
 SecureChannel lifetime and force SecurityToken renewals mid-command:

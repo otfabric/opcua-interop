@@ -92,6 +92,7 @@ The node-opcua adapter's `client push` reaches the rest of Part 12 1.05 push man
 - **node-opcua alarm fixture** (fixtures/baseline/README.md "Alarms"):
   - The method `s=Alarms.Clear` returns InteropAlarm to normal, and the stack keeps the unacknowledged state in a condition branch (serverFeatures `alarms-branches`). `s=Alarms.Reset` drops the branches.
   - InteropAlarm has AudibleEnabled and AudibleSound, an AudioVariableType with ListId (serverFeatures `alarms-audible`).
+- **asyncua `client push` and `client gds-pull`** (clientOperations `push`, `gds-pull`; clientFeatures `push-groups`, `push-certificates`, `push-transaction-diagnostics`): opcua-asyncio 2.1.0 has neither a push nor a GDS client, so the adapter builds both on plain Calls. `push` takes every flag of §1 "push flags" and returns the §4 `push` result; it calls the standard ServerConfiguration NodeIds and reads the group's TrustList with OpenWithMasks / Read / Close. `gds-pull` runs the steps of §16.2 against the Directory of the GDS namespace, with a hand-encoded ApplicationRecordDataType and an RSA 2048 or ECC P-256 CSR from `cryptography`.
 - `schemas/capabilities.schema.json`: the five new feature strings. `schemas/client-result.schema.json`: the operations `push` and `query`.
 
 ### Changed

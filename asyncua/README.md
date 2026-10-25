@@ -51,12 +51,35 @@ docker run --rm ghcr.io/otfabric/opcua-interop-asyncua:dev \
 
 | | |
 |---|---|
-| `clientOperations` | `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`, `subscribe`, `subscription-lifecycle`, `event-subscribe`, `alarms`, `history-read`, `republish`, `transfer-subscriptions`, `register-nodes`, `node-management`, `find-servers-on-network`, `register-server` (everything except `codec`) |
-| `clientFeatures` | `channel-lifetime`, `deadband` (the client sends DataChangeFilters), `application-uri`, `register-server2` |
+| `clientOperations` | `endpoints`, `find-servers`, `read`, `write`, `browse`, `translate`, `call`, `subscribe`, `subscription-lifecycle`, `event-subscribe`, `alarms`, `history-read`, `republish`, `transfer-subscriptions`, `register-nodes`, `node-management`, `find-servers-on-network`, `register-server`, `push` and `gds-pull` (since 0.15.0; everything except `codec` and `query`) |
+| `clientFeatures` | `channel-lifetime`, `deadband` (the client sends DataChangeFilters), `application-uri`, `register-server2`; since 0.15.0 `push-groups`, `push-certificates`, `push-transaction-diagnostics` |
 | `serverFeatures` | `register-with` (RegisterServer / RegisterServer2 with an LDS); no `alarms`: asyncua 2.1.0 answers ConditionRefresh (`asyncua/server/subscription_service.py` replays the condition events it was given) but implements no condition state machine (no Acknowledge / Confirm / AddComment / Enable / Disable handlers), so the server has no `Alarms.*` fixture |
 | `securityProfiles` | None; Basic128Rsa15, Basic256, Basic256Sha256, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss, Sign and SignAndEncrypt |
 | `userTokenTypes` | Anonymous, UserName |
 | `pubsub` | `supported: false` |
+
+**`client push` and `client gds-pull` (0.15.0).** opcua-asyncio 2.1.0 has no
+push certificate management client and no GDS client, so both commands are
+built on its generic services (`src/opcua_interop_asyncua/push.py`):
+
+- `push` (CLIENT_CONTRACT §1 "push flags", §15) calls the Part 12 §7.10
+  methods on the standard NodeIds of ServerConfiguration (`i=12637`), with
+  every flag of adapter 0.15.0 (`--group`, `--get-certificates`,
+  `--create-self-signed`, `--delete-certificate`, `--update-certificate` with
+  a PEM / PFX key, `--reset-to-defaults`, `--cancel`,
+  `--transaction-diagnostics`). The group's TrustList is found by
+  TranslateBrowsePath (`<group>/TrustList`) and read with OpenWithMasks /
+  Read / Close; its content is decoded with asyncua's `TrustListDataType`.
+- `gds-pull` (§16.2) calls the Directory methods of the GDS namespace
+  `http://opcfoundation.org/UA/GDS/` (index looked up on the server). The
+  ApplicationRecordDataType of RegisterApplication is encoded by hand
+  (asyncua has no GDS types); the CSR is made with `cryptography` (RSA 2048
+  or ECC P-256, URI SAN = `--app-uri`, DNS SAN `localhost`). ProductUri of
+  the record: `urn:opcua-interop:asyncua`.
+
+Neither is served by the asyncua server (no `push-management` or `gds-pull`
+server feature); the commands are for servers that implement Part 12, such as
+go-opcua.
 
 The server serves the full baseline fixture. Some of it is adapter code,
 because an asyncua server has to supply that logic itself:
@@ -80,6 +103,7 @@ because an asyncua server has to supply that logic itself:
 |---|---|
 | ECC security policies (`ECC_*`), `--ecc-dir` | `asyncua.crypto.security_policies` implements only the RSA policies. `--ecc-dir` is ignored with a warning (as Milo does), the fixture's ECC profiles are skipped, and an `ECC_*` client policy is an input error |
 | Reverse connect (`--reverse-connect`, `--reverse-listen`) | asyncua has no ReverseHello in its transports |
+| `query` | asyncua's client has no QueryFirst / QueryNext service calls |
 | `codec` | asyncua has only the Binary encoding: there is no Part 6 JSON, and its NodeSet2 XML import / export is not the Part 6 XML DataEncoding |
 | `--lds`, `--mdns-name`, `--mdns-capability`; FindServersOnNetwork on the server | asyncua has no mDNS and does not dispatch FindServersOnNetwork. The server does accept RegisterServer / RegisterServer2 (see deviation 13) |
 | `--pubsub-config`, `codec pubsub-*` | `asyncua.pubsub` (UADP over UDP) is experimental and has no JSON encoding, MQTT, security / SKS or JSON configuration loader, so it is not wired to the adapter |
