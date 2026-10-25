@@ -72,22 +72,26 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
-## v0.15.1
+## v0.16.0
 
 **Date:** 2026-10-25
 **Previous release:** v0.15.0
 
 ### Summary
 
-asyncua connects over Sign / SignAndEncrypt to UA-.NETStandard 2.0.1 servers again, which send their certificate with its issuer chain. The `dotnet-gds` server gets `--no-certificate-chain` for clients that take no chain, and CLIENT_CONTRACT.md §16.3 records which client stacks take one.
+asyncua connects over Sign / SignAndEncrypt to UA-.NETStandard 2.0.1 servers again, which send their certificate with its issuer chain, and its `client browse` works against UA-.NETStandard and async-opcua servers. The `dotnet` and `dotnet-gds` servers get `--no-certificate-chain` for clients that take no chain, and CLIENT_CONTRACT.md §16.3 records which client stacks take one.
 
 ### Added
 
-- **`--no-certificate-chain`** server flag of `dotnet-gds` (CLIENT_CONTRACT.md §16.1): GetEndpoints and CreateSession return the server certificate alone (`SecurityConfiguration.SendCertificateChain = false`). The default is unchanged: the certificate followed by its issuers, as Part 6 §6.2.3 allows. `scripts/smoke.sh dotnet-gds` runs `gds-pull` against such a server too.
+- **`--no-certificate-chain`** server flag of `dotnet` and `dotnet-gds` (CLIENT_CONTRACT.md §11, §16.1): GetEndpoints and CreateSession return the server certificate alone (`SecurityConfiguration.SendCertificateChain = false`). The default is unchanged: the certificate followed by its issuers, as Part 6 §6.2.3 allows. No new `serverFeatures` string.
+  - `scripts/smoke.sh dotnet-gds` runs `gds-pull` against such a server too.
+  - `scripts/smoke.sh dotnet` reads over Basic256Sha256 / SignAndEncrypt from a CA-signed dotnet server with and without the chain. `scripts/smoke.sh cross-dotnet` adds the open62541 client: it reads from the `--no-certificate-chain` server, and gets the known `BadCertificateInvalid` from the chained one.
 
 ### Fixed
 
 - **asyncua client against UA-.NETStandard 2.0.1 servers** (`dotnet`, `dotnet-gds`) with a CA-signed certificate: every secure command, `gds-pull` included, stopped with `cannot use the client certificate / key: error parsing asn1 value: ParseError { kind: ExtraData }`. The adapter handed the endpoint's ServerCertificate, a chain, to `Client.set_security`, which reads one certificate. It now passes the leaf. opcua-asyncio 2.1.0 itself takes chains.
+- **asyncua `client browse`** against UA-.NETStandard and async-opcua servers answered `BadViewTimestampInvalid`: asyncua 2.1.0's `ua.ViewDescription()` sets its Timestamp to the current time, which a null ViewId does not allow (Part 4 §7.45). The adapter sends the null ViewDescription (asyncua/README.md). `scripts/smoke.sh cross-asyncua` with the async-opcua and dotnet images passes.
+- **async-opcua `--trust-list` check** (`src/pki.rs` `validate_against`) validates the first certificate of a chained ServerCertificate instead of logging `server certificate not trusted: … trailing data`. async-opcua 0.19.0 itself still rejects the chain (async-opcua README deviation 10).
 
 ### Notes
 

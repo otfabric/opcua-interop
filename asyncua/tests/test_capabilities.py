@@ -32,7 +32,7 @@ class CapabilitiesTest(unittest.TestCase):
     def test_document(self):
         c = self.caps
         self.assertEqual(c["schemaVersion"], "1.0")
-        self.assertEqual(c["adapter"], {"name": "asyncua", "version": "0.15.0"})
+        self.assertEqual(c["adapter"], {"name": "asyncua", "version": "0.16.0"})
         self.assertEqual(c["stack"]["name"], "opcua-asyncio")
         self.assertRegex(c["stack"]["version"], r"^\d+\.\d+\.\d+$")
         self.assertEqual(c["roles"], ["client", "server"])
