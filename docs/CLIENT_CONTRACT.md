@@ -3094,3 +3094,35 @@ request with the service fault `BadHistoryOperationInvalid`
 (`BadServiceUnsupported`). The node-opcua server has no `s=History.Events`
 and declares neither `history-events` nor `history-events-update`; its
 client operations work against the dotnet fixture.
+
+### 17.4 asyncua 2.1.0 (server)
+
+The fixture is created in code with EventNotifier `0x05` (no HistoryWrite) and
+the seed written straight into the history storage. The adapter's storage
+(`fixture.History`, a subclass of asyncua's `HistoryDict`) adds what the stack
+leaves out: it evaluates the WhereClause with asyncua's own evaluator and pages
+at `NumValuesPerNode` with a continuation point. The adapter declares
+`history-events` only. Behaviour that remains:
+
+- OfType compares the event type exactly: `--of-type i=2041` does not match
+  `hist-evt-3` (a SystemEventType), so `--of-type i=2041 --min-severity 300`
+  gives `hist-evt-2` and `hist-evt-4`.
+- Continuation points are stateless: release and reuse both answer `Good`.
+- Both range ends are inclusive, and a range with no events answers `Good`,
+  not `GoodNoData`.
+- The HistoryRead bit of the EventNotifier is not checked.
+- HistoryUpdate is refused with `BadUserAccessDenied` (the request is denied
+  before dispatch; asyncua has no handler for it), not `BadServiceUnsupported`.
+  No `History.ResetEvents`.
+- Events raised through asyncua's event generator get random EventIds; the
+  fixture writes the seed directly so the EventIds are the contract's.
+
+### 17.5 Client notes
+
+- open62541 1.5.9 uses the raw HistoryRead / HistoryUpdate services:
+  `UA_Client_HistoryRead_events` stops on `GoodNoData`. open62541 has no event
+  store, so its server has no fixture.
+- Milo 1.1.8 prints status names with an underscore (`Good_EntryInserted`), as
+  for every other operation; compare the numeric `code`.
+- async-opcua 0.19 and Milo have no event-history server; async-opcua uses the
+  generic HistoryRead / HistoryUpdate of its client.
