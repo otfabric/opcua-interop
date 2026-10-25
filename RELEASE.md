@@ -72,6 +72,41 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.17.0
+
+**Date:** 2026-10-25
+**Previous release:** v0.16.0
+
+### Summary
+
+Historical events (OPC UA Part 11): two new client operations, `history-read-events` (HistoryRead with ReadEventDetails) and `history-update-events` (HistoryUpdate with UpdateEventDetails / DeleteEventDetails), on all six adapters, and the server fixture `s=History.Events` with five seeded events. The UA-.NETStandard server serves it for read and update, and CLIENT_CONTRACT.md §17 records what the stacks do with it.
+
+### Added
+
+- **`client history-read-events`** (CLIENT_CONTRACT.md §1 flags, §4 result, §17; clientOperations `history-read-events`): one or more `--node`, `--start` / `--end` (null DateTime when omitted), `--num-values`, `--select` (browse paths from BaseEventType, default EventId, EventType, SourceNode, SourceName, Time, ReceiveTime, Message, Severity), `--of-type` / `--min-severity` (WhereClause `[And(1, 2), OfType, GreaterThanOrEqual]` when both are given), `--continuation-point`, `--release-continuation-point`, `--timestamps`, and `--scenario continue` with `--max-pages`, which follows the continuation points per node and then releases and reuses the last one. Each result has the event fields by SelectClause, in the §7 encodings.
+- **`client history-update-events`** (clientOperations `history-update-events`): `--perform insert|replace|update` with `--select` and `--event` (a JSON object keyed by select path, values `{"type", "value"}`), or `--perform delete` with `--event-id`. The result has the node StatusCode and the OperationResults as the server returns them.
+- Both operations in the **dotnet** adapter (raw HistoryRead / HistoryUpdate on the session) and the **node-opcua** adapter (raw requests with the node-opcua-types details). CLIENT_CONTRACT.md §13 lists them for open62541, Milo, async-opcua and asyncua as well.
+- **Event history fixture** `s=History.Events` (fixtures/baseline/README.md "History (events)", CLIENT_CONTRACT.md §17.1). It is built in code and Organizes from `s=History`, with EventNotifier SubscribeToEvents | HistoryRead (| HistoryWrite). Five events are seeded from `2026-07-24T10:00:00Z`, 5 s apart, `hist-evt-0` … `hist-evt-4`, Severity 100 … 500; `hist-evt-3` is a SystemEventType. The method `s=History.ResetEvents` restores the seed.
+- **UA-.NETStandard server** (serverFeatures `history-events`, `history-events-update`, serverServices `HistoryUpdate`): the fixture is served by the stack's historian dispatcher on an `InMemoryHistorianProvider` (`EventReadWrite`). The stack evaluates the WhereClause, projects the SelectClauses, pages with continuation points, and runs insert / replace / update / delete.
+- `schemas/capabilities.schema.json`: the serverFeatures `history-events` and `history-events-update`. `schemas/client-result.schema.json`: the operations `history-read-events` and `history-update-events` and their results.
+- `scripts/smoke.sh`:
+  - `dotnet` runs the history-events checks of §17.1 against its own server (forward, reverse, pages 2-2-1, OfType, Severity, both, insert / replace / update / delete, ResetEvents).
+  - `node-opcua` checks that the node-opcua server has no event history.
+  - `cross-dotnet` takes the node-opcua image as an optional fourth argument and runs the same checks from every client whose `print-capabilities` lists `history-read-events`. The Makefile, CI and Release workflows pass the image.
+
+### Notes
+
+- UA-.NETStandard 2.0.1 (CLIENT_CONTRACT.md §17.2):
+  - The time range includes StartTime and excludes EndTime. Null StartTime and EndTime together are `BadInvalidTimestampArgument`.
+  - The WhereClause applies after a page is cut, so a filtered page can hold fewer events than `--num-values` and still have a continuation point.
+  - An `And` element placed after its operands is `BadEventFilterInvalid`.
+  - Continuation points belong to their session.
+  - An inserted event keeps only the fields it was given. Delete reports `Good`.
+  - When every operation of an update fails, the node StatusCode is that Bad status, so the command exits 4.
+- node-opcua 2.187.12 historizes variables only. Its server answers a HistoryRead with ReadEventDetails with the service fault `BadHistoryOperationInvalid` and does not serve HistoryUpdate (`BadServiceUnsupported`), so it has no `s=History.Events` and declares neither feature (§17.3).
+
+---
+
 ## v0.16.0
 
 **Date:** 2026-10-25
