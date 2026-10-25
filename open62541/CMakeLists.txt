@@ -35,6 +35,7 @@ set(ADAPTER_SRCS
     src/fixture.c
     src/server.c
     src/client.c
+    src/history_events.c
     src/codec.c
     src/discovery.c
     src/part12.c
