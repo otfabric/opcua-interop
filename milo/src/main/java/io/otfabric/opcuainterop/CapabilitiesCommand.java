@@ -43,14 +43,18 @@ public class CapabilitiesCommand {
                 "call", "subscribe", "subscription-lifecycle", "event-subscribe", "alarms",
                 "history-read", "republish", "transfer-subscriptions",
                 "register-nodes", "node-management",
-                "find-servers-on-network", "register-server", "codec"));
+                "find-servers-on-network", "register-server", "codec",
+                // Push certificate management (§15) and the GDS pull model (§16.2), built
+                // on plain Calls: Milo 1.1.8 has neither client.
+                "push", "gds-pull"));
         // What this adapter can do beyond the plain operations. Eclipse Milo
         // 1.1.8 has no reverse connect (no ReverseHello in its transports), no
         // ECC security policies, and its server answers RegisterServer(2) /
         // FindServersOnNetwork with Bad_ServiceUnsupported: none of those is listed.
         out.put("clientFeatures",        Arrays.asList(
                 "channel-lifetime", "deadband", "register-server2",
-                "codec-json", "codec-xml", "codec-json-verbose"));
+                "codec-json", "codec-xml", "codec-json-verbose",
+                "push-groups", "push-certificates", "push-transaction-diagnostics"));
         out.put("serverFeatures",        Arrays.asList(
                 "deadband", "percent-deadband", "register-with"));
         Map<String, Object> codec = new LinkedHashMap<>();
