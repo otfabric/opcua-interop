@@ -1012,7 +1012,8 @@ def _condition_entry(fields) -> dict:
         "sourceNode": _f_nodeid(fields, 2),
         "sourceName": _f_type(fields, 3, ua.VariantType.String, str),
         "conditionName": _f_type(fields, 7, ua.VariantType.String, str),
-        "time": _f_type(fields, 4, ua.VariantType.DateTime, fmt_datetime),
+        # the OPC UA null DateTime (1601-01-01, encoded 0) is null
+        "time": _f_type(fields, 4, ua.VariantType.DateTime, lambda d: fmt_datetime(d) if d is not None and d.year > 1601 else None),
         "message": _f_text(fields, 5),
         "severity": _f_type(fields, 6, ua.VariantType.UInt16, int),
         "retain": _f_type(fields, 9, ua.VariantType.Boolean, bool),

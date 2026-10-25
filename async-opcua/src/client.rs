@@ -2024,7 +2024,8 @@ fn condition_entry(f: &[Variant]) -> Value {
         (
             "time",
             match f.get(AL_TIME) {
-                Some(Variant::DateTime(d)) => json!(fmt_datetime(d)),
+                // the OPC UA null DateTime (1601-01-01, encoded 0) is null
+                Some(Variant::DateTime(d)) if !d.is_null() => json!(fmt_datetime(d)),
                 _ => Value::Null,
             },
         ),

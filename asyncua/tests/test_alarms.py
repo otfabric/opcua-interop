@@ -61,6 +61,10 @@ class AlarmsTest(unittest.TestCase):
         self.assertIsNone(e["conditionId"])
         self.assertIsNone(client._condition_entry([])["eventId"])
 
+    def test_null_datetime_is_null(self):
+        null_time = ua.Variant(datetime.datetime(1601, 1, 1), ua.VariantType.DateTime)
+        self.assertIsNone(client._condition_entry(_fields(f4=null_time))["time"])
+
     def test_presence_flags(self):
         a = Args(["--acknowledge", "--confirm", "false", "--add-comment"])
         self.assertTrue(client._presence_flag(a, "--acknowledge"))

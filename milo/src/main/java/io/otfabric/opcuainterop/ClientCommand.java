@@ -1367,7 +1367,9 @@ public class ClientCommand {
         e.put("sourceNode",    alarmNodeId(f, 2));
         e.put("sourceName",    src instanceof String ? src : null);
         e.put("conditionName", cn instanceof String ? cn : null);
-        e.put("time",          time instanceof DateTime ? ((DateTime) time).getJavaInstant().toString() : null);
+        // the OPC UA null DateTime (1601-01-01, encoded 0) is null
+        e.put("time",          time instanceof DateTime && ((DateTime) time).getUtcTime() > 0
+                ? ((DateTime) time).getJavaInstant().toString() : null);
         e.put("message",       alarmText(f, 5));
         e.put("severity",      sev instanceof UShort ? ((UShort) sev).intValue() : null);
         e.put("retain",        alarmBool(f, 9));

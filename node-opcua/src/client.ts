@@ -1704,7 +1704,8 @@ export function conditionEntry(fields: Variant[]): ConditionEntry {
         sourceNode: nid(2),
         sourceName: str(3),
         conditionName: str(7),
-        time: t instanceof Date ? dateToString(t) : null,
+        // the OPC UA null DateTime (1601-01-01, encoded 0) is null
+        time: t instanceof Date && t.getTime() > Date.UTC(1601, 0, 2) ? dateToString(t) : null,
         message: text(5),
         severity: typeof sev === "number" ? sev : null,
         retain: bool(9),
