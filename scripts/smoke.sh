@@ -905,6 +905,8 @@ run_single_smoke() {
     stop_server "${cname}"
     if [[ "${adapter}" == "open62541" ]]; then
         run_open62541_features "${image}"
+    elif [[ "${adapter}" == "dotnet" ]]; then
+        run_dotnet_chain_checks "${image}"
     fi
     trap - EXIT
 }
@@ -1059,6 +1061,71 @@ run_client_checks() {
     done
 }
 
+# run_dotnet_chain_checks <dotnet-image> [open62541-image]: the dotnet server
+# with the dotnet-server identity of the test PKI, once with the default
+# certificate chain and once with --no-certificate-chain (CLIENT_CONTRACT.md
+# §11, §16.3). The dotnet client takes both. open62541 v1.5.9 compares the
+# CreateSession ServerCertificate with the leaf byte for byte, so it connects
+# only to the --no-certificate-chain server; the chained server is checked as a
+# known limitation and fails when open62541 takes chains.
+run_dotnet_chain_checks() {
+    local img_dotnet="$1" img_open62541="${2:-}"
+    local model="nsu=urn:otfabric:opcua-interop:model;s="
+
+    prepare_pki
+    FEAT_NET="smoke-net-$$"
+    docker network create "${FEAT_NET}" >/dev/null
+    local chain="smoke-dotnet-chain-$$" leaf="smoke-dotnet-leaf-$$" c
+    FEAT_CONTAINERS+=("${chain}" "${leaf}")
+    log "Starting dotnet servers with a CA-signed certificate (chain, --no-certificate-chain)..."
+    for c in "${chain}" "${leaf}"; do
+        local extra=()
+        [[ "${c}" == "${leaf}" ]] && extra=(--no-certificate-chain)
+        docker run -d --name "${c}" --network "${FEAT_NET}" \
+            -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+            "${img_dotnet}" server --fixture /fixtures/baseline/fixture.json \
+            --advertised-host "${c}" --endpoint-path "${ENDPOINT_PATH}" \
+            --certificate /pki/dotnet-server/cert.crt --private-key /pki/dotnet-server/cert.key \
+            --pki-dir /pki/dotnet-server/pki ${extra[@]+"${extra[@]}"} >/dev/null
+    done
+    wait_ready "${chain}"
+    wait_ready "${leaf}"
+    if docker logs "${leaf}" 2>&1 | grep "sent without its issuer chain" >/dev/null; then
+        ok "dotnet: --no-certificate-chain"
+    else
+        fail "dotnet: --no-certificate-chain not applied"
+    fi
+
+    local b256=(--security-policy Basic256Sha256 --security-mode SignAndEncrypt)
+    local dn=(--certificate /pki/dotnet-client/cert.crt --private-key /pki/dotnet-client/cert.key
+              --trust-list /pki/ca/ca.crt)
+    local o62541=(--certificate /pki/open62541-client/cert.crt --private-key /pki/open62541-client/cert.key
+                  --trust-list /pki/ca/ca.crt)
+    local out
+    for c in "${chain}:chain" "${leaf}:--no-certificate-chain"; do
+        out=$(feat_client "${img_dotnet}" - read --endpoint "opc.tcp://${c%%:*}:4840${ENDPOINT_PATH}" \
+                --node "${model}Scalar.Int32" "${b256[@]}" "${dn[@]}") || true
+        feat_expect "dotnet→dotnet (${c#*:}): Basic256Sha256/SignAndEncrypt read" \
+            '.success == true and .results[0].value == -123456789' "${out}"
+    done
+    if [[ -n "${img_open62541}" ]]; then
+        out=$(feat_client "${img_open62541}" - read --endpoint "opc.tcp://${leaf}:4840${ENDPOINT_PATH}" \
+                --node "${model}Scalar.Int32" "${b256[@]}" "${o62541[@]}") || true
+        feat_expect "o62541→dotnet (--no-certificate-chain): Basic256Sha256/SignAndEncrypt read" \
+            '.success == true and .results[0].value == -123456789' "${out}"
+        out=$(feat_client "${img_open62541}" - read --endpoint "opc.tcp://${chain}:4840${ENDPOINT_PATH}" \
+                --node "${model}Scalar.Int32" "${b256[@]}" "${o62541[@]}") || true
+        if echo "${out}" | jq -e '.success == false and .serviceResult.name == "BadCertificateInvalid"' >/dev/null 2>&1; then
+            ok "o62541→dotnet (chain): BadCertificateInvalid (known open62541 v1.5.9 limitation: CreateSession certificate compared with the leaf, CLIENT_CONTRACT.md §16.3)"
+        elif echo "${out}" | jq -e '.success == true' >/dev/null 2>&1; then
+            fail "o62541→dotnet (chain): secure read succeeded — open62541 takes the chain now; update CLIENT_CONTRACT.md §16.3"
+        else
+            fail "o62541→dotnet (chain): unexpected result: ${out}"
+        fi
+    fi
+    feature_cleanup
+}
+
 run_cross_dotnet_smoke() {
     local img_dotnet="$1"
     local img_open62541="$2"
@@ -1100,6 +1167,9 @@ run_cross_dotnet_smoke() {
     stop_server "${cname_open62541}"
     stop_server "${cname_milo}"
     stop_server "${cname_dotnet}"
+    trap feature_cleanup EXIT
+    log "Cross-stack: open62541-client → dotnet-server, certificate chain"
+    run_dotnet_chain_checks "${img_dotnet}" "${img_open62541}"
     trap - EXIT
 }
 
@@ -1393,7 +1463,7 @@ run_dotnet_gds_smoke() {
         --certificate /pki/dotnet-server/cert.crt --private-key /pki/dotnet-server/cert.key \
         --pki-dir /pki/dotnet-server/pki --no-certificate-chain >/dev/null
     wait_ready "${gds_leaf}"
-    if docker logs "${gds_leaf}" 2>&1 | grep -q "sent without its issuer chain"; then
+    if docker logs "${gds_leaf}" 2>&1 | grep "sent without its issuer chain" >/dev/null; then
         ok "dotnet-gds: --no-certificate-chain"
     else
         fail "dotnet-gds: --no-certificate-chain not applied"

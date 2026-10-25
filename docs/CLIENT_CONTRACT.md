@@ -1477,6 +1477,7 @@ supplied. The server must exit with code 6.
 | `--wss-port <n>` | UA-.NETStandard: also listen for `opc.wss://<advertised-host>:<n><endpoint-path>` (Part 6 §7.5, wss-uasc-uabinary, sub-protocol `opcua+uacp`). Needs `--certificate` / `--private-key`; SecurityPolicy None only (TLS protects the channel), Anonymous and UserName | 0 (off) |
 | `--pubsub-config <file>` | open62541: OPC UA PubSub (Part 14) configuration — a JSON file with a `PubSubConfigurationDataType`, security groups and SKS settings (§14). Applied after startup; the ready file is only written once it is applied; an invalid configuration exits 1. UA-.NETStandard: the same file on Opc.Ua.PubSub, without SKS and information model (§14.13). Milo, async-opcua, node-opcua, asyncua: refused (exit 2) | — |
 | `--auditing` | UA-.NETStandard (adapter 0.15.0, `serverFeatures` `auditing`): ServerConfiguration AuditingEnabled, i.e. Server/Auditing true. The stack delivers audit events (AuditEventType subtypes) to event monitored items of sessions on SignAndEncrypt channels (and HTTPS) only. Other adapters: unknown flag | off |
+| `--no-certificate-chain` | UA-.NETStandard (`dotnet` and `dotnet-gds`, adapter 0.16.0, a presence flag): the ServerCertificate of GetEndpoints and of CreateSession is the application certificate alone (`SecurityConfiguration.SendCertificateChain = false`). By default it is the certificate followed by its issuers (Part 6 §6.2.3); the OpenSecureChannel SenderCertificate keeps the chain either way. For clients that take no chain (§16.3). Other adapters: unknown flag | off (chain) |
 
 Notes on the discovery flags:
 
@@ -2621,7 +2622,7 @@ plus the GDS administrator).
   (GetEndpoints) and of CreateSession is the certificate followed by its
   issuers, DER certificates concatenated (Part 6 §6.2.3); with the test PKI
   the `dotnet-server` certificate (994 bytes) and `OTFabric Test CA` (854
-  bytes). `--no-certificate-chain` (adapter **0.15.1**, a presence flag) sets
+  bytes). `--no-certificate-chain` (adapter **0.16.0**, a presence flag) sets
   the stack's `SecurityConfiguration.SendCertificateChain` to false, so both
   carry the certificate alone; the OpenSecureChannel SenderCertificate keeps
   the chain either way (§16.3). The default is the spec behaviour; the flag is
@@ -2816,16 +2817,19 @@ exit 3, bad input exit 2 (§5).
   Part 6 §6.2.3 allows a chain in these ByteStrings, and the stack verifies a
   client signature over either the leaf or the whole blob
   (`Opc.Ua.Server/Session/Session.cs:1039`, `:1532`). The `dotnet` adapter's
-  server (same stack, same `dotnet-server` identity) behaves the same way.
-  Clients on Basic256Sha256 SignAndEncrypt against the adapter 0.15.1 server
+  server (same stack, same `dotnet-server` identity) behaves the same way and
+  takes the same `--no-certificate-chain` (§11).
+  Clients on Basic256Sha256 SignAndEncrypt against the adapter 0.16.0 server
   (`gds-pull` of the adapter images; go-opcua: a session and a Read):
 
   | Client | Default (chain) | `--no-certificate-chain` | Why |
   |---|---|---|---|
   | UA-.NETStandard (dotnet, dotnet-gds), Eclipse Milo 1.1.8, go-opcua | connects | connects | parse the leaf and keep the rest as intermediates |
-  | asyncua (opcua-asyncio 2.1.0) | connects since adapter 0.15.1 | connects | the stack takes chains (`asyncua/client/client.py:56` `_first_cert_from_chain`, used at `:292` and `:790`; `crypto/uacrypto.py:60` `x509_from_der`), but adapter 0.15.0 passed the endpoint's ServerCertificate to `Client.set_security(server_certificate=…)`, which loads it as one certificate (`crypto/uacrypto.py:57`, cryptography `ParseError { kind: ExtraData }`). Adapter 0.15.1 passes the leaf. |
+  | asyncua (opcua-asyncio 2.1.0) | connects since adapter 0.16.0 | connects | the stack takes chains (`asyncua/client/client.py:56` `_first_cert_from_chain`, used at `:292` and `:790`; `crypto/uacrypto.py:60` `x509_from_der`), but adapter 0.15.0 passed the endpoint's ServerCertificate to `Client.set_security(server_certificate=…)`, which loads it as one certificate (`crypto/uacrypto.py:57`, cryptography `ParseError { kind: ExtraData }`). Adapter 0.16.0 passes the leaf. |
   | open62541 v1.5.9 | `BadCertificateInvalid` after CreateSession | connects | the channel keeps the leaf of the endpoint's certificate (`src/client/ua_client_connect.c:1899-1902`, `getLeafCertificate`), then CreateSession compares the response's ServerCertificate with it byte for byte (`ua_client_connect.c:1694`): chain ≠ leaf. A stack limitation; no client option skips the comparison. |
   | async-opcua 0.19.0 | `BadCertificateInvalid` (X509Error) | `BadCertificateInvalid` (X509Error) | `X509::from_der` parses exactly one certificate and rejects trailing data (`async-opcua-crypto/src/x509.rs:423-427`); it parses the endpoint's ServerCertificate (`async-opcua-client/src/transport/channel.rs:342`), the OpenSecureChannel SenderCertificate (`async-opcua-core/src/comms/secure_channel.rs:794`, 1848 bytes also with `--no-certificate-chain`) and the CreateSession ServerCertificate, which must also equal the endpoint's byte for byte (`async-opcua-client/src/session/services/session.rs:208-213`). A stack limitation with no hook; it fails against every UA-.NETStandard 2.0.1 server whose certificate has an issuer in its stores (async-opcua/README.md, deviation 10). |
 
   The default stays the chain. `scripts/smoke.sh dotnet-gds` runs `gds-pull`
-  against both kinds of server.
+  against both kinds of server; `scripts/smoke.sh cross-dotnet` reads with the
+  open62541 client from both kinds of `dotnet` server (Good with
+  `--no-certificate-chain`, `BadCertificateInvalid` with the chain).

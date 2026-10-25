@@ -178,6 +178,12 @@ namespace OpcUaInterop
             // AuditCondition*Events of the alarm methods) reach event monitored items of
             // SignAndEncrypt sessions (the stack's rule).
             bool auditing = a.Has("--auditing");
+            // --no-certificate-chain (adapter 0.16.0, opt-in): the ServerCertificate of the
+            // endpoints and of CreateSession is the leaf only (SecurityConfiguration.
+            // SendCertificateChain = false). The default sends the certificate followed by its
+            // issuers (Part 6 §6.2.3), which some client stacks do not accept
+            // (CLIENT_CONTRACT.md §16.3). Same flag as dotnet-gds.
+            bool sendChain = !a.Has("--no-certificate-chain");
             string registerWith = a.Get("--register-with");
             int registerIntervalMs = Math.Max(500, a.GetInt("--register-interval-ms", 30000));
 
@@ -280,7 +286,7 @@ namespace OpcUaInterop
                 Pki.CopyCrls(Path.Combine(pkiDir, "trusted", "crl"), Path.Combine(storeRoot, "trusted"));
                 Pki.CopyCertificates(Path.Combine(pkiDir, "issuers", "certs"), Path.Combine(storeRoot, "issuer"));
                 Pki.CopyCrls(Path.Combine(pkiDir, "issuers", "crl"), Path.Combine(storeRoot, "issuer"));
-                Console.Error.WriteLine("[dotnet] info: server certificate " + rsa.Subject + " (" + applicationUri + "), " + trusted.ToString(Inv.C) + " trusted certificate(s)");
+                Console.Error.WriteLine("[dotnet] info: server certificate " + rsa.Subject + " (" + applicationUri + "), " + trusted.ToString(Inv.C) + " trusted certificate(s)" + (sendChain ? "" : ", sent without its issuer chain"));
             }
 
             string rejectedRoot = Path.Combine(pkiDir, "rejected");
@@ -351,6 +357,7 @@ namespace OpcUaInterop
                     .SetRejectSHA1SignedCertificates(true)
                     .SetRejectUnknownRevocationStatus(false)
                     .SetAddAppCertToTrustedStore(false)
+                    .SetSendCertificateChain(sendChain)
                     .CreateAsync()
                     .ConfigureAwait(false);
 
