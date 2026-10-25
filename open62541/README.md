@@ -17,7 +17,13 @@ specific to the open62541 adapter.
 - `--scenario continue`: per node, pages follow continuation points up to
   `--max-pages` (default 8, `--num-values` 0 becomes 2), then the last continuation
   point seen is released and reused, as `history-read --scenario continue` does.
-  Without any continuation point nothing is released and both status codes are Good.
+  The item carries the last page's `statusCode` / `continuationPoint` and the
+  events of all pages in order next to `pages`. Without any continuation point no
+  release is sent and `releaseStatusCode` / `reuseAfterReleaseStatusCode` are null.
+- Event fields are printed as the server returns them (name = the select path of
+  the same index); fewer fields than select clauses are not padded.
+- Input errors (exit 2, before connecting): `--release-continuation-point` without
+  `--continuation-point`, and `--continuation-point` with more than one `--node`.
 - `history-update-events` without `--select` sends the keys of the `--event`
   objects in first-seen order; a key an event lacks is a null Variant. A value
   without `"type"` is a String (JSON string), Boolean, Double (JSON number) or

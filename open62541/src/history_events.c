@@ -272,15 +272,19 @@ static void print_cp(const UA_ByteString *cp) {
     printf("null");
 }
 
-static void print_events(const UA_HistoryReadResult *r, const char *const *sel, size_t nsel) {
-    printf("\"events\":[");
+/* The events of a result as JSON objects separated by commas (no brackets);
+ * *first tracks the separator across calls. Only the fields the server
+ * returned are printed (no padding to the select clauses). */
+static void print_event_list(const UA_HistoryReadResult *r, const char *const *sel, size_t nsel,
+                             int *first) {
     const UA_HistoryEvent *he = NULL;
     if (r && r->historyData.encoding == UA_EXTENSIONOBJECT_DECODED &&
         r->historyData.content.decoded.type == &UA_TYPES[UA_TYPES_HISTORYEVENT])
         he = (const UA_HistoryEvent *)r->historyData.content.decoded.data;
     for (size_t i = 0; he && i < he->eventsSize; i++) {
         const UA_HistoryEventFieldList *fl = &he->events[i];
-        if (i) printf(",");
+        if (!*first) printf(",");
+        *first = 0;
         printf("{\"fields\":[");
         for (size_t j = 0; j < fl->eventFieldsSize; j++) {
             const UA_Variant *v = &fl->eventFields[j];
@@ -299,7 +303,19 @@ static void print_events(const UA_HistoryReadResult *r, const char *const *sel, 
         }
         printf("]}");
     }
+}
+
+static void print_events(const UA_HistoryReadResult *r, const char *const *sel, size_t nsel) {
+    int first = 1;
+    printf("\"events\":[");
+    print_event_list(r, sel, nsel, &first);
     printf("]");
+}
+
+/* Result i of a response, NULL on a service fault or a missing result. */
+static const UA_HistoryReadResult *result_of(const UA_HistoryReadResponse *r, size_t i) {
+    return (UA_StatusCode_isGood(r->responseHeader.serviceResult) && i < r->resultsSize)
+           ? &r->results[i] : NULL;
 }
 
 /* -------------------------------------------------------------------------
@@ -425,6 +441,14 @@ int cmd_history_read_events(int argc, char **argv) {
         cpIn.data = b;
         cpIn.length = b ? len : 0;
     }
+    if (release && !s) {
+        rc = input_fail(op, "--release-continuation-point needs --continuation-point");
+        goto out_args;
+    }
+    if (s && nNodes > 1) {
+        rc = input_fail(op, "--continuation-point takes a single --node");
+        goto out_filter;
+    }
 
     /* SelectClauses */
     rd.filter.selectClauses = (UA_SimpleAttributeOperand *)
@@ -466,11 +490,13 @@ int cmd_history_read_events(int argc, char **argv) {
 
     if (scenario) {
         /* Per node: follow CPs up to --max-pages, then release the last CP
-         * seen and try to reuse it (as history-read --scenario continue). */
+         * seen and try to reuse it (as history-read --scenario continue);
+         * without any CP no release is sent and both statuses are null. */
         if (rd.numValues == 0) rd.numValues = 2;
         UA_StatusCode *releaseSc = (UA_StatusCode *)calloc(nNodes, sizeof(UA_StatusCode));
         UA_StatusCode *reuseSc = (UA_StatusCode *)calloc(nNodes, sizeof(UA_StatusCode));
         int *pageCount = (int *)calloc(nNodes, sizeof(int));
+        int *hadCp = (int *)calloc(nNodes, sizeof(int)); /* a CP was returned: release + reuse ran */
         UA_HistoryReadResponse **all = (UA_HistoryReadResponse **)calloc(nNodes, sizeof(*all));
         int ok = 1, timeout = 0;
         UA_StatusCode emit = UA_STATUSCODE_GOOD;
@@ -496,6 +522,7 @@ int cmd_history_read_events(int argc, char **argv) {
             UA_ByteString_clear(&cur);
             releaseSc[ni] = reuseSc[ni] = UA_STATUSCODE_GOOD;
             if (lastCp.length > 0) {
+                hadCp[ni] = 1;
                 UA_HistoryReadResponse r = hev_read(client, &rd, &nodes[ni], 1, &lastCp, UA_TRUE);
                 releaseSc[ni] = item_status(&r, 0);
                 UA_HistoryReadResponse_clear(&r);
@@ -522,11 +549,21 @@ int cmd_history_read_events(int argc, char **argv) {
             output_nodeid(&nodes[ni]);
             printf(",");
             print_select(sel, selN);
+            /* The last page's status and CP, all pages' events in order. */
+            const UA_HistoryReadResponse *lastPage = &all[ni][pageCount[ni] - 1];
+            printf(",");
+            print_status("statusCode", item_status(lastPage, 0));
+            printf(",");
+            print_cp(result_of(lastPage, 0) ? &result_of(lastPage, 0)->continuationPoint : NULL);
+            printf(",\"events\":[");
+            int first = 1;
+            for (int p = 0; p < pageCount[ni]; p++)
+                print_event_list(result_of(&all[ni][p], 0), sel, selN, &first);
+            printf("]");
             printf(",\"pages\":[");
             for (int p = 0; p < pageCount[ni]; p++) {
                 const UA_HistoryReadResponse *r = &all[ni][p];
-                const UA_HistoryReadResult *res = (UA_StatusCode_isGood(r->responseHeader.serviceResult) &&
-                                                   r->resultsSize > 0) ? &r->results[0] : NULL;
+                const UA_HistoryReadResult *res = result_of(r, 0);
                 if (p) printf(",");
                 printf("{");
                 print_status("statusCode", item_status(r, 0));
@@ -537,9 +574,13 @@ int cmd_history_read_events(int argc, char **argv) {
                 printf("}");
             }
             printf("],");
-            print_status("releaseStatusCode", releaseSc[ni]);
-            printf(",");
-            print_status("reuseAfterReleaseStatusCode", reuseSc[ni]);
+            if (hadCp[ni]) {
+                print_status("releaseStatusCode", releaseSc[ni]);
+                printf(",");
+                print_status("reuseAfterReleaseStatusCode", reuseSc[ni]);
+            } else {
+                printf("\"releaseStatusCode\":null,\"reuseAfterReleaseStatusCode\":null");
+            }
             printf("}");
         }
         output_close_results();
@@ -549,7 +590,7 @@ int cmd_history_read_events(int argc, char **argv) {
             for (int p = 0; p < pageCount[ni]; p++) UA_HistoryReadResponse_clear(&all[ni][p]);
             free(all[ni]);
         }
-        free(all); free(pageCount); free(releaseSc); free(reuseSc);
+        free(all); free(pageCount); free(hadCp); free(releaseSc); free(reuseSc);
         rc = timeout ? 7 : (ok ? 0 : 4);
         goto out_client;
     }
