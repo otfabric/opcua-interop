@@ -72,6 +72,38 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.15.0
+
+**Date:** 2026-10-25
+**Previous release:** v0.14.0
+
+### Summary
+
+The UA-.NETStandard server gets the Part 9 1.05 alarm fixture, server auditing, an empty certificate slot and PubSub multicast loopback; the `dotnet-gds` adapter moves to UA-.NETStandard 2.0.1.
+
+### Added
+
+- **Alarms (1.05) fixture** of the dotnet server (serverFeatures `alarms-105`, fixtures/baseline/README.md "Alarms (1.05)"): `s=Alarms.ExtAlarm` with SuppressedState, OutOfServiceState, SilenceState, LatchedState, ShelvingState, AudibleEnabled / AudibleSound and their methods; the dialog `s=Alarms.Dialog`; the alarm group `s=Alarms.Group`; the fixture methods `ResetExt`, `Deactivate` and `Branch`.
+- **`--auditing`** server flag of the dotnet adapter (serverFeatures `auditing`, CLIENT_CONTRACT.md §11): it turns server auditing on, so the AuditCondition*Events of the alarm methods reach SignAndEncrypt sessions.
+- **Empty certificate slot:** a secure dotnet server (`--certificate`) also lists RsaMinApplicationCertificateType in the CertificateTypes of its DefaultApplicationGroup, with no certificate in it. UA-.NETStandard runs CreateSelfSignedCertificate only for an empty slot, and it refuses to delete its only application certificate.
+- **PubSub multicast loopback** of the dotnet server (serverFeatures `pubsub-multicast-loopback`, CLIENT_CONTRACT.md §14.13): `UdpTransportOptions.MulticastLoopback` is on, so a subscriber on the publisher's host receives its multicast.
+
+### Changed
+
+- **dotnet-gds** now runs on UA-.NETStandard 2.0.1, with `Opc.Ua.Gds.Server` / `Opc.Ua.Gds.Client`, the 2.0 names of the `*.Common` packages. CLIENT_CONTRACT.md §16.3 records the differences:
+  - The ECC CA's CRL is well formed.
+  - CheckRevocationStatus answers BadCertificateRevoked from the GDS CRL.
+  - The GDS namespace indexes are swapped: ns=2 is GDS, ns=3 is applications.
+  - Certificate requests need SignAndEncrypt.
+  - FindApplications is open to Anonymous. The smoke test now checks that an anonymous RegisterApplication is refused.
+  - RequestIds are no longer reused.
+
+### Notes
+
+- In the UA-.NETStandard 2.0.1 server, TimedShelve2 / OneShotShelve2 / Unshelve2 and Respond2 have no handler, so the fixture has none of them.
+
+---
+
 ## v0.14.0
 
 **Date:** 2026-10-25

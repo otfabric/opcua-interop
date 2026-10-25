@@ -540,9 +540,11 @@ namespace OpcUaInterop
         /// The UDP transport options of the adapter. UdpTransportOptions.Ttl defaults to 1 and the
         /// stack applies it to unicast datagrams too (IP_TTL), so a datagram that crosses a router —
         /// a container publishing to the Docker host through its gateway — is dropped on the way.
-        /// 64 is the usual unicast default of Linux and open62541.
+        /// 64 is the usual unicast default of Linux and open62541. MulticastLoopback defaults to
+        /// false (IP_MULTICAST_LOOP off): a subscriber on the publisher's host (e.g. a container on
+        /// --network host and a test process) would never receive its multicast.
         /// </summary>
-        internal static UdpTransportOptions UdpOptions() => new() { Ttl = 64 };
+        internal static UdpTransportOptions UdpOptions() => new() { Ttl = 64, MulticastLoopback = true };
 
         private static bool IsWildcard(string url) =>
             url.StartsWith("opc.udp://0.0.0.0:", StringComparison.OrdinalIgnoreCase) ||

@@ -1342,6 +1342,7 @@ supplied. The server must exit with code 6.
 | `--https-port <n>` | UA-.NETStandard: also listen for `opc.https://<advertised-host>:<n><endpoint-path>` (Part 6 §7.4, https-uabinary, Kestrel). Needs `--certificate` / `--private-key`: the application certificate serves TLS. Without mutual TLS the stack offers SecurityPolicy None only and requires a UserName token (Anonymous is filtered out of HTTPS endpoints) | 0 (off) |
 | `--wss-port <n>` | UA-.NETStandard: also listen for `opc.wss://<advertised-host>:<n><endpoint-path>` (Part 6 §7.5, wss-uasc-uabinary, sub-protocol `opcua+uacp`). Needs `--certificate` / `--private-key`; SecurityPolicy None only (TLS protects the channel), Anonymous and UserName | 0 (off) |
 | `--pubsub-config <file>` | open62541: OPC UA PubSub (Part 14) configuration — a JSON file with a `PubSubConfigurationDataType`, security groups and SKS settings (§14). Applied after startup; the ready file is only written once it is applied; an invalid configuration exits 1. UA-.NETStandard: the same file on Opc.Ua.PubSub, without SKS and information model (§14.13). Milo, async-opcua, node-opcua, asyncua: refused (exit 2) | — |
+| `--auditing` | UA-.NETStandard (adapter 0.15.0, `serverFeatures` `auditing`): ServerConfiguration AuditingEnabled, i.e. Server/Auditing true. The stack delivers audit events (AuditEventType subtypes) to event monitored items of sessions on SignAndEncrypt channels (and HTTPS) only. Other adapters: unknown flag | off |
 
 Notes on the discovery flags:
 
@@ -1449,6 +1450,9 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `push-management` | server | ✓ | — | — | ✓ | ✓ | — | ServerConfiguration push certificate management (Part 12 §7, §15) with `--certificate` / `--private-key` / `--pki-dir`; fixture users get the well-known roles of their `roles` (SecurityAdmin) |
 | `gds-pull` | server | — | — | — | — | — | — | `dotnet-gds` only (§16): the server is a Global Discovery Server (Directory, DefaultApplicationGroup, pull certificate management) |
 | `alarms` | server | ✓ (experimental) | — | — | ✓ | ✓ | — | the Alarms & Conditions fixture (`s=Alarms.*`, fixtures/baseline/README.md "Alarms"); Acknowledge / Confirm / AddComment / Enable / Disable / ConditionRefresh by the stack's own handlers (ConditionRefresh2 too, not exercised by `alarms`) |
+| `alarms-105` | server | — | — | — | ✓ | — | — | adapter 0.15.0: the Part 9 1.05 extension of the Alarms fixture (`s=Alarms.ExtAlarm`, `s=Alarms.Dialog`, `s=Alarms.Group`, fixtures/baseline/README.md "Alarms (1.05)"): Suppress / Silence / OutOfService / Latched / Shelving state methods, a dialog, condition branches, an alarm group and AudibleSound |
+| `auditing` | server | — | — | — | ✓ | — | — | adapter 0.15.0: `--auditing` (§11) turns the server's auditing on: audit events (AuditCondition*EventType of the alarm methods among them) reach event monitored items of SignAndEncrypt sessions |
+| `pubsub-multicast-loopback` | server | — | — | — | ✓ | — | — | adapter 0.15.0: the PubSub runtime (§14) loops its own UDP multicast back to the host (IP_MULTICAST_LOOP), so a subscriber on the same host (e.g. `--network host`) receives the publisher's multicast |
 
 `transports` in `print-capabilities` lists the endpoint schemes the adapter
 dials and serves: `["opc.tcp"]`, UA-.NETStandard (adapter 0.11.0)
@@ -2221,6 +2225,7 @@ on both adapters:
 | WriterGroup `MaxNetworkMessageSize` | taken per connection, from a resolver `PubSubApplicationBuilder` cannot set | the smallest `MaxNetworkMessageSize` of a connection's WriterGroups; a larger NetworkMessage is sent as chunk NetworkMessages (Part 14 §7.2.4.4.4), each secured on its own |
 | MQTT DataSetReader / ReaderGroup `QueueName` | subscribes only the default discovery topics (`opcua/<encoding>/metadata/…`) | adds the QueueNames of the BrokerDataSetReaderTransportDataType (and ReaderGroup) to the subscriptions |
 | UDP TTL | `UdpTransportOptions.Ttl` (default 1) is applied to unicast datagrams too: a datagram to the Docker host through its gateway is dropped | `Ttl` 64 (unicast and multicast) |
+| UDP multicast loopback | `UdpTransportOptions.MulticastLoopback` false: a subscriber on the publisher's host never receives its multicast | `MulticastLoopback` true (adapter 0.15.0, `serverFeatures` `pubsub-multicast-loopback`) |
 
 A publisher on a receive-all address (`opc.udp://0.0.0.0:<p>`) without a
 WriterGroup destination sends its NetworkMessages to the last address it
