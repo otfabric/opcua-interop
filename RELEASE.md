@@ -72,6 +72,28 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.13.0
+
+**Date:** 2026-10-25
+**Previous release:** v0.12.0
+
+### Summary
+
+Certificate management by the Part 12 push model: the UA-.NETStandard, node-opcua and open62541 servers carry it (serverFeatures `push-management`), and the node-opcua client has a `push` command.
+
+### Added
+
+- **Push management (serverFeatures `push-management`) in the UA-.NETStandard, node-opcua and open62541 servers:** ServerConfiguration with the DefaultApplicationGroup TrustList, UpdateCertificate, CreateSigningRequest, GetRejectedList and ApplyChanges, for a SecurityAdmin session over SignAndEncrypt (open62541 checks no roles). CLIENT_CONTRACT.md §15 lists the flags, the results and how each stack behaves.
+- **node-opcua `client push`:** `--add-certificate`, `--remove-certificate`, `--issuer`, `--csr` and `--apply` against a server's push interface.
+- **UA-.NETStandard server:** fixture users get the well-known roles of their `roles`, SecurityAdmin among them.
+- **open62541:** the image is built with `UA_ENABLE_GDS_PUSHMANAGEMENT`; `amalgam/fix_gds_amalgamation.py` renames two static functions that clash in the amalgamation.
+
+### Not supported
+
+- No push client for UA-.NETStandard (Gds.Client.Common has no 2.0.1 release), open62541 v1.5.9 (no push client API), Eclipse Milo, asyncua or async-opcua; Milo, asyncua and async-opcua servers do not declare `push-management`.
+
+---
+
 ## v0.12.0
 
 **Date:** 2026-10-25
