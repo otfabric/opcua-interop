@@ -54,12 +54,31 @@ static void silent_log(void *ctx, UA_LogLevel level, UA_LogCategory cat,
 }
 static UA_Logger g_silent_logger = { silent_log, NULL, NULL };
 
-/* Apply the silent logger to a freshly-initialised client config, including
- * the event loop that is created by UA_ClientConfig_setDefault. */
+/* Apply the silent logger to a client config, including the event loop that
+ * is created by UA_ClientConfig_setDefault. UA_Client_new installs a malloc'd
+ * stdout logger (UA_Log_Stdout_new, freed by its `clear`) and hands that
+ * pointer to the event loop, the certificate verification and the None
+ * security policies; every copy is pointed at the silent logger before the
+ * old one is cleared, so nothing keeps a dangling pointer and it is not
+ * leaked. Idempotent: a config that already has the silent logger only gets
+ * its copies re-pointed. */
 static void client_silence_logger(UA_ClientConfig *cfg) {
+    UA_Logger *old = cfg->logging;
     cfg->logging = &g_silent_logger;
     if (cfg->eventLoop)
         cfg->eventLoop->logger = &g_silent_logger;
+    if (!old || old == &g_silent_logger)
+        return;
+    if (cfg->certificateVerification.logging == old)
+        cfg->certificateVerification.logging = &g_silent_logger;
+    for (size_t i = 0; i < cfg->securityPoliciesSize; i++)
+        if (cfg->securityPolicies[i].logger == old)
+            cfg->securityPolicies[i].logger = &g_silent_logger;
+    for (size_t i = 0; i < cfg->authSecurityPoliciesSize; i++)
+        if (cfg->authSecurityPolicies[i].logger == old)
+            cfg->authSecurityPolicies[i].logger = &g_silent_logger;
+    if (old->clear)
+        old->clear(old);
 }
 
 /* Load a binary (DER) file into a UA_ByteString.  Returns UA_BYTESTRING_NULL
@@ -535,7 +554,7 @@ static int endpoint_check_security(const char *url, UA_StatusCode *out_sc) {
         sc == UA_STATUSCODE_BADSECURECHANNELIDINVALID) {
         c = UA_Client_new();
         if (!c) { *out_sc = UA_STATUSCODE_BADOUTOFMEMORY; return 0; }
-        UA_Client_getConfig(c)->logging = &g_silent_logger;
+        client_silence_logger(UA_Client_getConfig(c));
         UA_ClientConfig_setDefault(UA_Client_getConfig(c));
         client_silence_logger(UA_Client_getConfig(c));
         sc = UA_Client_getEndpoints(c, url, &epCount, &eps);
@@ -727,7 +746,7 @@ static UA_Client *make_client_unconnected(const char *url,
     /* Install the silent logger before the config helpers run: they log
      * (to stdout) while loading policies, and stdout is reserved for the
      * result envelope. */
-    cfg->logging = &g_silent_logger;
+    client_silence_logger(cfg);
 
 #ifdef UA_ENABLE_ENCRYPTION
     if (!security_is_none()) {
@@ -1020,7 +1039,7 @@ UA_Client *cli_new_plain_client(int request_ms) {
     UA_Client *client = UA_Client_new();
     if (!client) return NULL;
     UA_ClientConfig *cfg = UA_Client_getConfig(client);
-    cfg->logging = &g_silent_logger;
+    client_silence_logger(cfg);
     UA_ClientConfig_setDefault(cfg);
     client_silence_logger(cfg);
     if (request_ms > 0) cfg->timeout = (UA_UInt32)request_ms;
