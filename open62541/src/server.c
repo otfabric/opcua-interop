@@ -1025,6 +1025,143 @@ static UA_StatusCode interop_add_event_type(UA_Server *server, UA_NodeId *outTyp
 }
 
 /* -------------------------------------------------------------------------
+ * Alarms & Conditions fixture (serverFeatures "alarms", EXPERIMENTAL in
+ * open62541 v1.5.9): s=Alarms / s=Alarms.Source / s=Alarms.InteropAlarm
+ * (AlarmConditionType with ConfirmedState) / s=Alarms.Reset. Acknowledge,
+ * Confirm, AddComment, Enable, Disable and ConditionRefresh(2) are the
+ * stack's own method callbacks.
+ * ---------------------------------------------------------------------- */
+
+#ifdef UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS
+
+static UA_NodeId g_alarmSource;
+static UA_NodeId g_alarmCondition;
+
+static UA_StatusCode alarm_set_id(UA_Server *server, const char *field, UA_Boolean v) {
+    UA_Variant value;
+    UA_Variant_setScalar(&value, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    return UA_Server_setConditionVariableFieldProperty(server, g_alarmCondition, &value,
+        UA_QUALIFIEDNAME(0, (char *)field), UA_QUALIFIEDNAME(0, "Id"));
+}
+
+static int alarm_is_enabled(UA_Server *server) {
+    UA_QualifiedName path[2] = {UA_QUALIFIEDNAME(0, "EnabledState"), UA_QUALIFIEDNAME(0, "Id")};
+    UA_BrowsePathResult bpr = UA_Server_browseSimplifiedBrowsePath(server, g_alarmCondition, 2, path);
+    int enabled = 0;
+    if (bpr.statusCode == UA_STATUSCODE_GOOD && bpr.targetsSize > 0) {
+        UA_Variant v;
+        UA_Variant_init(&v);
+        if (UA_Server_readValue(server, bpr.targets[0].targetId.nodeId, &v) == UA_STATUSCODE_GOOD &&
+            UA_Variant_hasScalarType(&v, &UA_TYPES[UA_TYPES_BOOLEAN]))
+            enabled = *(UA_Boolean *)v.data;
+        UA_Variant_clear(&v);
+    }
+    UA_BrowsePathResult_clear(&bpr);
+    return enabled;
+}
+
+/* (Re-)arm: Enabled, Active, unacknowledged, unconfirmed, Retain, Severity
+ * 500, Message "interop-alarm", and a new event. */
+static UA_StatusCode alarm_arm(UA_Server *server) {
+    UA_StatusCode sc = UA_STATUSCODE_GOOD;
+    if (!alarm_is_enabled(server))
+        sc |= alarm_set_id(server, "EnabledState", true);
+    UA_Variant value;
+    UA_Boolean retain = true;
+    UA_Variant_setScalar(&value, &retain, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    sc |= UA_Server_setConditionField(server, g_alarmCondition, &value, UA_QUALIFIEDNAME(0, "Retain"));
+    UA_UInt16 severity = 500;
+    UA_Variant_setScalar(&value, &severity, &UA_TYPES[UA_TYPES_UINT16]);
+    sc |= UA_Server_setConditionField(server, g_alarmCondition, &value, UA_QUALIFIEDNAME(0, "Severity"));
+    /* false does not trigger an event in v1.5.9 */
+    sc |= alarm_set_id(server, "AckedState", false);
+    sc |= alarm_set_id(server, "ConfirmedState", false);
+    sc |= alarm_set_id(server, "ActiveState", false);
+    sc |= alarm_set_id(server, "ActiveState", true);
+    UA_DateTime now = UA_DateTime_now();
+    sc |= UA_Server_writeObjectProperty_scalar(server, g_alarmCondition, UA_QUALIFIEDNAME(0, "Time"),
+                                               &now, &UA_TYPES[UA_TYPES_DATETIME]);
+    /* Last: the Severity / ActiveState callbacks of the stack overwrite Message. */
+    UA_LocalizedText msg = UA_LOCALIZEDTEXT("en", "interop-alarm");
+    UA_Variant_setScalar(&value, &msg, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    sc |= UA_Server_setConditionField(server, g_alarmCondition, &value, UA_QUALIFIEDNAME(0, "Message"));
+    sc |= UA_Server_triggerConditionEvent(server, g_alarmCondition, g_alarmSource, NULL);
+    return sc;
+}
+
+static UA_StatusCode method_alarm_reset_cb(UA_Server *srv, const UA_NodeId *sessionId,
+    void *sessionCtx, const UA_NodeId *methodId, void *methodCtx,
+    const UA_NodeId *objectId, void *objectCtx,
+    size_t inputSize, const UA_Variant *input,
+    size_t outputSize, UA_Variant *output) {
+    (void)sessionId; (void)sessionCtx; (void)methodId; (void)methodCtx;
+    (void)objectId; (void)objectCtx; (void)inputSize; (void)input;
+    (void)outputSize; (void)output;
+    UA_StatusCode sc = alarm_arm(srv);
+    if (sc != UA_STATUSCODE_GOOD)
+        fprintf(stderr, "[open62541] warn: Alarms.Reset: %s\n", UA_StatusCode_name(sc));
+    return sc;
+}
+
+/* Returns 1 when the fixture is in place. */
+static int interop_add_alarms(UA_Server *server) {
+    UA_UInt16 ns = ns_index_for_uri(server, "urn:otfabric:opcua-interop:model");
+    UA_NodeId compat = resolve_nodeid(server, "nsu=urn:otfabric:opcua-interop:model;s=Compatibility");
+    if (ns == 0 || UA_NodeId_isNull(&compat)) {
+        fprintf(stderr, "[open62541] warn: no Compatibility folder; Alarms fixture disabled\n");
+        return 0;
+    }
+    UA_ObjectAttributes fa = UA_ObjectAttributes_default;
+    fa.displayName = UA_LOCALIZEDTEXT("en", "Alarms");
+    fa.description = UA_LOCALIZEDTEXT("en", "Alarms & Conditions (Part 9) interoperability.");
+    UA_StatusCode sc = UA_Server_addObjectNode(server, UA_NODEID_STRING(ns, "Alarms"), compat,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(ns, "Alarms"),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE), fa, NULL, NULL);
+    UA_NodeId_clear(&compat);
+
+    UA_ObjectAttributes sa = UA_ObjectAttributes_default;
+    sa.displayName = UA_LOCALIZEDTEXT("en", "Alarm Source");
+    sa.description = UA_LOCALIZEDTEXT("en", "ConditionSource of InteropAlarm.");
+    sa.eventNotifier = 1; /* SubscribeToEvents */
+    g_alarmSource = UA_NODEID_STRING_ALLOC(ns, "Alarms.Source");
+    if (sc == UA_STATUSCODE_GOOD)
+        sc = UA_Server_addObjectNode(server, g_alarmSource, UA_NODEID_STRING(ns, "Alarms"),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(ns, "Alarms.Source"),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE), sa, NULL, NULL);
+    /* Root notifier: event items on the Server object receive its events. */
+    if (sc == UA_STATUSCODE_GOOD)
+        sc = UA_Server_addReference(server, UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_HASNOTIFIER),
+            UA_EXPANDEDNODEID_STRING(ns, "Alarms.Source"), true);
+    if (sc == UA_STATUSCODE_GOOD)
+        sc = UA_Server_createCondition(server, UA_NODEID_STRING(ns, "Alarms.InteropAlarm"),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_ALARMCONDITIONTYPE),
+            UA_QUALIFIEDNAME(ns, "InteropAlarm"), g_alarmSource,
+            UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), &g_alarmCondition);
+
+    if (sc == UA_STATUSCODE_GOOD) {
+        UA_MethodAttributes ma = UA_MethodAttributes_default;
+        ma.displayName = UA_LOCALIZEDTEXT("en", "Reset");
+        ma.description = UA_LOCALIZEDTEXT("en", "Re-arm InteropAlarm (enabled, active, unacknowledged, unconfirmed).");
+        ma.executable = true;
+        ma.userExecutable = true;
+        sc = UA_Server_addMethodNode(server, UA_NODEID_STRING(ns, "Alarms.Reset"), g_alarmSource,
+            UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QUALIFIEDNAME(ns, "Reset"),
+            ma, method_alarm_reset_cb, 0, NULL, 0, NULL, NULL, NULL);
+    }
+    if (sc == UA_STATUSCODE_GOOD)
+        sc = alarm_arm(server);
+    if (sc != UA_STATUSCODE_GOOD) {
+        fprintf(stderr, "[open62541] warn: Alarms fixture setup failed: %s\n", UA_StatusCode_name(sc));
+        return 0;
+    }
+    fprintf(stderr, "[open62541] info: Alarms fixture (AlarmConditionType InteropAlarm) ready\n");
+    return 1;
+}
+
+#endif /* UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS */
+
+/* -------------------------------------------------------------------------
  * ECC SecurityPolicies
  *
  * Each ECC policy needs an application certificate of its own curve. They are
@@ -1638,6 +1775,10 @@ int server_run(const ServerArgs *args) {
             evtCtx = NULL;
         }
     }
+
+#ifdef UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS
+    interop_add_alarms(server);
+#endif
 
     /* Register behavior repeated callbacks */
     BehaviorCtx *behCtxs = calloc(fixture->behaviorCount, sizeof(BehaviorCtx));

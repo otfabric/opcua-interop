@@ -36,11 +36,15 @@ RUN git clone --depth 1 --branch "${OPEN62541_COMMIT}" "${OPEN62541_REPO}" open6
 #    whose broker connection drops while it is already shutting down (a
 #    refused or lost broker while a WriterGroup goes to Error); apply the
 #    delayed-removal fix of upstream master.
+#  * fix_condition_refresh_args.py — with PubSub's generated IntegerId type
+#    the v1.5.9 A&C ConditionRefresh(2) callbacks reject every SubscriptionId
+#    (Bad_InvalidArgument); accept IntegerId (an alias of UInt32) as well.
 COPY amalgam/inline_mqtt.py amalgam/backport_json_reader.py \
-     amalgam/backport_mqtt_teardown.py /src/prepare/
+     amalgam/backport_mqtt_teardown.py amalgam/fix_condition_refresh_args.py /src/prepare/
 RUN python3 /src/prepare/inline_mqtt.py /src/open62541 \
     && python3 /src/prepare/backport_json_reader.py /src/open62541 \
-    && python3 /src/prepare/backport_mqtt_teardown.py /src/open62541
+    && python3 /src/prepare/backport_mqtt_teardown.py /src/open62541 \
+    && python3 /src/prepare/fix_condition_refresh_args.py /src/open62541
 
 # Only the amalgamation target is built: the adapter compiles open62541.c itself,
 # and with UA_ENABLE_AMALGAMATION + mDNS (mdnsd) the non-amalgamated object
@@ -51,7 +55,8 @@ RUN python3 /src/prepare/inline_mqtt.py /src/open62541 \
 # (MQTT-C), the PubSub information model with its configuration methods, the
 # Security Key Service (GetSecurityKeys / SetSecurityKeys, SKS pull client;
 # AddSecurityGroup is bound by the adapter) and the PubSubConfiguration file
-# loader. The PubSub-Aes128/256-CTR message
+# loader. Alarms & Conditions (Part 9, EXPERIMENTAL in v1.5.9; needs the full
+# namespace zero, which the adapter builds anyway) for the Alarms fixture. The PubSub-Aes128/256-CTR message
 # security policies of v1.5.9 only exist for mbedTLS; the adapter carries an
 # OpenSSL implementation of them (src/pubsub_security.c).
 WORKDIR /src/open62541/build
@@ -66,6 +71,7 @@ RUN cmake .. \
       -DUA_ENABLE_ENCRYPTION=OPENSSL \
       -DUA_ENABLE_HISTORIZING=ON \
       -DUA_ENABLE_SUBSCRIPTIONS_EVENTS=ON \
+      -DUA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS=ON \
       -DUA_ENABLE_DISCOVERY=ON \
       -DUA_ENABLE_DISCOVERY_MULTICAST=MDNSD \
       -DUA_ENABLE_JSON_ENCODING=ON \
