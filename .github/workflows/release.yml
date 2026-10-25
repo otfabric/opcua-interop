@@ -252,7 +252,7 @@ jobs:
           scripts/smoke.sh dotnet "${REGISTRY}/opcua-interop-dotnet:${VERSION}"
           scripts/smoke.sh node-opcua "${REGISTRY}/opcua-interop-node-opcua:${VERSION}"
           scripts/smoke.sh cross "${REGISTRY}/opcua-interop-open62541:${VERSION}" "${REGISTRY}/opcua-interop-milo:${VERSION}" "${REGISTRY}/opcua-interop-async-opcua:${VERSION}" "${REGISTRY}/opcua-interop-node-opcua:${VERSION}"
-          scripts/smoke.sh cross-dotnet "${REGISTRY}/opcua-interop-dotnet:${VERSION}" "${REGISTRY}/opcua-interop-open62541:${VERSION}" "${REGISTRY}/opcua-interop-milo:${VERSION}"
+          scripts/smoke.sh cross-dotnet "${REGISTRY}/opcua-interop-dotnet:${VERSION}" "${REGISTRY}/opcua-interop-open62541:${VERSION}" "${REGISTRY}/opcua-interop-milo:${VERSION}" "${REGISTRY}/opcua-interop-node-opcua:${VERSION}"
           scripts/smoke.sh asyncua "${REGISTRY}/opcua-interop-asyncua:${VERSION}"
           scripts/smoke.sh cross-asyncua "${REGISTRY}/opcua-interop-asyncua:${VERSION}" "${REGISTRY}/opcua-interop-open62541:${VERSION}" "${REGISTRY}/opcua-interop-milo:${VERSION}"
           scripts/smoke.sh dotnet-gds "${REGISTRY}/opcua-interop-dotnet-gds:${VERSION}"

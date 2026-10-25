@@ -10,8 +10,9 @@
 #   smoke.sh node-opcua <image>                       # single-adapter smoke
 #   smoke.sh cross <image-open62541> <image-milo> [image-async-opcua] [image-node-opcua]
 #                                                     # cross-stack self-check
-#   smoke.sh cross-dotnet <image-dotnet> <image-open62541> <image-milo>
-#                                                     # dotnet against both reference stacks
+#   smoke.sh cross-dotnet <image-dotnet> <image-open62541> <image-milo> [image-node-opcua]
+#                                                     # dotnet against both reference stacks (and the
+#                                                     # node-opcua client against the dotnet history events)
 #   smoke.sh asyncua <image>                          # single-adapter smoke
 #   smoke.sh cross-asyncua <image-asyncua> <image-open62541> <image-milo> [image-async-opcua] [image-dotnet]
 #                                                     # asyncua against the reference stacks
@@ -426,6 +427,111 @@ check_codec_xml_unqualified_rejected() {
 FEAT_NET=""
 FEAT_TMP=""
 FEAT_CONTAINERS=()
+
+# ── Historical events (CLIENT_CONTRACT.md §17) ─────────────────────────────────
+
+# client_has_op <image> <operation>: the image's print-capabilities lists the client operation.
+client_has_op() {
+    docker run --rm "$1" print-capabilities 2>/dev/null | jq -e --arg op "$2" '.clientOperations | index($op) != null' >/dev/null 2>&1
+}
+
+# hev_expect <label> <jq-filter> <output>: ok when the filter holds on the output.
+hev_expect() {
+    if echo "$3" | jq -e "$2" >/dev/null 2>&1; then
+        ok "$1"
+    else
+        fail "$1 — unexpected result: $3"
+    fi
+}
+
+# check_history_events <client-image> <endpoint> <label>: history-read-events and
+# history-update-events against a server with history-events and
+# history-events-update (s=History.Events, the reference results of §17.1).
+check_history_events() {
+    local img="$1" ep="$2" label="$3"
+    local m="nsu=urn:otfabric:opcua-interop:model;s="
+    local n="${m}History.Events"
+    local fwd=(--start 2026-07-24T10:00:00Z --end 2026-07-24T10:01:00Z)
+    local ids='[.results[0].events[] | .fields[0].value | @base64d]'
+    local out
+    b64() { printf %s "$1" | base64 | tr -d '\n'; }
+
+    out=$(run_client_op "${img}" call --endpoint "${ep}" --object "${n}" --method "${m}History.ResetEvents") || true
+    hev_expect "${label}: History.ResetEvents" '.success == true' "${out}"
+    out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}") || true
+    hev_expect "${label}: history-read-events forward → hist-evt-0…4 with the default SelectClauses" \
+        ".success == true and ${ids} == [\"hist-evt-0\",\"hist-evt-1\",\"hist-evt-2\",\"hist-evt-3\",\"hist-evt-4\"]
+         and (.results[0].selectClauses | length) == 8
+         and ([.results[0].events[0].fields[] | .dataType] == [\"ByteString\",\"NodeId\",\"NodeId\",\"String\",\"DateTime\",\"DateTime\",\"LocalizedText\",\"UInt16\"])
+         and .results[0].events[0].fields[6].value.text == \"history-event-0\" and .results[0].events[4].fields[7].value == 500" "${out}"
+    out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" \
+            --start 2026-07-24T10:01:00Z --end 2026-07-24T09:59:00Z) || true
+    hev_expect "${label}: history-read-events reverse → hist-evt-4…0" \
+        ".success == true and ${ids} == [\"hist-evt-4\",\"hist-evt-3\",\"hist-evt-2\",\"hist-evt-1\",\"hist-evt-0\"]" "${out}"
+    out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}" \
+            --num-values 2 --scenario continue) || true
+    hev_expect "${label}: history-read-events --num-values 2 --scenario continue → pages 2,2,1" \
+        '.success == true and [.results[0].pages[] | (.events | length)] == [2,2,1] and (.results[0].events | length) == 5
+         and .results[0].continuationPoint == null and .results[0].releaseStatusCode != null' "${out}"
+    out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}" --of-type i=2130) || true
+    hev_expect "${label}: history-read-events --of-type i=2130 → hist-evt-3" \
+        ".success == true and ${ids} == [\"hist-evt-3\"]" "${out}"
+    out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}" --min-severity 300) || true
+    hev_expect "${label}: history-read-events --min-severity 300 → hist-evt-2…4" \
+        ".success == true and ${ids} == [\"hist-evt-2\",\"hist-evt-3\",\"hist-evt-4\"]" "${out}"
+    out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}" \
+            --of-type i=2041 --min-severity 300 --select EventId --select Severity) || true
+    hev_expect "${label}: history-read-events --of-type i=2041 --min-severity 300 (And) → hist-evt-2…4" \
+        ".success == true and ${ids} == [\"hist-evt-2\",\"hist-evt-3\",\"hist-evt-4\"] and .results[0].selectClauses == [\"EventId\",\"Severity\"]" "${out}"
+
+    local sel=(--select EventId --select EventType --select Time --select Severity --select Message)
+
+    ev() { # ev <event-id> <time> <severity> <text>
+        printf '{"EventId":{"type":"ByteString","value":"%s"},"EventType":{"type":"NodeId","value":"i=2041"},"Time":{"type":"DateTime","value":"%s"},"Severity":{"type":"UInt16","value":%s},"Message":{"type":"LocalizedText","value":{"locale":"en","text":"%s"}}}' \
+            "$(b64 "$1")" "$2" "$3" "$4"
+    }
+    local ops='[.results[0].operationResults[].code]'
+    # GoodEntryInserted 0x00A20000, GoodEntryReplaced 0x00A30000, BadEntryExists 0x809F0000, BadNoEntryExists 0x80A00000
+    out=$(run_client_op "${img}" history-update-events --endpoint "${ep}" --node "${n}" --perform insert "${sel[@]}" \
+            --event "$(ev hist-evt-5 2026-07-24T10:00:25Z 600 inserted)" --event "$(ev hist-evt-0 2026-07-24T10:00:00Z 700 dup)") || true
+    hev_expect "${label}: history-update-events insert → GoodEntryInserted, BadEntryExists" \
+        ".success == true and .results[0].performUpdateType == \"Insert\" and ${ops} == [10616832, 2157903872]" "${out}"
+    out=$(run_client_op "${img}" history-update-events --endpoint "${ep}" --node "${n}" --perform replace "${sel[@]}" \
+            --event "$(ev hist-evt-0 2026-07-24T10:00:00Z 700 replaced)" --event "$(ev hist-evt-9 2026-07-24T10:00:30Z 900 nope)") || true
+    hev_expect "${label}: history-update-events replace → GoodEntryReplaced, BadNoEntryExists" \
+        ".success == true and ${ops} == [10682368, 2157969408]" "${out}"
+    out=$(run_client_op "${img}" history-update-events --endpoint "${ep}" --node "${n}" --perform update "${sel[@]}" \
+            --event "$(ev hist-evt-9 2026-07-24T10:00:30Z 900 upserted)" --event "$(ev hist-evt-0 2026-07-24T10:00:00Z 800 updated)") || true
+    hev_expect "${label}: history-update-events update → GoodEntryInserted, GoodEntryReplaced" \
+        ".success == true and ${ops} == [10616832, 10682368]" "${out}"
+    out=$(run_client_op "${img}" history-update-events --endpoint "${ep}" --node "${n}" --perform delete \
+            --event-id "$(b64 hist-evt-1)" --event-id "$(b64 no-such-event)") || true
+    hev_expect "${label}: history-update-events delete → Good, BadNoEntryExists" \
+        ".success == true and .results[0].performUpdateType == \"Delete\" and ${ops} == [0, 2157969408]" "${out}"
+    out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}" \
+            --select EventId --select Severity --select Message) || true
+    hev_expect "${label}: history-read-events after the updates" \
+        ".success == true and ${ids} == [\"hist-evt-0\",\"hist-evt-2\",\"hist-evt-3\",\"hist-evt-4\",\"hist-evt-5\",\"hist-evt-9\"]
+         and .results[0].events[0].fields[1].value == 800 and .results[0].events[0].fields[2].value.text == \"updated\"" "${out}"
+    out=$(run_client_op "${img}" call --endpoint "${ep}" --object "${n}" --method "${m}History.ResetEvents") || true
+    out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}") || true
+    hev_expect "${label}: history-read-events after History.ResetEvents → the seed" \
+        ".success == true and ${ids} == [\"hist-evt-0\",\"hist-evt-1\",\"hist-evt-2\",\"hist-evt-3\",\"hist-evt-4\"]" "${out}"
+}
+
+# check_history_events_unsupported <client-image> <endpoint> <label>: the node-opcua
+# server has no event history (§17.3): HistoryRead with ReadEventDetails is the
+# service fault BadHistoryOperationInvalid, HistoryUpdate BadServiceUnsupported.
+check_history_events_unsupported() {
+    local img="$1" ep="$2" label="$3" out
+    out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node i=2253 \
+            --start 2026-07-24T10:00:00Z --end 2026-07-24T10:01:00Z) || true
+    hev_expect "${label}: history-read-events → BadHistoryOperationInvalid (no event history, §17.3)" \
+        '.success == false and .serviceResult.name == "BadHistoryOperationInvalid"' "${out}"
+    out=$(run_client_op "${img}" history-update-events --endpoint "${ep}" --node i=2253 --perform delete --event-id AAAA) || true
+    hev_expect "${label}: history-update-events → BadServiceUnsupported (§17.3)" \
+        '.success == false and .serviceResult.name == "BadServiceUnsupported" and .results == []' "${out}"
+}
 
 feature_cleanup() {
     local c img=""
@@ -901,6 +1007,11 @@ run_single_smoke() {
         check_codec_node "${image}" "${endpoint}" "${adapter}→${adapter}"
         check_codec_roundtrip "${image}" "${image}" "${adapter}→${adapter}"
     fi
+    if [[ "${adapter}" == "dotnet" ]]; then
+        check_history_events "${image}" "${endpoint}" "${adapter}→${adapter}"
+    elif [[ "${adapter}" == "node-opcua" ]]; then
+        check_history_events_unsupported "${image}" "${endpoint}" "${adapter}→${adapter}"
+    fi
 
     stop_server "${cname}"
     if [[ "${adapter}" == "open62541" ]]; then
@@ -1130,6 +1241,7 @@ run_cross_dotnet_smoke() {
     local img_dotnet="$1"
     local img_open62541="$2"
     local img_milo="$3"
+    local img_node_opcua="${4:-}"
     local port_open62541=14840
     local port_milo=14841
     local port_dotnet=14842
@@ -1156,6 +1268,16 @@ run_cross_dotnet_smoke() {
     run_client_checks "${img_open62541}" "${ep_dotnet}" "o62541→dotnet"
     log "Cross-stack: milo-client → dotnet-server"
     run_client_checks "${img_milo}" "${ep_dotnet}" "milo→dotnet"
+
+    # The dotnet event history fixture (§17) from every client that has the
+    # operations (node-opcua since adapter 0.17.0, the others when they declare them).
+    local img
+    for img in "${img_open62541}" "${img_milo}" ${img_node_opcua:+"${img_node_opcua}"}; do
+        if client_has_op "${img}" history-read-events; then
+            log "Cross-stack: ${img} client → dotnet-server, historical events"
+            check_history_events "${img}" "${ep_dotnet}" "${img##*/}→dotnet"
+        fi
+    done
 
     log "Cross-stack: codec documents of dotnet decoded by the reference stacks and back"
     check_codec_roundtrip "${img_dotnet}" "${img_open62541}" "dotnet→o62541"
@@ -1502,7 +1624,7 @@ case "${MODE}" in
         run_cross_smoke "${1:?open62541 image required}" "${2:?milo image required}" "${3:-}" "${4:-}"
         ;;
     cross-dotnet)
-        run_cross_dotnet_smoke "${1:?dotnet image required}" "${2:?open62541 image required}" "${3:?milo image required}"
+        run_cross_dotnet_smoke "${1:?dotnet image required}" "${2:?open62541 image required}" "${3:?milo image required}" "${4:-}"
         ;;
     asyncua)
         run_single_smoke "asyncua" "${1:?image required}"

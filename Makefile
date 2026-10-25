@@ -213,9 +213,9 @@ smoke-cross-stack: ## Cross-stack interop self-check (run 'make image' first)
 	@echo "Smoking cross-stack interop self-check..."
 	@scripts/smoke.sh cross $(IMAGE_OPEN62541):$(VERSION) $(IMAGE_MILO):$(VERSION) $(IMAGE_ASYNC_OPCUA):$(VERSION) $(IMAGE_NODE_OPCUA):$(VERSION)
 
-smoke-cross-dotnet: ## Cross-stack smoke: dotnet client/server against open62541 and Milo (run 'make image' first)
+smoke-cross-dotnet: ## Cross-stack smoke: dotnet client/server against open62541 and Milo, node-opcua client against the dotnet history events (run 'make image' first)
 	@echo "Smoking cross-stack interop of the dotnet adapter..."
-	@scripts/smoke.sh cross-dotnet $(IMAGE_DOTNET):$(VERSION) $(IMAGE_OPEN62541):$(VERSION) $(IMAGE_MILO):$(VERSION)
+	@scripts/smoke.sh cross-dotnet $(IMAGE_DOTNET):$(VERSION) $(IMAGE_OPEN62541):$(VERSION) $(IMAGE_MILO):$(VERSION) $(IMAGE_NODE_OPCUA):$(VERSION)
 
 smoke-pubsub: ## PubSub smoke: UDP / MQTT / security / SKS / codec / information model (open62541)
 	@echo "Smoking PubSub (open62541)..."

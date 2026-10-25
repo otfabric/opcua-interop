@@ -209,9 +209,10 @@ jobs:
           docker load < /tmp/open62541.tar.gz
           docker load < /tmp/milo.tar.gz
           docker load < /tmp/dotnet.tar.gz
+          docker load < /tmp/node-opcua.tar.gz
 
-      - name: Cross-stack smoke (dotnet against open62541 and Milo)
-        run: scripts/smoke.sh cross-dotnet "${DOTNET_IMAGE}" "${OPEN62541_IMAGE}" "${MILO_IMAGE}"
+      - name: Cross-stack smoke (dotnet against open62541 and Milo, node-opcua against the dotnet history events)
+        run: scripts/smoke.sh cross-dotnet "${DOTNET_IMAGE}" "${OPEN62541_IMAGE}" "${MILO_IMAGE}" "${NODE_OPCUA_IMAGE}"
 
   cross-stack-asyncua:
     name: Cross-stack smoke (asyncua)
