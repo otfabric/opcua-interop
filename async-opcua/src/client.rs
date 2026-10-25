@@ -18,7 +18,7 @@ use opcua::client::{
 use opcua::crypto::SecurityPolicy;
 use opcua::types::{
     AddNodesItem, AttributeId, BrowseDescription, BrowseDescriptionResultMask, BrowseDirection,
-    BrowsePath, ByteString, CallMethodRequest, ContentFilter, ContentFilterElement,
+    BrowsePath, ByteString, CallMethodRequest, LocalizedText, ContentFilter, ContentFilterElement,
     DataChangeFilter, DataChangeNotification, DataValue, DeadbandType, DeleteNodesItem,
     ElementOperand, EndpointDescription, EventFilter, EventNotificationList, ExpandedNodeId,
     ExtensionObject, FilterOperator, HistoryData, HistoryReadValueId, LiteralOperand,
@@ -40,6 +40,9 @@ use crate::values::{
 
 // ── Flags ───────────────────────────────────────────────────────────────────
 
+/// Flags that may be given without a value (then "true").
+const BARE_FLAGS: [&str; 3] = ["--acknowledge", "--confirm", "--add-comment"];
+
 pub struct Opts {
     pairs: Vec<(String, String)>,
 }
@@ -52,6 +55,12 @@ impl Opts {
             let a = &args[i];
             if !a.starts_with("--") {
                 return Err(format!("unexpected argument '{a}'"));
+            }
+            // Presence flags (`alarms --acknowledge`): a bare flag means true.
+            if BARE_FLAGS.contains(&a.as_str()) && args.get(i + 1).is_none_or(|v| v.starts_with("--")) {
+                pairs.push((a.clone(), "true".into()));
+                i += 1;
+                continue;
             }
             let Some(v) = args.get(i + 1) else {
                 return Err(format!("missing value for {a}"));
@@ -549,7 +558,7 @@ fn svc_err(e: opcua::types::Error, what: &str) -> Failure {
 
 // ── Entry ───────────────────────────────────────────────────────────────────
 
-pub const OPERATIONS: [&str; 16] = [
+pub const OPERATIONS: [&str; 17] = [
     "endpoints",
     "find-servers",
     "read",
@@ -560,6 +569,7 @@ pub const OPERATIONS: [&str; 16] = [
     "subscribe",
     "subscription-lifecycle",
     "event-subscribe",
+    "alarms",
     "history-read",
     "republish",
     "transfer-subscriptions",
@@ -603,6 +613,7 @@ pub async fn run(args: &[String]) -> i32 {
         "subscribe" => run_op(sub, rest, |o| Box::pin(op_subscribe(o))).await,
         "subscription-lifecycle" => run_op(sub, rest, |o| Box::pin(op_lifecycle(o))).await,
         "event-subscribe" => run_op(sub, rest, |o| Box::pin(op_events(o))).await,
+        "alarms" => run_op(sub, rest, |o| Box::pin(op_alarms(o))).await,
         "history-read" => run_op(sub, rest, |o| Box::pin(op_history(o))).await,
         "republish" => run_op(sub, rest, |o| Box::pin(op_republish(o))).await,
         "transfer-subscriptions" => run_op(sub, rest, |o| Box::pin(op_transfer(o))).await,
@@ -1902,6 +1913,438 @@ async fn op_events(opts: &Opts) -> Envelope {
     })
 }
 
+// ── Alarms & Conditions (Part 9) ────────────────────────────────────────────
+
+/// SelectClauses of `alarms`: (TypeDefinitionId, BrowsePath). The last one is
+/// the ConditionId: ConditionType, empty BrowsePath, AttributeId NodeId
+/// (Part 9 §5.5.2).
+const ALARM_FIELDS: [(u32, &[&str]); 16] = [
+    (2041, &["EventId"]),
+    (2041, &["EventType"]),
+    (2041, &["SourceNode"]),
+    (2041, &["SourceName"]),
+    (2041, &["Time"]),
+    (2041, &["Message"]),
+    (2041, &["Severity"]),
+    (2782, &["ConditionName"]),
+    (2782, &["BranchId"]),
+    (2782, &["Retain"]),
+    (2782, &["EnabledState", "Id"]),
+    (2782, &["Comment"]),
+    (2881, &["AckedState", "Id"]),
+    (2881, &["ConfirmedState", "Id"]),
+    (2915, &["ActiveState", "Id"]),
+    (2782, &[]),
+];
+
+const AL_EVENT_ID: usize = 0;
+const AL_EVENT_TYPE: usize = 1;
+const AL_SOURCE_NODE: usize = 2;
+const AL_SOURCE_NAME: usize = 3;
+const AL_TIME: usize = 4;
+const AL_MESSAGE: usize = 5;
+const AL_SEVERITY: usize = 6;
+const AL_CONDITION_NAME: usize = 7;
+const AL_RETAIN: usize = 9;
+const AL_ENABLED: usize = 10;
+const AL_COMMENT: usize = 11;
+const AL_ACKED: usize = 12;
+const AL_CONFIRMED: usize = 13;
+const AL_ACTIVE: usize = 14;
+const AL_CONDITION_ID: usize = 15;
+
+const REFRESH_START_EVENT_TYPE: u32 = 2787;
+const REFRESH_END_EVENT_TYPE: u32 = 2788;
+const CONDITION_TYPE: u32 = 2782;
+const CONDITION_REFRESH: u32 = 3875;
+const ACKNOWLEDGE: u32 = 9111;
+const CONFIRM: u32 = 9113;
+const ADD_COMMENT: u32 = 9029;
+
+fn alarm_select_clauses() -> Vec<SimpleAttributeOperand> {
+    ALARM_FIELDS
+        .iter()
+        .map(|(ty, path)| SimpleAttributeOperand {
+            type_definition_id: NodeId::new(0, *ty),
+            browse_path: Some(path.iter().map(|p| QualifiedName::new(0, *p)).collect()),
+            attribute_id: if path.is_empty() { AttributeId::NodeId as u32 } else { AttributeId::Value as u32 },
+            index_range: NumericRange::None,
+        })
+        .collect()
+}
+
+fn al_node(v: Option<&Variant>) -> Option<&NodeId> {
+    match v {
+        Some(Variant::NodeId(n)) if !n.is_null() => Some(n),
+        _ => None,
+    }
+}
+
+fn al_bool(v: Option<&Variant>) -> Value {
+    match v {
+        Some(Variant::Boolean(b)) => json!(b),
+        _ => Value::Null,
+    }
+}
+
+fn al_lt_text(v: Option<&Variant>) -> Option<String> {
+    match v {
+        Some(Variant::LocalizedText(l)) => Some(crate::values::ua_str(&l.text)),
+        _ => None,
+    }
+}
+
+fn al_string(v: Option<&Variant>) -> Option<String> {
+    match v {
+        Some(Variant::String(s)) => s.value().clone(),
+        _ => None,
+    }
+}
+
+fn al_is_type(fields: &[Variant], id: u32) -> bool {
+    al_node(fields.get(AL_EVENT_TYPE)) == Some(&NodeId::new(0, id))
+}
+
+/// The ConditionEntry of the contract.
+fn condition_entry(f: &[Variant]) -> Value {
+    let node = |i: usize| al_node(f.get(i)).map(|n| json!(fmt_node_id(n))).unwrap_or(Value::Null);
+    obj(vec![
+        ("conditionId", node(AL_CONDITION_ID)),
+        (
+            "eventId",
+            match f.get(AL_EVENT_ID) {
+                Some(Variant::ByteString(b)) => b.value.as_ref().map(|d| json!(b64(d))).unwrap_or(Value::Null),
+                _ => Value::Null,
+            },
+        ),
+        ("eventType", node(AL_EVENT_TYPE)),
+        ("sourceNode", node(AL_SOURCE_NODE)),
+        ("sourceName", al_string(f.get(AL_SOURCE_NAME)).map(Value::from).unwrap_or(Value::Null)),
+        ("conditionName", al_string(f.get(AL_CONDITION_NAME)).map(Value::from).unwrap_or(Value::Null)),
+        (
+            "time",
+            match f.get(AL_TIME) {
+                Some(Variant::DateTime(d)) => json!(fmt_datetime(d)),
+                _ => Value::Null,
+            },
+        ),
+        ("message", al_lt_text(f.get(AL_MESSAGE)).map(Value::from).unwrap_or(Value::Null)),
+        (
+            "severity",
+            match f.get(AL_SEVERITY) {
+                Some(Variant::UInt16(s)) => json!(s),
+                _ => Value::Null,
+            },
+        ),
+        ("retain", al_bool(f.get(AL_RETAIN))),
+        ("enabled", al_bool(f.get(AL_ENABLED))),
+        ("acked", al_bool(f.get(AL_ACKED))),
+        ("confirmed", al_bool(f.get(AL_CONFIRMED))),
+        ("active", al_bool(f.get(AL_ACTIVE))),
+        ("comment", al_lt_text(f.get(AL_COMMENT)).map(Value::from).unwrap_or(Value::Null)),
+    ])
+}
+
+/// The events of the `alarms` monitored item.
+#[derive(Default)]
+struct AlarmStore {
+    /// Condition events (non-null ConditionId), in arrival order.
+    events: Vec<Vec<Variant>>,
+    /// 0 before ConditionRefresh, 1 refreshing, 2 RefreshEnd seen.
+    phase: u8,
+    start_seen: bool,
+    end_seen: bool,
+    /// Indices into `events`: the refreshed conditions, last event per id.
+    conditions: Vec<usize>,
+}
+
+impl AlarmStore {
+    fn add(&mut self, fields: Vec<Variant>) {
+        if al_is_type(&fields, REFRESH_START_EVENT_TYPE) {
+            if self.phase == 1 {
+                self.start_seen = true;
+            }
+            return;
+        }
+        if al_is_type(&fields, REFRESH_END_EVENT_TYPE) {
+            if self.phase == 1 {
+                self.end_seen = true;
+                self.phase = 2;
+            }
+            return;
+        }
+        let Some(cid) = al_node(fields.get(AL_CONDITION_ID)).cloned() else {
+            return; // not a condition (e.g. the Events.Source BaseEvents)
+        };
+        self.events.push(fields);
+        let idx = self.events.len() - 1;
+        if self.phase == 1 {
+            match self
+                .conditions
+                .iter()
+                .position(|&i| al_node(self.events[i].get(AL_CONDITION_ID)) == Some(&cid))
+            {
+                Some(p) => self.conditions[p] = idx,
+                None => self.conditions.push(idx),
+            }
+        }
+    }
+
+    fn take(&mut self, msg: &NotificationMessage) {
+        for (h, fields) in events_of(msg) {
+            if h == 1 {
+                self.add(fields);
+            }
+        }
+    }
+
+    fn latest(&self, cid: &NodeId) -> Option<usize> {
+        self.events
+            .iter()
+            .rposition(|e| al_node(e.get(AL_CONDITION_ID)) == Some(cid))
+    }
+}
+
+/// Process the notifications already queued.
+fn al_drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<NotificationMessage>, st: &mut AlarmStore) {
+    while let Ok(msg) = rx.try_recv() {
+        st.take(&msg);
+    }
+}
+
+/// Wait (until `deadline`) for `done(store)`; true when it became true.
+async fn al_wait(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<NotificationMessage>,
+    st: &mut AlarmStore,
+    deadline: Instant,
+    done: impl Fn(&AlarmStore) -> bool,
+) -> bool {
+    loop {
+        al_drain(rx, st);
+        if done(st) {
+            return true;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        match tokio::time::timeout(left, rx.recv()).await {
+            Ok(Some(msg)) => st.take(&msg),
+            Ok(None) | Err(_) => return done(st),
+        }
+    }
+}
+
+async fn al_call(conn: &Conn, object: NodeId, method: u32, inputs: Vec<Variant>) -> StatusCode {
+    let req = CallMethodRequest {
+        object_id: object,
+        method_id: NodeId::new(0, method),
+        input_arguments: Some(inputs),
+    };
+    match conn.session.call(vec![req]).await {
+        Ok(res) => res.first().map(|r| r.status_code).unwrap_or(StatusCode::BadUnexpectedError),
+        Err(e) => e.status(),
+    }
+}
+
+async fn op_alarms(opts: &Opts) -> Envelope {
+    let op = "alarms";
+    let r = match parse_ref(opts.get("--node").unwrap_or("i=2253")) {
+        Ok(r) => r,
+        Err(f) => return Envelope::new(op).fail(&f),
+    };
+    let parsed = (|| -> Result<_, Failure> {
+        let pi: f64 = opts.num("--publishing-interval-ms", 200.0)?;
+        let to: u64 = opts.num("--timeout-ms", 15000)?;
+        let ack = opts.bool("--acknowledge", false)?;
+        let confirm = opts.bool("--confirm", false)?;
+        let add_comment = opts.bool("--add-comment", false)?;
+        Ok((pi, to, ack, confirm, add_comment))
+    })();
+    let (pi, to, want_ack, want_confirm, want_comment) = match parsed {
+        Ok(v) => v,
+        Err(f) => return Envelope::new(op).fail(&f),
+    };
+    let condition_name = opts.get("--condition-name").map(str::to_owned);
+    let comment = opts.get("--comment").unwrap_or("interop-comment").to_owned();
+    with_conn!(op, opts, |conn| {
+        let deadline = Instant::now() + Duration::from_millis(to);
+        let id = conn.resolve(&r).await?;
+        let filter = EventFilter {
+            select_clauses: Some(alarm_select_clauses()),
+            where_clause: ContentFilter { elements: None },
+        };
+        let (sub, mut rx) = create_subscription(&conn, pi, 10_000, 10).await?;
+        let req = MonitoredItemCreateRequest {
+            item_to_monitor: ReadValueId {
+                node_id: id.clone(),
+                attribute_id: AttributeId::EventNotifier as u32,
+                ..Default::default()
+            },
+            monitoring_mode: MonitoringMode::Reporting,
+            requested_parameters: MonitoringParameters {
+                client_handle: 1,
+                sampling_interval: 0.0,
+                filter: ExtensionObject::from_message(filter),
+                queue_size: 1000,
+                discard_oldest: true,
+            },
+        };
+        let created = conn
+            .session
+            .create_monitored_items(sub.id, TimestampsToReturn::Both, vec![req])
+            .await
+            .map_err(|e| svc_err(e, "CreateMonitoredItems"))?;
+        let mon_sc = created.first().map(|c| c.result.status_code).unwrap_or(StatusCode::BadUnexpectedError);
+
+        let mut st = AlarmStore::default();
+        let mut failure: Option<(StatusCode, Category, String)> = None;
+        let mut refresh_sc = mon_sc;
+        let mut target: Option<usize> = None;
+        // (status, follow-up event index, repeat status)
+        let mut actions: [Option<(StatusCode, Option<usize>, Option<StatusCode>)>; 3] = [None, None, None];
+
+        if !mon_sc.is_good() {
+            failure = Some((mon_sc, Category::Service, "event monitored item rejected".into()));
+        } else {
+            al_drain(&mut rx, &mut st);
+            st.phase = 1;
+            refresh_sc = al_call(
+                &conn,
+                NodeId::new(0, CONDITION_TYPE),
+                CONDITION_REFRESH,
+                vec![Variant::UInt32(sub.id)],
+            )
+            .await;
+            if !refresh_sc.is_good() {
+                failure = Some((refresh_sc, Category::Service, "ConditionRefresh failed".into()));
+            } else if !al_wait(&mut rx, &mut st, deadline, |s| s.end_seen).await {
+                failure = Some((StatusCode::BadTimeout, Category::Timeout, "timeout waiting for the RefreshEndEvent".into()));
+            }
+        }
+
+        if failure.is_none() {
+            target = st.conditions.iter().copied().find(|&i| {
+                let f = &st.events[i];
+                match &condition_name {
+                    Some(n) => al_string(f.get(AL_CONDITION_NAME)).as_deref() == Some(n.as_str()),
+                    None => matches!(f.get(AL_RETAIN), Some(Variant::Boolean(true))),
+                }
+            });
+            if target.is_none() && (want_ack || want_confirm || want_comment) {
+                failure = Some((
+                    StatusCode::BadNodeIdUnknown,
+                    Category::Service,
+                    "no matching condition in the ConditionRefresh".into(),
+                ));
+            }
+        }
+
+        if let (None, Some(t)) = (&failure, target) {
+            let cid = al_node(st.events[t].get(AL_CONDITION_ID)).cloned().unwrap_or_default();
+            let steps = [
+                (want_ack, ACKNOWLEDGE, "Acknowledge"),
+                (want_confirm, CONFIRM, "Confirm"),
+                (want_comment, ADD_COMMENT, "AddComment"),
+            ];
+            for (k, (wanted, method, name)) in steps.iter().enumerate() {
+                if !*wanted {
+                    continue;
+                }
+                al_drain(&mut rx, &mut st);
+                // EventId of the latest event of the condition
+                let event_id = st
+                    .latest(&cid)
+                    .and_then(|i| match st.events[i].get(AL_EVENT_ID) {
+                        Some(Variant::ByteString(b)) => Some(b.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(ByteString::null);
+                let args = vec![
+                    Variant::from(event_id.clone()),
+                    Variant::from(LocalizedText::new("en", &comment)),
+                ];
+                let mark = st.events.len();
+                let sc = al_call(&conn, cid.clone(), *method, args.clone()).await;
+                if !sc.is_good() {
+                    actions[k] = Some((sc, None, None));
+                    failure = Some((sc, Category::Service, format!("{name} failed")));
+                    break;
+                }
+                let is_followup = |s: &AlarmStore, i: usize| -> bool {
+                    let f = &s.events[i];
+                    if al_node(f.get(AL_CONDITION_ID)) != Some(&cid) {
+                        return false;
+                    }
+                    match k {
+                        0 => matches!(f.get(AL_ACKED), Some(Variant::Boolean(true))),
+                        1 => matches!(f.get(AL_CONFIRMED), Some(Variant::Boolean(true))),
+                        _ => al_lt_text(f.get(AL_COMMENT)).as_deref() == Some(comment.as_str()),
+                    }
+                };
+                al_wait(&mut rx, &mut st, deadline, |s| (mark..s.events.len()).any(|i| is_followup(s, i))).await;
+                let ev = (mark..st.events.len()).find(|&i| is_followup(&st, i));
+                let repeat = if k == 0 {
+                    // the same, now stale EventId again
+                    Some(al_call(&conn, cid.clone(), *method, args).await)
+                } else {
+                    None
+                };
+                actions[k] = Some((sc, ev, repeat));
+                if ev.is_none() {
+                    failure = Some((StatusCode::BadTimeout, Category::Timeout, format!("timeout waiting for the {name} event")));
+                    break;
+                }
+            }
+        }
+
+        let _ = conn.session.delete_subscription(sub.id).await;
+        let action_json = |a: &Option<(StatusCode, Option<usize>, Option<StatusCode>)>, with_repeat: bool| -> Value {
+            match a {
+                None => Value::Null,
+                Some((sc, ev, rep)) => {
+                    let mut pairs = vec![
+                        ("statusCode", status_json(*sc)),
+                        ("event", ev.map(|i| condition_entry(&st.events[i])).unwrap_or(Value::Null)),
+                    ];
+                    if with_repeat {
+                        pairs.push(("repeatStatusCode", rep.map(status_json).unwrap_or(Value::Null)));
+                    }
+                    obj(pairs)
+                }
+            }
+        };
+        let mut env = Envelope::new(op);
+        env.results.push(obj(vec![
+            ("nodeId", json!(fmt_node_id(&id))),
+            ("subscriptionId", json!(sub.id)),
+            ("monitoredItemStatusCode", status_json(mon_sc)),
+            (
+                "refresh",
+                obj(vec![
+                    ("statusCode", status_json(refresh_sc)),
+                    ("startSeen", json!(st.start_seen)),
+                    ("endSeen", json!(st.end_seen)),
+                ]),
+            ),
+            (
+                "conditions",
+                Value::Array(st.conditions.iter().map(|&i| condition_entry(&st.events[i])).collect()),
+            ),
+            ("target", target.map(|i| condition_entry(&st.events[i])).unwrap_or(Value::Null)),
+            ("acknowledge", action_json(&actions[0], true)),
+            ("confirm", action_json(&actions[1], false)),
+            ("addComment", action_json(&actions[2], false)),
+        ]));
+        if let Some((sc, cat, msg)) = failure {
+            env.success = false;
+            env.service_result = sc;
+            env.error = Some((cat, msg));
+        }
+        Ok(env)
+    })
+}
+
 // ── History ─────────────────────────────────────────────────────────────────
 
 struct HistoryPage {
@@ -2539,3 +2982,76 @@ async fn op_find_servers_on_network(opts: &Opts) -> Envelope {
 #[allow(dead_code)]
 fn _unused(_: &StdMutex<()>, _: ObjectId) {}
 
+
+#[cfg(test)]
+mod alarm_tests {
+    use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn presence_flags() {
+        let o = Opts::parse(&args(&["--endpoint", "opc.tcp://x", "--acknowledge", "--confirm", "--add-comment"])).unwrap();
+        assert_eq!(o.get("--acknowledge"), Some("true"));
+        assert_eq!(o.get("--confirm"), Some("true"));
+        assert_eq!(o.get("--add-comment"), Some("true"));
+        let o = Opts::parse(&args(&["--acknowledge", "false", "--node", "i=2253"])).unwrap();
+        assert!(!o.bool("--acknowledge", true).unwrap());
+        assert!(Opts::parse(&args(&["--node"])).is_err());
+    }
+
+    #[test]
+    fn select_clauses() {
+        let c = alarm_select_clauses();
+        assert_eq!(c.len(), 16);
+        assert_eq!(c[10].browse_path.as_ref().unwrap().len(), 2);
+        assert_eq!(c[15].attribute_id, AttributeId::NodeId as u32);
+        assert!(c[15].browse_path.as_ref().unwrap().is_empty());
+        assert_eq!(c[15].type_definition_id, NodeId::new(0, 2782u32));
+    }
+
+    fn cond_event(id: &str, acked: bool) -> Vec<Variant> {
+        let mut f = vec![Variant::Empty; 16];
+        f[AL_EVENT_ID] = Variant::from(ByteString::from(vec![1u8, 2, 3]));
+        f[AL_EVENT_TYPE] = Variant::from(NodeId::new(0, 2915u32));
+        f[AL_CONDITION_NAME] = Variant::from(UAString::from("InteropAlarm"));
+        f[AL_RETAIN] = Variant::Boolean(true);
+        f[AL_ACKED] = Variant::Boolean(acked);
+        f[AL_CONFIRMED] = Variant::StatusCode(StatusCode::BadNoMatch);
+        f[AL_CONDITION_ID] = Variant::from(NodeId::new(1, id));
+        f
+    }
+
+    fn typed(t: u32) -> Vec<Variant> {
+        let mut f = vec![Variant::Empty; 16];
+        f[AL_EVENT_TYPE] = Variant::from(NodeId::new(0, t));
+        f
+    }
+
+    #[test]
+    fn store_and_entry() {
+        let mut st = AlarmStore::default();
+        st.add(cond_event("before", false)); // before the refresh: not a refreshed condition
+        st.phase = 1;
+        st.add(typed(REFRESH_START_EVENT_TYPE));
+        st.add(cond_event("a", false));
+        st.add(cond_event("a", true));
+        st.add(typed(2041)); // no ConditionId: ignored
+        st.add(typed(REFRESH_END_EVENT_TYPE));
+        assert!(st.start_seen && st.end_seen);
+        assert_eq!(st.conditions, vec![2]);
+        assert_eq!(st.events.len(), 3);
+        let e = condition_entry(&st.events[st.conditions[0]]);
+        assert_eq!(e["conditionId"], json!("ns=1;s=a"));
+        assert_eq!(e["eventId"], json!("AQID"));
+        assert_eq!(e["acked"], json!(true));
+        assert_eq!(e["confirmed"], Value::Null);
+        assert_eq!(e["comment"], Value::Null);
+        assert_eq!(e["conditionName"], json!("InteropAlarm"));
+        let keys: Vec<&String> = e.as_object().unwrap().keys().collect();
+        assert_eq!(keys[0], "conditionId");
+        assert_eq!(keys[14], "comment");
+    }
+}

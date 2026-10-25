@@ -66,6 +66,9 @@ mod tests {
         let ops = c["clientOperations"].as_array().unwrap();
         assert!(!ops.contains(&json!("codec")), "no codec operation");
         assert!(ops.contains(&json!("find-servers-on-network")));
+        assert!(ops.contains(&json!("alarms")), "client alarms operation");
+        let server: Vec<&str> = c["serverFeatures"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(!server.contains(&"alarms"), "async-opcua 0.19 has no A&C server");
         assert_eq!(c["pubsub"]["supported"], json!(false));
         assert!(c.get("codec").is_none());
         let features: Vec<&str> = c["clientFeatures"].as_array().unwrap().iter().chain(c["serverFeatures"].as_array().unwrap()).map(|v| v.as_str().unwrap()).collect();
