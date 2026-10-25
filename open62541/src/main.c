@@ -39,6 +39,8 @@
  *   OPCUA_BIND_ADDRESS, OPCUA_ADVERTISED_HOST
  */
 
+#include <open62541.h> /* build options (UA_ENABLE_*) */
+
 #include "client.h"
 #include "fixture.h"
 #include "server.h"
@@ -112,6 +114,7 @@ static int cmd_print_capabilities(void) {
     printf("    \"subscribe\",\n");
     printf("    \"subscription-lifecycle\",\n");
     printf("    \"event-subscribe\",\n");
+    printf("    \"alarms\",\n");
     printf("    \"history-read\",\n");
     printf("    \"republish\",\n");
     printf("    \"transfer-subscriptions\",\n");
@@ -143,7 +146,13 @@ static int cmd_print_capabilities(void) {
     printf("    \"mdns\",\n");
     printf("    \"register-with\",\n");
     printf("    \"node-management\",\n");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS
+    /* Alarms fixture (Part 9) on the EXPERIMENTAL v1.5.9 A&C server */
+    printf("    \"pubsub\",\n");
+    printf("    \"alarms\"\n");
+#else
     printf("    \"pubsub\"\n");
+#endif
     printf("  ],\n");
     printf("  \"codec\": {\n");
     printf("    \"formats\": [\"json\", \"xml\"],\n");

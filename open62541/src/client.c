@@ -2060,10 +2060,9 @@ static int cmd_call(int argc, char **argv) {
 
     for (int i = 0; i < inCount; i++) UA_Variant_clear(&inputs[i]);
     free(inputs);
-    if (outputs) {
-        for (size_t i = 0; i < outputsSize; i++) UA_Variant_clear(&outputs[i]);
-        UA_free(outputs);
-    }
+    /* UA_Array_delete: a method without outputs returns the empty-array
+     * sentinel, which UA_free must not see. */
+    if (outputs) UA_Array_delete(outputs, outputsSize, &UA_TYPES[UA_TYPES_VARIANT]);
     UA_NodeId_clear(&objectId);
     UA_NodeId_clear(&methodId);
     UA_Client_disconnect(client);
@@ -3862,6 +3861,507 @@ static void print_sc_obj(const char *key, UA_StatusCode sc) {
            key, output_status_code_name(sc), (uint32_t)sc, output_severity(sc));
 }
 
+/* -------------------------------------------------------------------------
+ * alarms subcommand (Part 9 Alarms & Conditions: ConditionRefresh,
+ * Acknowledge, Confirm, AddComment; docs/CLIENT_CONTRACT.md `alarms`)
+ * ---------------------------------------------------------------------- */
+
+#define AL_NF        16
+#define AL_MAX_EVS   1024
+#define AL_MAX_CONDS 64
+
+/* SelectClauses {TypeDefinitionId, BrowsePath[0], BrowsePath[1]}; the last
+ * one is the ConditionId (ConditionType, empty BrowsePath, AttributeId NodeId,
+ * Part 9 §5.5.2). */
+static const struct { UA_UInt32 type; const char *p0; const char *p1; } kAlSelect[AL_NF] = {
+    {UA_NS0ID_BASEEVENTTYPE, "EventId", NULL},
+    {UA_NS0ID_BASEEVENTTYPE, "EventType", NULL},
+    {UA_NS0ID_BASEEVENTTYPE, "SourceNode", NULL},
+    {UA_NS0ID_BASEEVENTTYPE, "SourceName", NULL},
+    {UA_NS0ID_BASEEVENTTYPE, "Time", NULL},
+    {UA_NS0ID_BASEEVENTTYPE, "Message", NULL},
+    {UA_NS0ID_BASEEVENTTYPE, "Severity", NULL},
+    {UA_NS0ID_CONDITIONTYPE, "ConditionName", NULL},
+    {UA_NS0ID_CONDITIONTYPE, "BranchId", NULL},
+    {UA_NS0ID_CONDITIONTYPE, "Retain", NULL},
+    {UA_NS0ID_CONDITIONTYPE, "EnabledState", "Id"},
+    {UA_NS0ID_CONDITIONTYPE, "Comment", NULL},
+    {UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE, "AckedState", "Id"},
+    {UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE, "ConfirmedState", "Id"},
+    {UA_NS0ID_ALARMCONDITIONTYPE, "ActiveState", "Id"},
+    {UA_NS0ID_CONDITIONTYPE, NULL, NULL},
+};
+
+enum { AL_EVENTID = 0, AL_EVENTTYPE, AL_SOURCENODE, AL_SOURCENAME, AL_TIME,
+       AL_MESSAGE, AL_SEVERITY, AL_CONDNAME, AL_BRANCHID, AL_RETAIN,
+       AL_ENABLED, AL_COMMENT, AL_ACKED, AL_CONFIRMED, AL_ACTIVE, AL_CONDID };
+
+typedef struct { UA_Variant v[AL_NF]; } AlEvent;
+
+typedef struct {
+    AlEvent *evs;   /* condition events (non-null ConditionId), arrival order */
+    size_t   n;
+    int      phase; /* 0 before ConditionRefresh, 1 refreshing, 2 RefreshEnd seen */
+    int      startSeen;
+    int      endSeen;
+    size_t   conds[AL_MAX_CONDS]; /* indices into evs: refreshed conditions, last per id */
+    size_t   nConds;
+} AlStore;
+
+static const UA_NodeId *al_nodeid(const UA_Variant *v) {
+    if (v && UA_Variant_hasScalarType(v, &UA_TYPES[UA_TYPES_NODEID]))
+        return (const UA_NodeId *)v->data;
+    return NULL;
+}
+
+static int al_bool(const UA_Variant *v, int *out) {
+    if (v && UA_Variant_hasScalarType(v, &UA_TYPES[UA_TYPES_BOOLEAN])) {
+        *out = *(const UA_Boolean *)v->data ? 1 : 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* Text of a LocalizedText or String field, NULL for any other type. */
+static const UA_String *al_text(const UA_Variant *v) {
+    if (v && UA_Variant_hasScalarType(v, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]))
+        return &((const UA_LocalizedText *)v->data)->text;
+    if (v && UA_Variant_hasScalarType(v, &UA_TYPES[UA_TYPES_STRING]))
+        return (const UA_String *)v->data;
+    return NULL;
+}
+
+static int al_text_eq(const UA_String *t, const char *s) {
+    size_t n = strlen(s);
+    return t && t->length == n && (n == 0 || memcmp(t->data, s, n) == 0);
+}
+
+/* The client hands the event fields over in SelectClause order (the map keys
+ * are derived from the BrowsePaths). Values are borrowed: copy them. */
+static void alarm_notif_cb(UA_Client *client, UA_UInt32 subId, void *subCtx,
+                           UA_UInt32 monId, void *monCtx,
+                           const UA_KeyValueMap eventFields) {
+    (void)client; (void)subId; (void)subCtx; (void)monId;
+    AlStore *st = (AlStore *)monCtx;
+    if (!st || eventFields.mapSize < AL_NF) return;
+    const UA_NodeId *et = al_nodeid(&eventFields.map[AL_EVENTTYPE].value);
+    if (et && et->namespaceIndex == 0 && et->identifierType == UA_NODEIDTYPE_NUMERIC) {
+        if (et->identifier.numeric == UA_NS0ID_REFRESHSTARTEVENTTYPE) {
+            if (st->phase == 1) st->startSeen = 1;
+            return;
+        }
+        if (et->identifier.numeric == UA_NS0ID_REFRESHENDEVENTTYPE) {
+            if (st->phase == 1) { st->endSeen = 1; st->phase = 2; }
+            return;
+        }
+    }
+    const UA_NodeId *cid = al_nodeid(&eventFields.map[AL_CONDID].value);
+    if (!cid || UA_NodeId_isNull(cid)) return; /* not a condition (e.g. the Events.Source BaseEvents) */
+    if (st->n >= AL_MAX_EVS) return;
+    AlEvent *e = &st->evs[st->n];
+    for (size_t i = 0; i < AL_NF; i++) {
+        UA_Variant_init(&e->v[i]);
+        UA_Variant_copy(&eventFields.map[i].value, &e->v[i]);
+    }
+    size_t idx = st->n++;
+    if (st->phase == 1) {
+        for (size_t i = 0; i < st->nConds; i++) {
+            const UA_NodeId *o = al_nodeid(&st->evs[st->conds[i]].v[AL_CONDID]);
+            if (o && UA_NodeId_equal(o, cid)) { st->conds[i] = idx; return; }
+        }
+        if (st->nConds < AL_MAX_CONDS) st->conds[st->nConds++] = idx;
+    }
+}
+
+/* Index of the latest event of the condition, -1 if none. */
+static long al_latest(const AlStore *st, const UA_NodeId *cid) {
+    for (size_t i = st->n; i > 0; i--) {
+        const UA_NodeId *o = al_nodeid(&st->evs[i - 1].v[AL_CONDID]);
+        if (o && UA_NodeId_equal(o, cid)) return (long)(i - 1);
+    }
+    return -1;
+}
+
+typedef enum { AL_WANT_ACKED, AL_WANT_CONFIRMED, AL_WANT_COMMENT } AlWant;
+
+/* First event of the condition at index >= from that shows the action's effect. */
+static long al_find_followup(const AlStore *st, const UA_NodeId *cid, size_t from,
+                             AlWant want, const char *comment) {
+    for (size_t i = from; i < st->n; i++) {
+        const AlEvent *e = &st->evs[i];
+        const UA_NodeId *o = al_nodeid(&e->v[AL_CONDID]);
+        if (!o || !UA_NodeId_equal(o, cid)) continue;
+        int b = 0;
+        if (want == AL_WANT_ACKED && al_bool(&e->v[AL_ACKED], &b) && b) return (long)i;
+        if (want == AL_WANT_CONFIRMED && al_bool(&e->v[AL_CONFIRMED], &b) && b) return (long)i;
+        if (want == AL_WANT_COMMENT && al_text_eq(al_text(&e->v[AL_COMMENT]), comment))
+            return (long)i;
+    }
+    return -1;
+}
+
+static void al_print_nodeid(const UA_Variant *v) {
+    const UA_NodeId *n = al_nodeid(v);
+    if (n) output_nodeid(n); else printf("null");
+}
+
+static void al_print_bool(const UA_Variant *v) {
+    int b;
+    if (al_bool(v, &b)) printf(b ? "true" : "false"); else printf("null");
+}
+
+/* Text of a field of exactly `type` (String or LocalizedText), else null. */
+static void al_print_text(const UA_Variant *v, const UA_DataType *type) {
+    const UA_String *t = UA_Variant_hasScalarType(v, type) ? al_text(v) : NULL;
+    if (t) output_json_string_len(t->data, t->length); else printf("null");
+}
+
+static void al_print_scalar(const UA_Variant *v, const UA_DataType *type) {
+    if (UA_Variant_hasScalarType(v, type)) output_ua_scalar(v->data, type);
+    else printf("null");
+}
+
+/* ConditionEntry of the contract (fixed key order). */
+static void al_print_entry(const AlEvent *e) {
+    if (!e) { printf("null"); return; }
+    printf("{\"conditionId\":");   al_print_nodeid(&e->v[AL_CONDID]);
+    printf(",\"eventId\":");       al_print_scalar(&e->v[AL_EVENTID], &UA_TYPES[UA_TYPES_BYTESTRING]);
+    printf(",\"eventType\":");     al_print_nodeid(&e->v[AL_EVENTTYPE]);
+    printf(",\"sourceNode\":");    al_print_nodeid(&e->v[AL_SOURCENODE]);
+    printf(",\"sourceName\":");    al_print_text(&e->v[AL_SOURCENAME], &UA_TYPES[UA_TYPES_STRING]);
+    printf(",\"conditionName\":"); al_print_text(&e->v[AL_CONDNAME], &UA_TYPES[UA_TYPES_STRING]);
+    printf(",\"time\":");          al_print_scalar(&e->v[AL_TIME], &UA_TYPES[UA_TYPES_DATETIME]);
+    printf(",\"message\":");       al_print_text(&e->v[AL_MESSAGE], &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    printf(",\"severity\":");
+    if (UA_Variant_hasScalarType(&e->v[AL_SEVERITY], &UA_TYPES[UA_TYPES_UINT16]))
+        printf("%u", (unsigned)*(const UA_UInt16 *)e->v[AL_SEVERITY].data);
+    else
+        printf("null");
+    printf(",\"retain\":");    al_print_bool(&e->v[AL_RETAIN]);
+    printf(",\"enabled\":");   al_print_bool(&e->v[AL_ENABLED]);
+    printf(",\"acked\":");     al_print_bool(&e->v[AL_ACKED]);
+    printf(",\"confirmed\":"); al_print_bool(&e->v[AL_CONFIRMED]);
+    printf(",\"active\":");    al_print_bool(&e->v[AL_ACTIVE]);
+    printf(",\"comment\":");   al_print_text(&e->v[AL_COMMENT], &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    printf("}");
+}
+
+/* Bare presence flag; "--flag false" switches it off. */
+static int al_flag(int argc, char **argv, const char *flag) {
+    int on = 0;
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], flag) != 0) continue;
+        on = !(i + 1 < argc && strcmp(argv[i + 1], "false") == 0);
+    }
+    return on;
+}
+
+typedef struct {
+    int           requested;
+    int           called;
+    UA_StatusCode sc;
+    long          event;     /* index into evs, -1 none */
+    int           hasRepeat;
+    UA_StatusCode repeatSc;
+} AlAction;
+
+static UA_StatusCode al_call_condition_method(UA_Client *client, const UA_NodeId *cid,
+                                              UA_UInt32 method, const UA_ByteString *eventId,
+                                              const char *comment) {
+    UA_Variant in[2];
+    UA_Variant_init(&in[0]);
+    UA_Variant_init(&in[1]);
+    UA_Variant_setScalarCopy(&in[0], eventId, &UA_TYPES[UA_TYPES_BYTESTRING]);
+    UA_LocalizedText lt = UA_LOCALIZEDTEXT((char *)"en", (char *)comment);
+    UA_Variant_setScalarCopy(&in[1], &lt, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    size_t outSize = 0;
+    UA_Variant *out = NULL;
+    UA_StatusCode sc = UA_Client_call(client, *cid, UA_NODEID_NUMERIC(0, method),
+                                      2, in, &outSize, &out);
+    if (out) UA_Array_delete(out, outSize, &UA_TYPES[UA_TYPES_VARIANT]);
+    UA_Variant_clear(&in[0]);
+    UA_Variant_clear(&in[1]);
+    return sc;
+}
+
+static void al_print_action(const char *key, const AlAction *a, const AlStore *st, int withRepeat) {
+    printf(",\"%s\":", key);
+    if (!a->called) { printf("null"); return; }
+    printf("{");
+    print_sc_obj("statusCode", a->sc);
+    printf(",\"event\":");
+    al_print_entry(a->event >= 0 ? &st->evs[a->event] : NULL);
+    if (withRepeat) {
+        printf(",");
+        if (a->hasRepeat) print_sc_obj("repeatStatusCode", a->repeatSc);
+        else printf("\"repeatStatusCode\":null");
+    }
+    printf("}");
+}
+
+static int cmd_alarms(int argc, char **argv) {
+    const char *endpoint = find_arg(argc, argv, "--endpoint");
+    const char *nodeArg  = find_arg(argc, argv, "--node");
+    const char *nodeStr  = nodeArg ? nodeArg : "i=2253";
+    const char *condName = find_arg(argc, argv, "--condition-name");
+    const char *comment  = find_arg(argc, argv, "--comment");
+    const char *toStr    = find_arg(argc, argv, "--timeout-ms");
+    const char *piStr    = find_arg(argc, argv, "--publishing-interval-ms");
+    if (!comment) comment = "interop-comment";
+    int    toMs = toStr ? atoi(toStr) : 15000;
+    double piMs = piStr ? atof(piStr) : 200.0;
+    if (toMs <= 0) toMs = 15000;
+
+    AlAction ack, conf, cmt;
+    memset(&ack, 0, sizeof(ack));
+    memset(&conf, 0, sizeof(conf));
+    memset(&cmt, 0, sizeof(cmt));
+    ack.event = conf.event = cmt.event = -1;
+    ack.requested  = al_flag(argc, argv, "--acknowledge");
+    conf.requested = al_flag(argc, argv, "--confirm");
+    cmt.requested  = al_flag(argc, argv, "--add-comment");
+
+    if (!endpoint) {
+        cli_emit_failure("alarms", UA_STATUSCODE_BADINVALIDARGUMENT, "input",
+            "usage: alarms --endpoint <url> [--node <nodeId>] [--condition-name <name>]"
+            " [--acknowledge] [--confirm] [--add-comment] [--comment <text>]"
+            " [--timeout-ms <ms>] [--publishing-interval-ms <ms>]");
+        return 2;
+    }
+    if (validate_nodeid_structure(nodeStr) != 0) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "malformed NodeId: '%s'", nodeStr);
+        cli_emit_failure("alarms", UA_STATUSCODE_BADINVALIDARGUMENT, "input", msg);
+        return 2;
+    }
+
+    int exit_code = 3;
+    UA_Client *client = make_client(endpoint, 5000, "alarms", &exit_code);
+    if (!client) return exit_code;
+    UA_DateTime deadline = UA_DateTime_nowMonotonic() + (UA_DateTime)toMs * UA_DATETIME_MSEC;
+
+    UA_NodeId nodeId; UA_NodeId_init(&nodeId);
+    if (strncmp(nodeStr, "nsu=", 4) == 0) {
+        if (resolve_nsu_nodeid(client, nodeStr, &nodeId) != 0) {
+            UA_Client_disconnect(client);
+            UA_Client_delete(client);
+            char msg[512];
+            snprintf(msg, sizeof(msg), "unknown namespace URI in '%s'", nodeStr);
+            cli_emit_failure("alarms", UA_STATUSCODE_BADNAMESPACEURIINVALID, "input", msg);
+            return 2;
+        }
+    } else {
+        nodeId = parse_nodeid_local(nodeStr);
+    }
+
+    UA_CreateSubscriptionRequest subReq = UA_CreateSubscriptionRequest_default();
+    subReq.requestedPublishingInterval = piMs;
+    UA_CreateSubscriptionResponse subResp =
+        UA_Client_Subscriptions_create(client, subReq, NULL, NULL, NULL);
+    UA_StatusCode svc_sc = subResp.responseHeader.serviceResult;
+    if (!UA_StatusCode_isGood(svc_sc)) {
+        UA_NodeId_clear(&nodeId);
+        UA_Client_disconnect(client);
+        UA_Client_delete(client);
+        cli_emit_failure("alarms", svc_sc, "service", "CreateSubscription failed");
+        return 4;
+    }
+    UA_UInt32 subId = subResp.subscriptionId;
+
+    UA_EventFilter filter;
+    UA_EventFilter_init(&filter);
+    filter.selectClauses = (UA_SimpleAttributeOperand *)
+        UA_Array_new(AL_NF, &UA_TYPES[UA_TYPES_SIMPLEATTRIBUTEOPERAND]);
+    filter.selectClausesSize = AL_NF;
+    for (size_t i = 0; i < AL_NF; i++) {
+        UA_SimpleAttributeOperand *op = &filter.selectClauses[i];
+        op->typeDefinitionId = UA_NODEID_NUMERIC(0, kAlSelect[i].type);
+        if (!kAlSelect[i].p0) {
+            op->attributeId = UA_ATTRIBUTEID_NODEID; /* ConditionId */
+            continue;
+        }
+        op->attributeId = UA_ATTRIBUTEID_VALUE;
+        size_t np = kAlSelect[i].p1 ? 2 : 1;
+        op->browsePath = (UA_QualifiedName *)UA_Array_new(np, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]);
+        op->browsePathSize = np;
+        op->browsePath[0] = UA_QUALIFIEDNAME_ALLOC(0, kAlSelect[i].p0);
+        if (np == 2) op->browsePath[1] = UA_QUALIFIEDNAME_ALLOC(0, kAlSelect[i].p1);
+    }
+
+    UA_MonitoredItemCreateRequest monReq;
+    UA_MonitoredItemCreateRequest_init(&monReq);
+    monReq.itemToMonitor.nodeId      = nodeId; /* shallow */
+    monReq.itemToMonitor.attributeId = UA_ATTRIBUTEID_EVENTNOTIFIER;
+    monReq.monitoringMode            = UA_MONITORINGMODE_REPORTING;
+    monReq.requestedParameters.samplingInterval = 0.0;
+    monReq.requestedParameters.queueSize        = 1000;
+    monReq.requestedParameters.discardOldest    = UA_TRUE;
+    UA_ExtensionObject_setValueCopy(&monReq.requestedParameters.filter,
+                                    &filter, &UA_TYPES[UA_TYPES_EVENTFILTER]);
+    UA_EventFilter_clear(&filter);
+
+    AlStore st;
+    memset(&st, 0, sizeof(st));
+    st.evs = (AlEvent *)calloc(AL_MAX_EVS, sizeof(AlEvent));
+
+    UA_MonitoredItemCreateResult monResp =
+        UA_Client_MonitoredItems_createEvent(client, subId, UA_TIMESTAMPSTORETURN_BOTH,
+                                             monReq, &st, alarm_notif_cb, NULL);
+    UA_StatusCode mon_sc = monResp.statusCode;
+    monReq.itemToMonitor.nodeId = UA_NODEID_NULL;
+    UA_MonitoredItemCreateRequest_clear(&monReq);
+    UA_MonitoredItemCreateResult_clear(&monResp);
+
+    UA_StatusCode refresh_sc = mon_sc;
+    UA_StatusCode final_sc = UA_STATUSCODE_GOOD;
+    const char *errCat = NULL;
+    char errMsg[256] = {0};
+    long target = -1;
+
+    if (!UA_StatusCode_isGood(mon_sc)) {
+        final_sc = mon_sc;
+        errCat = "service";
+        snprintf(errMsg, sizeof(errMsg), "CreateMonitoredItems rejected the event monitored item");
+        goto done;
+    }
+
+    /* ConditionRefresh(SubscriptionId), ObjectId = ConditionType */
+    {
+        st.phase = 1;
+        UA_Variant in;
+        UA_Variant_init(&in);
+        UA_Variant_setScalarCopy(&in, &subId, &UA_TYPES[UA_TYPES_UINT32]);
+        size_t outSize = 0;
+        UA_Variant *out = NULL;
+        refresh_sc = UA_Client_call(client, UA_NODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE),
+                                    UA_NODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE_CONDITIONREFRESH),
+                                    1, &in, &outSize, &out);
+        if (out) UA_Array_delete(out, outSize, &UA_TYPES[UA_TYPES_VARIANT]);
+        UA_Variant_clear(&in);
+    }
+    if (!UA_StatusCode_isGood(refresh_sc)) {
+        final_sc = refresh_sc;
+        errCat = "service";
+        snprintf(errMsg, sizeof(errMsg), "ConditionRefresh failed");
+        goto done;
+    }
+    while (!st.endSeen && UA_DateTime_nowMonotonic() < deadline)
+        UA_Client_run_iterate(client, 50);
+    if (!st.endSeen) {
+        final_sc = UA_STATUSCODE_BADTIMEOUT;
+        errCat = "timeout";
+        snprintf(errMsg, sizeof(errMsg), "timeout waiting for the RefreshEndEvent");
+        goto done;
+    }
+
+    for (size_t i = 0; i < st.nConds && target < 0; i++) {
+        const AlEvent *e = &st.evs[st.conds[i]];
+        int r = 0;
+        if (condName ? al_text_eq(al_text(&e->v[AL_CONDNAME]), condName)
+                     : (al_bool(&e->v[AL_RETAIN], &r) && r))
+            target = (long)st.conds[i];
+    }
+    if (target < 0 && (ack.requested || conf.requested || cmt.requested)) {
+        final_sc = UA_STATUSCODE_BADNODEIDUNKNOWN;
+        errCat = "service";
+        snprintf(errMsg, sizeof(errMsg), "no matching condition in the ConditionRefresh");
+        goto done;
+    }
+
+    if (target >= 0) {
+        AlAction *acts[3] = {&ack, &conf, &cmt};
+        static const char *names[3] = {"Acknowledge", "Confirm", "AddComment"};
+        const UA_UInt32 methods[3] = {
+            UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE_ACKNOWLEDGE,
+            UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE_CONFIRM,
+            UA_NS0ID_CONDITIONTYPE_ADDCOMMENT };
+        const AlWant wants[3] = {AL_WANT_ACKED, AL_WANT_CONFIRMED, AL_WANT_COMMENT};
+        UA_NodeId cid;
+        UA_NodeId_copy(al_nodeid(&st.evs[target].v[AL_CONDID]), &cid);
+        for (int k = 0; k < 3; k++) {
+            AlAction *a = acts[k];
+            if (!a->requested) continue;
+            /* EventId of the latest event of the condition */
+            long latest = al_latest(&st, &cid);
+            UA_ByteString eventId;
+            UA_ByteString_init(&eventId);
+            if (latest >= 0 &&
+                UA_Variant_hasScalarType(&st.evs[latest].v[AL_EVENTID], &UA_TYPES[UA_TYPES_BYTESTRING]))
+                UA_ByteString_copy((const UA_ByteString *)st.evs[latest].v[AL_EVENTID].data, &eventId);
+            size_t mark = st.n;
+            a->called = 1;
+            a->sc = al_call_condition_method(client, &cid, methods[k], &eventId, comment);
+            if (!UA_StatusCode_isGood(a->sc)) {
+                UA_ByteString_clear(&eventId);
+                final_sc = a->sc;
+                errCat = "service";
+                snprintf(errMsg, sizeof(errMsg), "%s failed", names[k]);
+                break;
+            }
+            while ((a->event = al_find_followup(&st, &cid, mark, wants[k], comment)) < 0 &&
+                   UA_DateTime_nowMonotonic() < deadline)
+                UA_Client_run_iterate(client, 50);
+            if (k == 0) {
+                /* the same, now stale EventId again */
+                a->hasRepeat = 1;
+                a->repeatSc = al_call_condition_method(client, &cid, methods[k], &eventId, comment);
+            }
+            UA_ByteString_clear(&eventId);
+            if (a->event < 0) {
+                final_sc = UA_STATUSCODE_BADTIMEOUT;
+                errCat = "timeout";
+                snprintf(errMsg, sizeof(errMsg), "timeout waiting for the %s event", names[k]);
+                break;
+            }
+        }
+        UA_NodeId_clear(&cid);
+    }
+
+done:;
+    int ok = errCat == NULL;
+    output_begin("open62541", "alarms");
+    output_success(ok);
+    output_service_result(final_sc);
+    printf(",\"results\":[{\"nodeId\":");
+    output_nodeid(&nodeId);
+    printf(",\"subscriptionId\":%" PRIu32 ",", (uint32_t)subId);
+    print_sc_obj("monitoredItemStatusCode", mon_sc);
+    printf(",\"refresh\":{");
+    print_sc_obj("statusCode", refresh_sc);
+    printf(",\"startSeen\":%s,\"endSeen\":%s}", st.startSeen ? "true" : "false",
+           st.endSeen ? "true" : "false");
+    printf(",\"conditions\":[");
+    for (size_t i = 0; i < st.nConds; i++) {
+        if (i > 0) printf(",");
+        al_print_entry(&st.evs[st.conds[i]]);
+    }
+    printf("],\"target\":");
+    al_print_entry(target >= 0 ? &st.evs[target] : NULL);
+    al_print_action("acknowledge", &ack, &st, 1);
+    al_print_action("confirm", &conf, &st, 0);
+    al_print_action("addComment", &cmt, &st, 0);
+    printf("}]");
+    if (ok) {
+        printf(",\"error\":null");
+    } else {
+        printf(",\"error\":{\"category\":\"%s\",\"message\":", errCat);
+        output_json_string(errMsg);
+        printf("}");
+    }
+    output_end();
+
+    UA_Client_Subscriptions_deleteSingle(client, subId);
+    for (size_t i = 0; i < st.n; i++)
+        for (size_t j = 0; j < AL_NF; j++)
+            UA_Variant_clear(&st.evs[i].v[j]);
+    free(st.evs);
+    UA_NodeId_clear(&nodeId);
+    UA_Client_disconnect(client);
+    UA_Client_delete(client);
+    if (ok) return 0;
+    return strcmp(errCat, "timeout") == 0 ? 7 : 4;
+}
+
 static int cmd_register_nodes(int argc, char **argv) {
     const char *endpoint = find_arg(argc, argv, "--endpoint");
     int n = count_flag(argc, argv, "--node");
@@ -4173,7 +4673,7 @@ int client_run(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr,
             "usage: client <endpoints|find-servers|read|write|browse|translate|"
-            "call|subscribe|subscription-lifecycle|event-subscribe|history-read|"
+            "call|subscribe|subscription-lifecycle|event-subscribe|alarms|history-read|"
             "republish|transfer-subscriptions|register-nodes|node-management|"
             "find-servers-on-network|register-server|codec> ...\n");
         return 2;
@@ -4237,6 +4737,7 @@ int client_run(int argc, char **argv) {
     if (strcmp(sub, "subscribe")              == 0) return cmd_subscribe(argc - 1, argv + 1);
     if (strcmp(sub, "subscription-lifecycle") == 0) return cmd_subscription_lifecycle(argc - 1, argv + 1);
     if (strcmp(sub, "event-subscribe")        == 0) return cmd_event_subscribe(argc - 1, argv + 1);
+    if (strcmp(sub, "alarms")                 == 0) return cmd_alarms(argc - 1, argv + 1);
     if (strcmp(sub, "history-read")           == 0) return cmd_history_read(argc - 1, argv + 1);
     if (strcmp(sub, "republish")              == 0) return cmd_republish(argc - 1, argv + 1);
     if (strcmp(sub, "transfer-subscriptions") == 0) return cmd_transfer_subscriptions(argc - 1, argv + 1);
