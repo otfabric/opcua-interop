@@ -27,7 +27,7 @@ import {
 } from "node-opcua";
 
 import { installPushCertificateManagementOnServer } from "node-opcua-server-configuration";
-import { ALARM_NODE, ALARM_RESET, AlarmFixture, ALARMS_SOURCE, installAlarmFixture } from "./alarms.js";
+import { ALARM_CLEAR, ALARM_NODE, ALARM_RESET, AlarmFixture, ALARMS_SOURCE, installAlarmFixture } from "./alarms.js";
 import { BehaviorDef, Fixture, loadFixture, NodeDef } from "./fixture.js";
 import { ADAPTER, ADAPTER_VERSION, bigToInt64, log, makeStatus, parseNodeIdString, parseTypeName } from "./util.js";
 import { stackVersion } from "./capabilities.js";
@@ -598,9 +598,11 @@ export async function fixtureProblems(fixture: Fixture): Promise<string[]> {
         }
         const history = builder.variable(HISTORY_NODE);
         if (history && !history.historizing) problems.push(`${HISTORY_NODE}: no history installed`);
-        for (const local of [ALARMS_SOURCE, ALARM_NODE, ALARM_RESET]) {
+        for (const local of [ALARMS_SOURCE, ALARM_NODE, ALARM_RESET, ALARM_CLEAR]) {
             if (!server.engine.addressSpace!.findNode(new NodeId(2 /* STRING */, local as never, ns.index))) problems.push(`alarms fixture: ${local} missing`);
         }
+        const alarm = builder.alarms?.alarm;
+        if (alarm && (!alarm.audibleEnabled || !alarm.audibleSound)) problems.push("alarms fixture: AudibleEnabled / AudibleSound missing");
     } finally {
         await server.shutdown(0).catch(() => undefined);
         fs.rmSync(work, { recursive: true, force: true });

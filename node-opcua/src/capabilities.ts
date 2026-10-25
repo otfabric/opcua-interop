@@ -43,11 +43,32 @@ export const CLIENT_OPERATIONS = [
     "register-server",
     "alarms",
     "push",
+    "query",
 ];
 
-export const CLIENT_FEATURES = ["channel-lifetime", "deadband", "register-server2", "reverse-listen", "application-uri"];
+export const CLIENT_FEATURES = [
+    "channel-lifetime",
+    "deadband",
+    "register-server2",
+    "reverse-listen",
+    "application-uri",
+    // `client push` flags of adapter 0.15.0 (§1 "push flags", §15)
+    "push-groups",
+    "push-certificates",
+    "push-transaction-diagnostics",
+];
 
-export const SERVER_FEATURES = ["deadband", "percent-deadband", "reverse-connect", "register-with", "alarms", "push-management"];
+export const SERVER_FEATURES = [
+    "deadband",
+    "percent-deadband",
+    "reverse-connect",
+    "register-with",
+    "alarms",
+    "push-management",
+    // the alarm fixture's s=Alarms.Clear (condition branches) and AudibleEnabled / AudibleSound (adapter 0.15.0)
+    "alarms-branches",
+    "alarms-audible",
+];
 
 export const SECURITY_PROFILES: { policy: string; mode: string }[] = [
     { policy: "None", mode: "None" },

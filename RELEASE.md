@@ -79,10 +79,20 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ### Summary
 
-The UA-.NETStandard server gets the Part 9 1.05 alarm fixture, server auditing, an empty certificate slot and PubSub multicast loopback; the `dotnet-gds` adapter moves to UA-.NETStandard 2.0.1.
+The node-opcua adapter's `client push` reaches the rest of Part 12 1.05 push management, a new `client query` runs the Query service set, and the node-opcua alarm fixture gains condition branches and an audible sound. The UA-.NETStandard server gets the Part 9 1.05 alarm fixture, server auditing, an empty certificate slot and PubSub multicast loopback; the `dotnet-gds` adapter moves to UA-.NETStandard 2.0.1.
 
 ### Added
 
+- **node-opcua `client push`** (CLIENT_CONTRACT.md §1 "push flags", §4 `push`, §15):
+  - `--group Application|Https|UserToken` and `--certificate-type-id` select the certificate group and type (clientFeatures `push-groups`).
+  - `--get-certificates`, `--create-self-signed` (`--subject`, `--dns`, `--ip`, `--lifetime-days`, `--key-size`), `--delete-certificate`, `--update-certificate` with `--update-private-key` (PEM or PFX, `--private-key-format`) and `--issuer-certificate`, `--reset-to-defaults` and `--cancel` (clientFeatures `push-certificates`). Without `--apply`, a created or deleted certificate is cancelled with CancelChanges on the same session.
+  - `--transaction-diagnostics` reads ServerConfiguration.TransactionDiagnostics after ApplyChanges (clientFeatures `push-transaction-diagnostics`).
+  - The result gains `certificateGroupId` and a status and values for each new step; the existing keys are unchanged.
+- **`client query`, node-opcua** (clientOperations `query`, §1 "query flags", §4 `query`): QueryFirst for one NodeTypeDescription. `--data-to-return` takes a Part 4 Annex A.2 relative path plus `#<attribute>`; `--max-data-sets` and `--max-references` are also accepted. QueryNext then follows the continuation points, or releases the first one with `--release-continuation-point`.
+- **node-opcua alarm fixture** (fixtures/baseline/README.md "Alarms"):
+  - The method `s=Alarms.Clear` returns InteropAlarm to normal, and the stack keeps the unacknowledged state in a condition branch (serverFeatures `alarms-branches`). `s=Alarms.Reset` drops the branches.
+  - InteropAlarm has AudibleEnabled and AudibleSound, an AudioVariableType with ListId (serverFeatures `alarms-audible`).
+- `schemas/capabilities.schema.json`: the five new feature strings. `schemas/client-result.schema.json`: the operations `push` and `query`.
 - **Alarms (1.05) fixture** of the dotnet server (serverFeatures `alarms-105`, fixtures/baseline/README.md "Alarms (1.05)"): `s=Alarms.ExtAlarm` with SuppressedState, OutOfServiceState, SilenceState, LatchedState, ShelvingState, AudibleEnabled / AudibleSound and their methods; the dialog `s=Alarms.Dialog`; the alarm group `s=Alarms.Group`; the fixture methods `ResetExt`, `Deactivate` and `Branch`.
 - **`--auditing`** server flag of the dotnet adapter (serverFeatures `auditing`, CLIENT_CONTRACT.md §11): it turns server auditing on, so the AuditCondition*Events of the alarm methods reach SignAndEncrypt sessions.
 - **Empty certificate slot:** a secure dotnet server (`--certificate`) also lists RsaMinApplicationCertificateType in the CertificateTypes of its DefaultApplicationGroup, with no certificate in it. UA-.NETStandard runs CreateSelfSignedCertificate only for an empty slot, and it refuses to delete its only application certificate.
@@ -90,6 +100,7 @@ The UA-.NETStandard server gets the Part 9 1.05 alarm fixture, server auditing, 
 
 ### Changed
 
+- **node-opcua alarm fixture:** the Retain override of Confirm, which keeps an active alarm retained, now applies to the condition itself only. A confirmed branch is not retained, and node-opcua deletes it.
 - **dotnet-gds** now runs on UA-.NETStandard 2.0.1, with `Opc.Ua.Gds.Server` / `Opc.Ua.Gds.Client`, the 2.0 names of the `*.Common` packages. CLIENT_CONTRACT.md §16.3 records the differences:
   - The ECC CA's CRL is well formed.
   - CheckRevocationStatus answers BadCertificateRevoked from the GDS CRL.
@@ -97,6 +108,10 @@ The UA-.NETStandard server gets the Part 9 1.05 alarm fixture, server auditing, 
   - Certificate requests need SignAndEncrypt.
   - FindApplications is open to Anonymous. The smoke test now checks that an anonymous RegisterApplication is refused.
   - RequestIds are no longer reused.
+
+### Not supported
+
+- The node-opcua server serves neither the Query service set nor the Part 12 1.05 methods that the new `push` flags call. The flags are for servers that implement them, such as go-opcua.
 
 ### Notes
 

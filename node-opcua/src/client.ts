@@ -35,6 +35,7 @@ import {
     EndpointDescription,
     EventFilter,
     EventNotificationList,
+    ExpandedNodeId,
     ExtensionObject,
     FilterOperator,
     FindServersOnNetworkRequest,
@@ -42,6 +43,7 @@ import {
     HistoryReadRequest,
     LiteralOperand,
     LocalizedText,
+    makeRelativePath,
     MdnsDiscoveryConfiguration,
     MessageSecurityMode,
     MonitoringMode,
@@ -53,11 +55,16 @@ import {
     PublishRequest,
     PublishResponse,
     QualifiedName,
+    QueryDataDescription,
+    QueryFirstRequest,
+    QueryNextRequest,
+    NodeTypeDescription,
     ReadRawModifiedDetails,
     ReadRequest,
     RegisteredServer,
     RegisterServer2Request,
     RegisterServerRequest,
+    RelativePath,
     RepublishRequest,
     SecurityPolicy,
     SetMonitoringModeRequest,
@@ -70,9 +77,11 @@ import {
     TranslateBrowsePathsToNodeIdsRequest,
     UserTokenType,
     Variant,
+    VariantArrayType,
+    ViewDescription,
     WriteRequest,
 } from "node-opcua";
-import { ClientPushCertificateManagement, TrustListMasks } from "node-opcua-server-configuration";
+import { CertificateGroup, ClientPushCertificateManagement, TrustListMasks } from "node-opcua-server-configuration";
 import { TrustListDataType, VariableAttributes } from "node-opcua-types";
 
 import { certificateUri, readCertificateDer, toPemFiles } from "./server.js";
@@ -88,6 +97,7 @@ import {
     EXIT_SERVICE,
     EXIT_TIMEOUT,
     EXIT_TRANSPORT,
+    expandedNodeIdToString,
     InputError,
     isBad,
     isGood,
@@ -1929,7 +1939,7 @@ async function cmdAlarms(a: Args, r: Result): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// Push certificate management (Part 12 §7) — CLIENT_CONTRACT §17
+// Push certificate management (Part 12 §7) — CLIENT_CONTRACT §15
 // ---------------------------------------------------------------------------
 
 function trustListJson(tl: TrustListDataType): Record<string, unknown> {
@@ -1943,21 +1953,143 @@ function trustListJson(tl: TrustListDataType): Record<string, unknown> {
     };
 }
 
+/** ServerConfiguration (i=12637) and the NodeIds of its 1.05 methods and variables (Part 12 §7.10, Annex A). */
+export const SERVER_CONFIGURATION = "i=12637";
+export const SC_METHODS = {
+    getCertificates: "i=32333",
+    createSelfSignedCertificate: "i=19342",
+    deleteCertificate: "i=19345",
+    cancelChanges: "i=25708",
+    resetToServerDefaults: "i=25709",
+};
+/** ServerConfiguration.TransactionDiagnostics children (TransactionDiagnosticsType, Part 12 §7.10.12). */
+export const TRANSACTION_DIAGNOSTICS = {
+    startTime: "i=32337",
+    endTime: "i=32338",
+    result: "i=32339",
+    affectedTrustLists: "i=32340",
+    affectedCertificateGroups: "i=32341",
+    errors: "i=32342",
+};
+
+/** `--group`: the well-known CertificateGroups (Part 12 §7.8.4) and the default CertificateType of each. */
+export const PUSH_GROUPS: Record<string, { groupId: string; certificateTypeId: string }> = {
+    // DefaultApplicationGroup, RsaSha256ApplicationCertificateType
+    Application: { groupId: "i=14156", certificateTypeId: "i=12560" },
+    // DefaultHttpsGroup, HttpsCertificateType
+    Https: { groupId: "i=14088", certificateTypeId: "i=12558" },
+    // DefaultUserTokenGroup, UserCredentialCertificateType
+    UserToken: { groupId: "i=14122", certificateTypeId: "i=15181" },
+};
+
+/** The private key format of `--update-private-key`: `--private-key-format`, else PFX for .pfx / .p12, else PEM. */
+export function privateKeyFormat(a: Args, file: string): string {
+    const f = a.get("--private-key-format");
+    if (f !== undefined) {
+        if (f !== "PEM" && f !== "PFX") throw new InputError(`--private-key-format must be PEM or PFX, got ${f}`);
+        return f;
+    }
+    return /\.(pfx|p12)$/i.test(file) ? "PFX" : "PEM";
+}
+
+function readInputFile(file: string, flag: string): Buffer {
+    try {
+        return fs.readFileSync(file);
+    } catch (e) {
+        throw new InputError(`${flag} ${file}: ${(e as Error).message}`);
+    }
+}
+
+function readInputCertificate(file: string, flag: string): Buffer {
+    readInputFile(file, flag);
+    return readCertificateDer(file);
+}
+
+/** A uint16 flag (LifetimeInDays, KeySizeInBits). */
+function uint16Arg(a: Args, name: string, def: number): number {
+    const n = a.num(name, def);
+    if (!Number.isInteger(n) || n < 0 || n > 0xffff) throw new InputError(`${name} must be an integer 0..65535`);
+    return n;
+}
+
+/** Call one method; the CallMethodResult status (or the service status) and the output arguments. */
+async function callMethod(c: Conn, objectId: NodeId, methodId: NodeId, inputArguments: Variant[]): Promise<{ status: number; outputs: Variant[] }> {
+    const { resp, status } = await tx(c, new CallRequest({ methodsToCall: [{ objectId, methodId, inputArguments }] }));
+    if (!resp || isBad(status) || !resp.results?.length) return { status: status || StatusCodes.BadUnexpectedError.value, outputs: [] };
+    return { status: codeOf(resp.results[0].statusCode), outputs: resp.results[0].outputArguments ?? [] };
+}
+
+/** TransactionDiagnostics of ServerConfiguration: its six variables read in one Read. */
+async function readTransactionDiagnostics(c: Conn): Promise<{ status: number; diagnostics?: Record<string, unknown> }> {
+    const keys = Object.keys(TRANSACTION_DIAGNOSTICS) as (keyof typeof TRANSACTION_DIAGNOSTICS)[];
+    const { resp, status } = await tx(c, new ReadRequest({
+        nodesToRead: keys.map((k) => ({ nodeId: NodeId.resolveNodeId(TRANSACTION_DIAGNOSTICS[k]), attributeId: AttributeIds.Value })),
+        timestampsToReturn: TimestampsToReturn.Neither,
+    }));
+    if (!resp || isBad(status) || (resp.results ?? []).length !== keys.length) return { status: status || StatusCodes.BadUnexpectedError.value };
+    const dvs = resp.results as DataValue[];
+    const bad = dvs.find((dv) => isBad(dv.statusCode));
+    if (bad) return { status: codeOf(bad.statusCode) };
+    const v = (i: number) => dvs[i].value?.value;
+    const ids = (x: unknown) => ((x as NodeId[] | null) ?? []).map((n) => nodeIdToString(n));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errors = ((v(5) as any[] | null) ?? []).map((e: any) => ({
+        targetId: nodeIdToString(e?.targetId),
+        error: statusJson(e?.error),
+        message: e?.message?.text ?? null,
+    }));
+    return {
+        status: 0,
+        diagnostics: {
+            startTime: dateToString(v(0) as Date),
+            endTime: dateToString(v(1) as Date),
+            result: statusJson(v(2) as StatusCode),
+            affectedTrustLists: ids(v(3)),
+            affectedCertificateGroups: ids(v(4)),
+            errors,
+        },
+    };
+}
+
 /**
  * client push: node-opcua's ClientPushCertificateManagement / TrustListClient
  * (node-opcua-server-configuration) against the ServerConfiguration object of
- * the server — read the DefaultApplicationGroup trust list, AddCertificate /
- * RemoveCertificate, CreateSigningRequest, GetRejectedList, ApplyChanges and
- * read the trust list again.
+ * the server, plus the Part 12 1.05 methods that client has no helper for
+ * (GetCertificates, CreateSelfSignedCertificate, DeleteCertificate,
+ * ResetToServerDefaults, CancelChanges; plain Call requests). The steps run in
+ * the order of CLIENT_CONTRACT §1 "push flags" and stop at the first Bad
+ * status; everything runs on one session (one transaction, Part 12 §7.10.2).
  */
 async function cmdPush(a: Args, r: Result): Promise<number> {
     if (!a.get("--endpoint")) throw new InputError("missing --endpoint");
+    const groupName = a.get("--group") ?? "Application";
+    const group = PUSH_GROUPS[groupName];
+    if (!group) throw new InputError(`--group must be Application, Https or UserToken, got ${groupName}`);
+    const certTypeStr = a.get("--certificate-type-id") ?? group.certificateTypeId;
+    parseNodeIdString(certTypeStr);
     const addFile = a.get("--add-certificate");
     const removeThumb = a.get("--remove-certificate");
     const issuer = a.has("--issuer");
     const csr = a.has("--csr");
     const apply = a.has("--apply");
-    const add = addFile !== undefined ? readCertificateDer(addFile) : undefined;
+    const getCerts = a.has("--get-certificates");
+    const selfSigned = a.has("--create-self-signed");
+    const deleteType = a.get("--delete-certificate");
+    if (deleteType !== undefined) parseNodeIdString(deleteType);
+    const updateFile = a.get("--update-certificate");
+    const keyFile = a.get("--update-private-key");
+    if (keyFile !== undefined && updateFile === undefined) throw new InputError("--update-private-key needs --update-certificate");
+    const reset = a.has("--reset-to-defaults");
+    const diag = a.has("--transaction-diagnostics");
+    const cancel = !apply && (a.has("--cancel") || selfSigned || deleteType !== undefined);
+    const lifetime = uint16Arg(a, "--lifetime-days", 365);
+    const keySize = uint16Arg(a, "--key-size", 0);
+    const add = addFile !== undefined ? readInputCertificate(addFile, "--add-certificate") : undefined;
+    const update = updateFile !== undefined ? readInputCertificate(updateFile, "--update-certificate") : undefined;
+    const issuers = a.all("--issuer-certificate").map((f) => readInputCertificate(f, "--issuer-certificate"));
+    const keyFormat = keyFile !== undefined ? privateKeyFormat(a, keyFile) : "";
+    const key = keyFile !== undefined ? readInputFile(keyFile, "--update-private-key") : undefined;
+
     const c = await connect(a);
     const out: Record<string, unknown> = {};
     const step = (name: string, sc: StatusCode | number): boolean => {
@@ -1968,19 +2100,54 @@ async function cmdPush(a: Args, r: Result): Promise<number> {
         return false;
     };
     try {
+        const scObj = resolve(c, SERVER_CONFIGURATION);
+        const groupId = resolve(c, group.groupId);
+        const certTypeId = resolve(c, certTypeStr);
+        const method = (m: string) => resolve(c, m);
+        out.certificateGroupId = nodeIdToString(groupId);
         const pcm = new ClientPushCertificateManagement(c.session!);
-        const tl = await (await pcm.getApplicationGroup()).getTrustList();
+        const tl = await new CertificateGroup(c.session!, groupId).getTrustList();
         out.trustList = trustListJson(await tl.readTrustedCertificateListWithMasks(TrustListMasks.All));
         let ok = true;
         if (ok && add) ok = step("addCertificate", await tl.addCertificate(add, !issuer));
         if (ok && removeThumb !== undefined) ok = step("removeCertificate", await tl.removeCertificate(removeThumb, !issuer));
+        if (ok && getCerts) {
+            const res = await callMethod(c, scObj, method(SC_METHODS.getCertificates), [new Variant({ dataType: DataType.NodeId, value: groupId })]);
+            ok = step("getCertificates", res.status);
+            if (ok) {
+                out.certificateTypeIds = ((res.outputs[0]?.value as NodeId[] | null) ?? []).map((n) => nodeIdToString(n));
+                out.certificates = ((res.outputs[1]?.value as Buffer[] | null) ?? []).map((x) => Buffer.from(x).toString("base64"));
+            }
+        }
+        if (ok && selfSigned) {
+            const res = await callMethod(c, scObj, method(SC_METHODS.createSelfSignedCertificate), [
+                new Variant({ dataType: DataType.NodeId, value: groupId }),
+                new Variant({ dataType: DataType.NodeId, value: certTypeId }),
+                new Variant({ dataType: DataType.String, value: a.get("--subject") ?? "" }),
+                new Variant({ dataType: DataType.String, arrayType: VariantArrayType.Array, value: a.all("--dns") }),
+                new Variant({ dataType: DataType.String, arrayType: VariantArrayType.Array, value: a.all("--ip") }),
+                new Variant({ dataType: DataType.UInt16, value: lifetime }),
+                new Variant({ dataType: DataType.UInt16, value: keySize }),
+            ]);
+            ok = step("createSelfSignedCertificate", res.status);
+            if (ok) out.selfSignedCertificate = Buffer.from((res.outputs[0]?.value as Buffer | null) ?? []).toString("base64");
+        }
+        if (ok && deleteType !== undefined) {
+            const res = await callMethod(c, scObj, method(SC_METHODS.deleteCertificate), [
+                new Variant({ dataType: DataType.NodeId, value: groupId }),
+                new Variant({ dataType: DataType.NodeId, value: resolve(c, deleteType) }),
+            ]);
+            ok = step("deleteCertificate", res.status);
+        }
+        if (ok && update) {
+            const res = key
+                ? await pcm.updateCertificate(groupId, certTypeId, update, issuers, keyFormat, key)
+                : await pcm.updateCertificate(groupId, certTypeId, update, issuers);
+            ok = step("updateCertificate", res.statusCode);
+            if (ok) out.applyChangesRequired = res.applyChangesRequired;
+        }
         if (ok && csr) {
-            const res = await pcm.createSigningRequest(
-                "ns=0;i=14156",
-                ClientPushCertificateManagement.rsaSha256ApplicationCertificateType,
-                null,
-                false,
-            );
+            const res = await pcm.createSigningRequest(groupId, certTypeId, null, false);
             ok = step("createSigningRequest", res.statusCode);
             if (ok) out.certificateSigningRequest = Buffer.from(res.certificateSigningRequest ?? []).toString("base64");
         }
@@ -1989,7 +2156,23 @@ async function cmdPush(a: Args, r: Result): Promise<number> {
             ok = step("getRejectedList", rej.statusCode);
             if (ok) out.rejectedCertificates = (rej.certificates ?? []).map((x) => Buffer.from(x).toString("base64"));
         }
-        if (ok && apply) ok = step("applyChanges", await pcm.applyChanges());
+        if (ok && reset) ok = step("resetToServerDefaults", (await callMethod(c, scObj, method(SC_METHODS.resetToServerDefaults), [])).status);
+        let applied = false;
+        if (ok && apply) {
+            ok = step("applyChanges", await pcm.applyChanges());
+            applied = true;
+        }
+        if (ok && cancel) ok = step("cancelChanges", (await callMethod(c, scObj, method(SC_METHODS.cancelChanges), [])).status);
+        // The diagnostics explain a failed ApplyChanges too: read them also then.
+        if (diag && (ok || applied)) {
+            const d = await readTransactionDiagnostics(c);
+            out.transactionDiagnosticsStatus = statusJson(d.status);
+            if (d.diagnostics) out.transactionDiagnostics = d.diagnostics;
+            if (ok && !isGood(d.status)) {
+                r.setService(d.status).fail("service", "reading TransactionDiagnostics returned a non-Good status");
+                ok = false;
+            }
+        }
         if (ok) out.trustListAfter = trustListJson(await tl.readTrustedCertificateListWithMasks(TrustListMasks.All));
         r.add(out);
         return ok ? EXIT_OK : EXIT_SERVICE;
@@ -1998,6 +2181,135 @@ async function cmdPush(a: Args, r: Result): Promise<number> {
         const sc = statusFromError(e);
         if (sc !== undefined) throw new ServiceError(`push: ${(e as Error).message}`, sc);
         throw e;
+    } finally {
+        await close(c);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Query (Part 4 §5.9) — CLIENT_CONTRACT §1 "query flags"
+// ---------------------------------------------------------------------------
+
+/**
+ * `--data-to-return <relativePath>[#<Attribute>]`: a RelativePath in the text
+ * form of Part 4 Annex A.2 (`/2:Name`, `.Name`, `<HasProperty>Name`; empty =
+ * the node itself) and an AttributeId by name (`Value` default, `BrowseName`,
+ * `NodeId`, …) or number. `#` is reserved in the path syntax (escaped `&#`),
+ * so the last unescaped `#` separates the attribute.
+ */
+export function parseDataToReturn(spec: string): QueryDataDescription {
+    let cut = -1;
+    for (let i = spec.length - 1; i >= 0; i--) {
+        if (spec[i] === "#" && (i === 0 || spec[i - 1] !== "&")) {
+            cut = i;
+            break;
+        }
+    }
+    const pathStr = cut >= 0 ? spec.substring(0, cut) : spec;
+    const attrStr = cut >= 0 ? spec.substring(cut + 1) : "Value";
+    let attributeId: number;
+    if (/^[0-9]+$/.test(attrStr)) attributeId = Number(attrStr);
+    else {
+        const v = (AttributeIds as unknown as Record<string, number>)[attrStr];
+        if (typeof v !== "number") throw new InputError(`--data-to-return ${spec}: unknown attribute ${attrStr}`);
+        attributeId = v;
+    }
+    let relativePath: RelativePath;
+    try {
+        relativePath = pathStr === "" ? new RelativePath({ elements: [] }) : makeRelativePath(pathStr);
+    } catch (e) {
+        throw new InputError(`--data-to-return ${spec}: invalid relative path: ${(e as Error).message}`);
+    }
+    return new QueryDataDescription({ relativePath, attributeId });
+}
+
+function expandedJson(e: ExpandedNodeId | null | undefined): string {
+    if (!e) return "i=0";
+    return e.namespaceUri || e.serverIndex ? expandedNodeIdToString(e) : nodeIdToString(e);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function queryDataSetsJson(sets: any[] | null | undefined): Record<string, unknown>[] {
+    return (sets ?? []).map((ds) => ({
+        nodeId: expandedJson(ds.nodeId),
+        typeDefinitionNode: expandedJson(ds.typeDefinitionNode),
+        values: ((ds.values ?? []) as Variant[]).map((v) => valueFields(v)),
+    }));
+}
+
+const cpJson = (cp: Buffer | null | undefined) => (cp && cp.length > 0 ? Buffer.from(cp).toString("base64") : null);
+
+/**
+ * client query: QueryFirst for one NodeTypeDescription (no filter, the whole
+ * address space), then QueryNext with the continuation point until the server
+ * returns none (or once with ReleaseContinuationPoint).
+ */
+async function cmdQuery(a: Args, r: Result): Promise<number> {
+    const typeStr = a.get("--type-definition");
+    if (!a.get("--endpoint") || !typeStr) throw new InputError("missing --endpoint or --type-definition");
+    parseNodeIdString(typeStr);
+    const dataToReturn = a.all("--data-to-return").map(parseDataToReturn);
+    const optUint = (n: string) => (a.get(n) === undefined ? 0 : uintArg(a, n));
+    const maxDataSets = optUint("--max-data-sets");
+    const maxReferences = optUint("--max-references");
+    const release = flagArg(a, "--release-continuation-point");
+    const maxNext = a.num("--max-query-next", 100);
+    const c = await connect(a);
+    try {
+        const typeId = resolve(c, typeStr);
+        const out: Record<string, unknown> = { typeDefinitionNode: nodeIdToString(typeId) };
+        r.add(out);
+        const { resp, status } = await tx(c, new QueryFirstRequest({
+            view: new ViewDescription({}),
+            nodeTypes: [new NodeTypeDescription({
+                typeDefinitionNode: new ExpandedNodeId(typeId.identifierType, typeId.value, typeId.namespace),
+                includeSubTypes: flagArg(a, "--include-subtypes"),
+                dataToReturn,
+            })],
+            filter: new ContentFilter({ elements: [] }),
+            maxDataSetsToReturn: maxDataSets,
+            maxReferencesToReturn: maxReferences,
+        }));
+        const all: Record<string, unknown>[] = [];
+        const first = queryDataSetsJson(resp?.queryDataSets);
+        all.push(...first);
+        out.queryFirst = {
+            statusCode: statusJson(status),
+            continuationPoint: cpJson(resp?.continuationPoint),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            parsingResults: ((resp?.parsingResults ?? []) as any[]).map((p) => ({
+                statusCode: statusJson(p.statusCode),
+                dataStatusCodes: ((p.dataStatusCodes ?? []) as StatusCode[]).map((x) => statusJson(x)),
+            })),
+            queryDataSets: first,
+        };
+        const next: Record<string, unknown>[] = [];
+        out.queryNext = next;
+        out.queryDataSets = all;
+        if (!resp || isBad(status)) {
+            r.setService(status).fail("service", "QueryFirst failed");
+            return EXIT_SERVICE;
+        }
+        let cp: Buffer | null = resp.continuationPoint && resp.continuationPoint.length > 0 ? resp.continuationPoint : null;
+        while (cp && next.length < maxNext) {
+            const n = await tx(c, new QueryNextRequest({ releaseContinuationPoint: release, continuationPoint: cp }));
+            const sets = queryDataSetsJson(n.resp?.queryDataSets);
+            all.push(...sets);
+            const revised = n.resp?.revisedContinuationPoint;
+            next.push({
+                statusCode: statusJson(n.status),
+                releaseContinuationPoint: release,
+                revisedContinuationPoint: cpJson(revised),
+                queryDataSets: sets,
+            });
+            if (!n.resp || isBad(n.status)) {
+                r.setService(n.status).fail("service", "QueryNext failed");
+                return EXIT_SERVICE;
+            }
+            if (release) break;
+            cp = revised && revised.length > 0 ? revised : null;
+        }
+        return EXIT_OK;
     } finally {
         await close(c);
     }
@@ -2029,6 +2341,7 @@ const COMMANDS: Record<string, Cmd> = {
     "register-server": cmdRegisterServer,
     alarms: cmdAlarms,
     push: cmdPush,
+    query: cmdQuery,
 };
 
 /** The client operations this adapter dispatches (print-capabilities must declare exactly these). */
@@ -2041,7 +2354,7 @@ const UNSUPPORTED_OPS: Record<string, string> = {
 export const CLIENT_USAGE =
     "usage: client <endpoints|find-servers|read|write|browse|translate|call|subscribe|subscription-lifecycle|" +
     "event-subscribe|history-read [--scenario continue]|republish|transfer-subscriptions|register-nodes|node-management|" +
-    "find-servers-on-network|register-server|alarms|push> --endpoint <url> [flags]";
+    "find-servers-on-network|register-server|alarms|push|query> --endpoint <url> [flags]";
 
 export async function clientCommand(argv: string[]): Promise<number> {
     if (argv.length < 1) {

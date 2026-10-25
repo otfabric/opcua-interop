@@ -59,11 +59,19 @@ fallback), `find-servers-on-network`, `alarms` (ConditionRefresh on
 ConditionType with the RefreshStart / RefreshEnd bracket, then Acknowledge /
 Confirm / AddComment of a condition, each followed by its event; contract §1 /
 §4 `alarms`), `push` (push certificate management of Part 12 §7 with
-ClientPushCertificateManagement of node-opcua-server-configuration; contract
-§1 / §4 / §15 `push`).
+ClientPushCertificateManagement of node-opcua-server-configuration; since
+0.15.0 also the DefaultHttpsGroup / DefaultUserTokenGroup, GetCertificates,
+CreateSelfSignedCertificate, DeleteCertificate, UpdateCertificate with a PEM
+or PFX private key, ResetToServerDefaults, CancelChanges and the
+TransactionDiagnostics, the methods node-opcua's client has no helper for as
+plain Call requests; contract §1 / §4 / §15 `push`), `query` (QueryFirst for
+one NodeTypeDescription, then QueryNext until no continuation point is left;
+contract §1 / §4 `query`).
 
 **Client features:** `channel-lifetime`, `deadband`, `reverse-listen`
-(also with security), `application-uri`, `register-server2`.
+(also with security), `application-uri`, `register-server2`, `push-groups`,
+`push-certificates`, `push-transaction-diagnostics` (the `push` flags of
+0.15.0).
 
 **Server:** the baseline fixture address space in namespace
 `urn:otfabric:opcua-interop:model` (scalars, arrays incl. the 3×2 matrix,
@@ -85,16 +93,27 @@ SubscribeToEvents, `Server --HasEventSource--> Alarms.Source`), the condition
 `Alarms.Source`, HasCondition from the source, InputNode null), armed at start
 (Enabled, Active, unacknowledged, unconfirmed, Retain, Severity 500, Message
 `interop-alarm`), and the method `s=Alarms.Reset` (HasComponent of
-`Alarms.Source`, no arguments) that re-arms it with a new event.
+`Alarms.Source`, no arguments) that re-arms it with a new event and drops
+its condition branches. Since 0.15.0 the alarm has the optional
+**AudibleEnabled** (true) and **AudibleSound** (AudioVariableType with
+ListId `urn:otfabric:opcua-interop:sounds`; serverFeatures `alarms-audible`),
+and the method `s=Alarms.Clear` (serverFeatures `alarms-branches`) returns it
+to normal with node-opcua's `signalNewCondition(null, false, "")`: the
+unacknowledged active state goes to a new condition branch (an event with its
+BranchId), branch zero becomes inactive and acknowledged (Message `Back to
+normal`, Severity 0). Acknowledge and Confirm of the branch by its EventId
+are the stack's; a confirmed branch is deleted.
 Acknowledge, Confirm, AddComment, Enable, Disable, ConditionRefresh and
 ConditionRefresh2 are node-opcua's own handlers
 (`addressSpace.installAlarmsAndConditionsService()`). Two stack behaviours are
 overridden on the fixture alarm: Confirm keeps Retain true while the alarm is
-Active (node-opcua sets it false, deviation 7), and Enable does not throw
+Active (node-opcua sets it false, deviation 7; branch zero only, a confirmed
+branch stays a past state), and Enable does not throw
 (deviation 8).
 
 **Server features:** `deadband`, `percent-deadband`, `reverse-connect`,
-`register-with`, `alarms`, `push-management` (with `--certificate`:
+`register-with`, `alarms`, `alarms-branches`, `alarms-audible`,
+`push-management` (with `--certificate`:
 `installPushCertificateManagementOnServer` of node-opcua-server-configuration
 2.187.12, channels open at ApplyChanges keep the old certificate; fixture
 users get the well-known roles of their `roles`; contract §15).

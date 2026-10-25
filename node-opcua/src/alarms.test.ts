@@ -11,7 +11,14 @@ import { test } from "node:test";
 
 import { DataType, LocalizedText, NodeId, NodeIdType, OPCUACertificateManager, OPCUAServer, StatusCodes, Variant } from "node-opcua";
 
-import { ALARM_CONDITION_NAME, ALARM_MESSAGE, ALARM_SEVERITY, ALARMS_SOURCE } from "./alarms.js";
+import {
+    ALARM_AUDIBLE_LIST_ID,
+    ALARM_AUDIBLE_SOUND,
+    ALARM_CONDITION_NAME,
+    ALARM_MESSAGE,
+    ALARM_SEVERITY,
+    ALARMS_SOURCE,
+} from "./alarms.js";
 import { conditionEntry, flagArg } from "./client.js";
 import { AddressSpaceBuilder } from "./server.js";
 import { Args } from "./util.js";
@@ -67,6 +74,39 @@ test("alarms fixture: InteropAlarm is armed, acknowledge / confirm / Reset drive
         alarm.setEnabledState(false);
         fx.rearm();
         armed();
+
+        // AudibleEnabled / AudibleSound (AudioVariableType with ListId).
+        assert.equal(alarm.audibleEnabled.readValue().value.value, true);
+        assert.deepEqual(Buffer.from(alarm.audibleSound.readValue().value.value), ALARM_AUDIBLE_SOUND);
+        assert.equal(alarm.audibleSound.typeDefinitionObj.browseName.name, "AudioVariableType");
+        assert.equal(alarm.audibleSound.listId.readValue().value.value, ALARM_AUDIBLE_LIST_ID);
+
+        // Clear: branch zero back to normal, the unacknowledged active state in a branch.
+        assert.equal(fx.clear().value, StatusCodes.Good.value);
+        assert.equal(b.getActiveState(), false);
+        assert.equal(b.getAckedState(), true);
+        assert.equal(alarm.getBranchCount(), 1);
+        const branch = alarm.getBranches()[0];
+        assert.ok(!branch.getBranchId().isEmpty(), "the branch has a BranchId");
+        assert.equal(branch.getActiveState(), true);
+        assert.equal(branch.getAckedState(), false);
+        assert.equal(branch.getRetain(), true);
+        assert.equal(fx.clear().value, StatusCodes.BadInvalidState.value, "Clear of a normal alarm");
+        // Acknowledge + Confirm of the branch: it is not retained any more and goes.
+        assert.equal(alarm._acknowledge_branch(branch.getEventId(), "ack", branch, "unit").value, StatusCodes.Good.value);
+        assert.equal(alarm.getBranchCount(), 1);
+        alarm._confirm_branch(branch.getEventId(), new LocalizedText({ locale: "en", text: "ok" }), branch, "unit");
+        assert.equal(alarm.getBranchCount(), 0, "a confirmed branch is deleted");
+        // Reset drops remaining branches.
+        fx.rearm();
+        assert.equal(fx.clear().value, StatusCodes.Good.value);
+        assert.equal(alarm.getBranchCount(), 1);
+        fx.rearm();
+        assert.equal(alarm.getBranchCount(), 0);
+        armed();
+        alarm.setEnabledState(false);
+        assert.equal(fx.clear().value, StatusCodes.BadConditionDisabled.value);
+        fx.rearm();
     } finally {
         await server.shutdown(0).catch(() => undefined);
         fs.rmSync(work, { recursive: true, force: true });

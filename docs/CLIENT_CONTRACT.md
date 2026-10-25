@@ -37,7 +37,8 @@ this contract. Changes that break it require a major schema version bump.
 | `register-server` | RegisterServer2 / RegisterServer of an arbitrary server description with an LDS |
 | `codec` | Encode / decode built-in values in the OPC UA JSON and XML DataEncodings (no session needed for literals); PubSub NetworkMessages (UADP / JSON, §14) |
 | `alarms` | Alarms & Conditions (Part 9): ConditionRefresh on an event monitored item, then optionally Acknowledge / Confirm / AddComment on the refreshed condition |
-| `push` | Push certificate management (Part 12 §7, §15): read the DefaultApplicationGroup TrustList, AddCertificate / RemoveCertificate, CreateSigningRequest, GetRejectedList, ApplyChanges |
+| `push` | Push certificate management (Part 12 §7, §15): read a certificate group's TrustList, AddCertificate / RemoveCertificate, GetCertificates, CreateSelfSignedCertificate, DeleteCertificate, UpdateCertificate, CreateSigningRequest, GetRejectedList, ResetToServerDefaults, ApplyChanges / CancelChanges, TransactionDiagnostics |
+| `query` | Query service set (Part 4 §5.9): QueryFirst for one NodeTypeDescription, then QueryNext with the continuation point until none is left |
 | `gds-pull` | GDS pull model (Part 12 §6, §7.9, §16), `dotnet-gds` only: FindApplications / RegisterApplication, StartSigningRequest or StartNewKeyPairRequest, FinishRequest, GetCertificateGroups, GetTrustList + TrustList read, GetCertificateStatus, RevokeCertificate / CheckRevocationStatus, UnregisterApplication |
 
 Which of these (and which optional features) an image provides is declared by
@@ -315,32 +316,87 @@ is printed in every case once the subscription exists.
 ### `push` flags
 
 Push certificate management client (Part 12 §7) against the ServerConfiguration
-object of the server, node-opcua only (adapter 0.13.0, §15). The methods need
-an encrypted channel and a user with the SecurityAdmin role, so the command is
-run with `--security-policy … --security-mode SignAndEncrypt` and
-`--username` / `--password`.
+object (`i=12637`) of the server, node-opcua only (adapter 0.13.0; the
+flags marked 0.15.0 since adapter 0.15.0, §15). The methods need an encrypted
+channel and a user with the SecurityAdmin role, so the command is run with
+`--security-policy … --security-mode SignAndEncrypt` and `--username` /
+`--password`.
 
 ```
-<image> client push --endpoint <url> [--add-certificate <file>] [--remove-certificate <thumbprint>]
-        [--issuer] [--csr] [--apply]
+<image> client push --endpoint <url> [--group <Application|Https|UserToken>]
+        [--add-certificate <file>] [--remove-certificate <thumbprint>] [--issuer]
+        [--get-certificates]
+        [--create-self-signed [--certificate-type-id <nodeId>] [--subject <name>] [--dns <name>]...
+                              [--ip <address>]... [--lifetime-days <n>] [--key-size <n>]]
+        [--delete-certificate <certificateTypeId>]
+        [--update-certificate <file> [--update-private-key <file>] [--private-key-format PEM|PFX]
+                                     [--issuer-certificate <file>]...]
+        [--csr] [--reset-to-defaults] [--apply | --cancel] [--transaction-diagnostics]
+```
+
+| Flag | Description | Default | Feature (§13) |
+|------|-------------|---------|---------------|
+| `--group <name>` | The CertificateGroup every step works on: `Application` = DefaultApplicationGroup `i=14156`, `Https` = DefaultHttpsGroup `i=14088`, `UserToken` = DefaultUserTokenGroup `i=14122` (Part 12 §7.8.4); its TrustList is the one read, added to and removed from | `Application` | `push-groups` |
+| `--certificate-type-id <nodeId>` | CertificateType of `--create-self-signed`, `--update-certificate` and `--csr` | `Application`: RsaSha256ApplicationCertificateType `i=12560`; `Https`: HttpsCertificateType `i=12558`; `UserToken`: UserCredentialCertificateType `i=15181` | `push-groups` |
+| `--add-certificate <file>` | AddCertificate with this certificate (PEM or DER file) | — | |
+| `--remove-certificate <thumbprint>` | RemoveCertificate (hexadecimal SHA-1 thumbprint) | — | |
+| `--issuer` | AddCertificate / RemoveCertificate with `isTrustedCertificate` false (issuer list) | trusted list | |
+| `--get-certificates` | GetCertificates (`i=32333`) of the group | off | `push-certificates` |
+| `--create-self-signed` | CreateSelfSignedCertificate (`i=19342`) for the group and `--certificate-type-id`, with SubjectName `--subject` (`""`: the server's choice), DnsNames `--dns` (repeatable), IpAddresses `--ip` (repeatable), LifetimeInDays `--lifetime-days` (UInt16, default 365) and KeySizeInBits `--key-size` (UInt16, default 0: the server's choice) | off | `push-certificates` |
+| `--delete-certificate <typeId>` | DeleteCertificate (`i=19345`) of the group and this CertificateType | — | `push-certificates` |
+| `--update-certificate <file>` | UpdateCertificate (`i=13737`, node-opcua's `updateCertificate`) of the group and `--certificate-type-id` with this certificate (PEM or DER) and the issuers `--issuer-certificate` (repeatable, PEM or DER) | — | `push-certificates` |
+| `--update-private-key <file>` | The new private key of `--update-certificate`, sent as the PrivateKey ByteString as the file holds it | none (PrivateKeyFormat `""`) | `push-certificates` |
+| `--private-key-format PEM\|PFX` | PrivateKeyFormat of `--update-private-key` | `PFX` for `.pfx` / `.p12` files, else `PEM` | `push-certificates` |
+| `--csr` | CreateSigningRequest (group, `--certificate-type-id`, no subject, `regeneratePrivateKey` false) | off | |
+| `--reset-to-defaults` | ResetToServerDefaults (`i=25709`) | off | `push-certificates` |
+| `--apply` | ApplyChanges after the changes | off | |
+| `--cancel` | CancelChanges (`i=25708`) after the changes; implied by `--create-self-signed` and `--delete-certificate` without `--apply`, so the created / deleted certificate is not installed | off | `push-certificates` |
+| `--transaction-diagnostics` | Read the TransactionDiagnostics of ServerConfiguration (`i=32337`…`i=32342`, Part 12 §7.10.12) after ApplyChanges / CancelChanges; also after a failed ApplyChanges | off | `push-transaction-diagnostics` |
+
+`--issuer`, `--csr`, `--apply`, `--cancel`, `--get-certificates`,
+`--create-self-signed`, `--reset-to-defaults` and `--transaction-diagnostics`
+are presence flags. A file that cannot be read, an unknown `--group`, a
+malformed NodeId or a `--lifetime-days` / `--key-size` outside UInt16 is an
+input error (exit 2) before connecting.
+
+Steps, on one session (the transaction of Part 12 §7.10.2 is the session's),
+stopping at the first Bad status: read the group's trust list (OpenWithMasks
+All, Read, Close) → AddCertificate → RemoveCertificate → GetCertificates →
+CreateSelfSignedCertificate → DeleteCertificate → UpdateCertificate →
+CreateSigningRequest → GetRejectedList → ResetToServerDefaults → ApplyChanges
+or CancelChanges → TransactionDiagnostics → read the trust list again. Exit
+codes (§5): 0 success, 2 bad input, 3 connect / transport, 4 a method returned
+a Bad status (`serviceResult` is that status, e.g. `BadUserAccessDenied`
+without the SecurityAdmin role) or a TransactionDiagnostics variable could not
+be read.
+
+### `query` flags
+
+Query service set (Part 4 §5.9), node-opcua only (adapter 0.15.0,
+`clientOperations` `query`). One QueryFirst with one NodeTypeDescription, no
+View (the whole address space) and an empty ContentFilter (every node of the
+type), then QueryNext while the server returns a continuation point.
+
+```
+<image> client query --endpoint <url> --type-definition <nodeId> [--include-subtypes]
+        [--data-to-return <relativePath>[#<attribute>]]... [--max-data-sets <n>]
+        [--max-references <n>] [--release-continuation-point] [--max-query-next <n>]
 ```
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--add-certificate <file>` | AddCertificate with this certificate (PEM or DER file) | — |
-| `--remove-certificate <thumbprint>` | RemoveCertificate (hexadecimal SHA-1 thumbprint) | — |
-| `--issuer` | AddCertificate / RemoveCertificate with `isTrustedCertificate` false (issuer list) | trusted list |
-| `--csr` | CreateSigningRequest (DefaultApplicationGroup, RsaSha256ApplicationCertificateType, no subject, `regeneratePrivateKey` false) | off |
-| `--apply` | ApplyChanges after the changes | off |
+| `--type-definition <nodeId>` | TypeDefinitionNode of the NodeTypeDescription (required) | — |
+| `--include-subtypes` | IncludeSubTypes (presence flag, also `true` / `false`) | false |
+| `--data-to-return <spec>` | A QueryDataDescription (repeatable, in order): a RelativePath in the text form of Part 4 Annex A.2 (`.Serial`: Aggregates; `/2:Name`: HierarchicalReferences; `<HasProperty>1:Name`; empty: the node itself), then `#` and an AttributeId by name (`Value`, `NodeId`, `BrowseName`, `DisplayName`, …) or number. `#` is reserved in the path syntax (`&#` escapes it), so the last unescaped `#` separates the attribute | no data, only NodeId and TypeDefinitionNode |
+| `--max-data-sets <n>` | MaxDataSetsToReturn (UInt32) | 0 (no limit) |
+| `--max-references <n>` | MaxReferencesToReturn (UInt32) | 0 (no limit) |
+| `--release-continuation-point` | The first QueryNext has ReleaseContinuationPoint true; it is the last request | off |
+| `--max-query-next <n>` | Most QueryNext requests | 100 |
 
-`--issuer`, `--csr` and `--apply` are presence flags.
-
-Steps, stopping at the first Bad status: read the trust list
-(OpenWithMasks All, Read, Close) → AddCertificate → RemoveCertificate →
-CreateSigningRequest → GetRejectedList → ApplyChanges → read the trust list
-again. Exit codes (§5): 0 success, 2 bad input, 3 connect / transport, 4 a
-method returned a Bad status (`serviceResult` is that status, e.g.
-`BadUserAccessDenied` without the SecurityAdmin role).
+Exit codes (§5): 0 every request Good, 2 bad input (before connecting), 3
+connect / transport, 4 QueryFirst or a QueryNext failed (`serviceResult`; the
+result is printed with the steps so far). The ParsingResults are reported,
+they do not affect `success`.
 
 ### `history-read` flags
 
@@ -893,9 +949,85 @@ with `startSeen` / `endSeen` false.
 ]
 ```
 
-A `…Status` key is present only for a step that ran; the keys after a failed
-step are absent. `trustList` / `trustListAfter` hold all four lists (base64
-DER certificates and CRLs).
+Since adapter 0.15.0 (the 0.15.0 flags of §1 "push flags"):
+
+```json
+"results": [
+  {
+    "certificateGroupId":                "i=14156",
+    "trustList":                         { … },
+    "addCertificateStatus":              { … },
+    "removeCertificateStatus":           { … },
+    "getCertificatesStatus":             { … },
+    "certificateTypeIds":                ["i=12560", …],
+    "certificates":                      ["<base64 DER>", …],
+    "createSelfSignedCertificateStatus": { … },
+    "selfSignedCertificate":             "<base64 DER>",
+    "deleteCertificateStatus":           { … },
+    "updateCertificateStatus":           { … },
+    "applyChangesRequired":              true,
+    "createSigningRequestStatus":        { … },
+    "certificateSigningRequest":         "<base64 PKCS #10 DER>",
+    "getRejectedListStatus":             { … },
+    "rejectedCertificates":              ["<base64 DER>", …],
+    "resetToServerDefaultsStatus":       { … },
+    "applyChangesStatus":                { … },
+    "cancelChangesStatus":               { … },
+    "transactionDiagnosticsStatus":      { … },
+    "transactionDiagnostics": {
+      "startTime": "2026-10-25T10:00:00.000Z", "endTime": "2026-10-25T10:00:00.010Z",
+      "result": { "name": "Good", "code": 0, "severity": "Good" },
+      "affectedTrustLists": ["i=12642"], "affectedCertificateGroups": ["i=14156"],
+      "errors": [ { "targetId": "i=14156", "error": { … }, "message": "…" } ]
+    },
+    "trustListAfter":                    { … }
+  }
+]
+```
+
+`certificateGroupId` (the group of `--group`) is always present. A `…Status`
+key and the values of its step are present only for a step that ran; the keys
+after a failed step are absent, except `transactionDiagnosticsStatus` /
+`transactionDiagnostics`, which follow a failed ApplyChanges too.
+`certificateTypeIds[i]` is the type of `certificates[i]` (GetCertificates).
+`transactionDiagnostics` is absent when a variable could not be read
+(`transactionDiagnosticsStatus` is then that status); its times are the
+adapter's DateTime strings (null for the null DateTime), `errors` the
+TransactionErrorType entries (`message` the LocalizedText text or null).
+`trustList` / `trustListAfter` hold all four lists (base64 DER certificates
+and CRLs) of the group's TrustList.
+
+### `query`
+
+```json
+"results": [
+  {
+    "typeDefinitionNode": "ns=2;s=QueryType",
+    "queryFirst": {
+      "statusCode": { "name": "Good", "code": 0, "severity": "Good" },
+      "continuationPoint": "<base64>" | null,
+      "parsingResults": [ { "statusCode": {…}, "dataStatusCodes": [ {…}, … ] } ],
+      "queryDataSets": [ <QueryDataSet>, … ]
+    },
+    "queryNext": [
+      { "statusCode": {…}, "releaseContinuationPoint": false,
+        "revisedContinuationPoint": "<base64>" | null, "queryDataSets": [ <QueryDataSet>, … ] }
+    ],
+    "queryDataSets": [ <QueryDataSet>, … ]
+  }
+]
+```
+
+QueryDataSet: `{ "nodeId": "ns=2;s=Query.1", "typeDefinitionNode": "ns=2;s=QueryType", "values": [ { "dataType": "String", "builtInType": 12, "value": "A-1" }, … ] }`
+— NodeIds in the canonical form (§6; an ExpandedNodeId with a namespace URI
+or server index in the `nsu=` / `svr=` form), one value per
+`--data-to-return`, in order, as in `read` (§7; a value the server leaves
+empty is `{"dataType": "Null", "builtInType": 0, "value": null}`).
+`queryDataSets` at the top level is QueryFirst's followed by every
+QueryNext's. `queryNext` has one entry per QueryNext request.
+
+`queryFirst.statusCode` is the service result of QueryFirst (with its
+`queryDataSets` empty and `queryNext` `[]` when it failed).
 
 ### `history-read`
 
@@ -1449,6 +1581,11 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `transport-https` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.https://…` (§9); server `--https-port` (§11) |
 | `push-management` | server | ✓ | — | — | ✓ | ✓ | — | ServerConfiguration push certificate management (Part 12 §7, §15) with `--certificate` / `--private-key` / `--pki-dir`; fixture users get the well-known roles of their `roles` (SecurityAdmin) |
 | `gds-pull` | server | — | — | — | — | — | — | `dotnet-gds` only (§16): the server is a Global Discovery Server (Directory, DefaultApplicationGroup, pull certificate management) |
+| `push-groups` | client | — | — | — | — | ✓ | — | `push --group`, `--certificate-type-id` (adapter 0.15.0, §1 "push flags") |
+| `push-certificates` | client | — | — | — | — | ✓ | — | `push --get-certificates`, `--create-self-signed`, `--delete-certificate`, `--update-certificate` (PEM / PFX key), `--reset-to-defaults`, `--cancel` (adapter 0.15.0) |
+| `push-transaction-diagnostics` | client | — | — | — | — | ✓ | — | `push --transaction-diagnostics` (adapter 0.15.0) |
+| `alarms-branches` | server | — | — | — | — | ✓ | — | the alarm fixture's `s=Alarms.Clear`: condition branches (fixtures/baseline/README.md "Alarms", adapter 0.15.0) |
+| `alarms-audible` | server | — | — | — | — | ✓ | — | InteropAlarm has AudibleEnabled / AudibleSound (AudioVariableType with ListId; adapter 0.15.0) |
 | `alarms` | server | ✓ (experimental) | — | — | ✓ | ✓ | — | the Alarms & Conditions fixture (`s=Alarms.*`, fixtures/baseline/README.md "Alarms"); Acknowledge / Confirm / AddComment / Enable / Disable / ConditionRefresh by the stack's own handlers (ConditionRefresh2 too, not exercised by `alarms`) |
 | `alarms-105` | server | — | — | — | ✓ | — | — | adapter 0.15.0: the Part 9 1.05 extension of the Alarms fixture (`s=Alarms.ExtAlarm`, `s=Alarms.Dialog`, `s=Alarms.Group`, fixtures/baseline/README.md "Alarms (1.05)"): Suppress / Silence / OutOfService / Latched / Shelving state methods, a dialog, condition branches, an alarm group and AudibleSound |
 | `auditing` | server | — | — | — | ✓ | — | — | adapter 0.15.0: `--auditing` (§11) turns the server's auditing on: audit events (AuditCondition*EventType of the alarm methods among them) reach event monitored items of SignAndEncrypt sessions |
@@ -1468,6 +1605,7 @@ all six adapters since adapter 0.12.0:
 |------------------|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|
 | `alarms` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `push` (adapter 0.13.0, §15) | — | — | — | — | ✓ | — |
+| `query` (adapter 0.15.0) | — | — | — | — | ✓ | — |
 | `gds-pull` (adapter 0.14.0, §16) | — | — | — | — (`dotnet-gds` ✓) | — | — |
 
 **Alarm servers** (all three give `success: true` for
@@ -2340,7 +2478,17 @@ adapter copies `--certificate` / `--private-key` to
 `<pki-dir>/own/certs/certificate.pem` and the manager's private key file.
 
 **Client.** `client push` (§1) is node-opcua's ClientPushCertificateManagement
-and TrustListClient. UA-.NETStandard's push client
+and TrustListClient. Since adapter 0.15.0 it also works on the DefaultHttpsGroup
+and DefaultUserTokenGroup (`--group`, clientFeatures `push-groups`) and calls
+the Part 12 1.05 methods node-opcua-server-configuration 2.187.12 has no
+client helper for — GetCertificates, CreateSelfSignedCertificate,
+DeleteCertificate, ResetToServerDefaults, CancelChanges — as plain Call
+requests on the standard NodeIds of ServerConfiguration
+(`push-certificates`, with UpdateCertificate with a PEM or PFX private key),
+and reads the TransactionDiagnostics variables (`push-transaction-diagnostics`).
+The node-opcua server answers these 1.05 methods with `Bad_MethodInvalid` or
+`Bad_InternalError` (unbound) and cannot encode its TransactionDiagnostics;
+they are meant for servers that implement Part 12 1.05. UA-.NETStandard's push client
 (ServerPushConfigurationClient, NuGet
 `OPCFoundation.NetStandard.Opc.Ua.Gds.Client.Common`) has no 2.0.1 release,
 open62541 v1.5.9 has no push client API; the other adapters do not offer
