@@ -38,6 +38,7 @@ this contract. Changes that break it require a major schema version bump.
 | `codec` | Encode / decode built-in values in the OPC UA JSON and XML DataEncodings (no session needed for literals); PubSub NetworkMessages (UADP / JSON, §14) |
 | `alarms` | Alarms & Conditions (Part 9): ConditionRefresh on an event monitored item, then optionally Acknowledge / Confirm / AddComment on the refreshed condition |
 | `push` | Push certificate management (Part 12 §7, §15): read the DefaultApplicationGroup TrustList, AddCertificate / RemoveCertificate, CreateSigningRequest, GetRejectedList, ApplyChanges |
+| `gds-pull` | GDS pull model (Part 12 §6, §7.9, §16), `dotnet-gds` only: FindApplications / RegisterApplication, StartSigningRequest or StartNewKeyPairRequest, FinishRequest, GetCertificateGroups, GetTrustList + TrustList read, GetCertificateStatus, RevokeCertificate / CheckRevocationStatus, UnregisterApplication |
 
 Which of these (and which optional features) an image provides is declared by
 `print-capabilities` (§13). A feature the underlying stack does not implement is
@@ -1446,6 +1447,7 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `transport-wss` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.wss://…` (§9); server `--wss-port` (§11) |
 | `transport-https` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.https://…` (§9); server `--https-port` (§11) |
 | `push-management` | server | ✓ | — | — | ✓ | ✓ | — | ServerConfiguration push certificate management (Part 12 §7, §15) with `--certificate` / `--private-key` / `--pki-dir`; fixture users get the well-known roles of their `roles` (SecurityAdmin) |
+| `gds-pull` | server | — | — | — | — | — | — | `dotnet-gds` only (§16): the server is a Global Discovery Server (Directory, DefaultApplicationGroup, pull certificate management) |
 | `alarms` | server | ✓ (experimental) | — | — | ✓ | ✓ | — | the Alarms & Conditions fixture (`s=Alarms.*`, fixtures/baseline/README.md "Alarms"); Acknowledge / Confirm / AddComment / Enable / Disable / ConditionRefresh by the stack's own handlers (ConditionRefresh2 too, not exercised by `alarms`) |
 
 `transports` in `print-capabilities` lists the endpoint schemes the adapter
@@ -1462,6 +1464,7 @@ all six adapters since adapter 0.12.0:
 |------------------|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|
 | `alarms` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `push` (adapter 0.13.0, §15) | — | — | — | — | ✓ | — |
+| `gds-pull` (adapter 0.14.0, §16) | — | — | — | — (`dotnet-gds` ✓) | — | — |
 
 **Alarm servers** (all three give `success: true` for
 `alarms --node i=2253 --condition-name InteropAlarm --acknowledge --confirm --add-comment`
@@ -2338,3 +2341,249 @@ and TrustListClient. UA-.NETStandard's push client
 open62541 v1.5.9 has no push client API; the other adapters do not offer
 `push`.
 
+---
+
+## 16. GDS pull model (OPC UA Part 12 §6, §7.9)
+
+Added in adapter **0.14.0** as a separate adapter, `dotnet-gds` (image
+`ghcr.io/otfabric/opcua-interop-dotnet-gds`, project `dotnet-gds/`): a Global
+Discovery Server and a GDS pull-model client on OPC Foundation
+UA-.NETStandard **1.5.378.182** (every `OPCFoundation.NetStandard.Opc.Ua.*`
+package pinned to exactly that version: Core, Security.Certificates,
+Configuration, Server, Client, Gds.Server.Common, Gds.Client.Common). The
+`dotnet` adapter runs on 2.0.1, which has no GDS packages; that is why this is
+a project of its own. Its `print-capabilities` (§13):
+
+| Field | Value |
+|-------|-------|
+| `adapter` | `{"name": "dotnet-gds", "version": "0.14.0"}` (also the server's BuildInfo SoftwareVersion) |
+| `stack` | `{"name": "opcfoundation-uanetstandard", "version": "1.5.378.182"}` |
+| `clientOperations` | `["endpoints", "gds-pull"]` |
+| `clientFeatures` | `["application-uri"]` |
+| `serverFeatures` | `["gds-pull"]` |
+| `securityProfiles` | None/None, Basic256Sha256 Sign and SignAndEncrypt, Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss SignAndEncrypt |
+| `transports` | `["opc.tcp"]`; `pubsub.supported` is false |
+
+`validate-fixture`, `test` (offline self-test) and the exit codes of §5 are as
+for the other adapters.
+
+### 16.1 Server
+
+```
+<image> server --fixture <file> [--certificate <crt> --private-key <key> --pki-dir <dir>]
+        [--bind-port <n>] [--advertised-host <host>] [--advertised-port <n>]
+        [--endpoint-path <path>] [--ready-file <path>]
+```
+
+The server is a Global Discovery Server, the stack's
+`GlobalDiscoverySampleServer` (`Opc.Ua.Gds.Server.Common`): the
+ApplicationsNodeManager with **autoApprove** (StartSigningRequest /
+StartNewKeyPairRequest are approved at once, FinishRequest issues on its first
+call), a JSON applications database in a temporary directory (empty at every
+start), and the CertificateGroup `Default` (the DefaultApplicationGroup) with
+CertificateTypes RsaSha256ApplicationCertificateType and
+EccNistP256ApplicationCertificateType. The group's CAs
+(`CN=opcua-interop dotnet-gds CA, O=OTFabric`, one RSA 2048 and one ECC P-256)
+are generated at startup inside the container; issued certificates get the
+subject of the CSR, or `<subjectName>, O=OTFabric` for a new key pair. The
+fixture's address space is **not** served — only `server`, `endpoint` and
+`users` of the fixture are used (`fixtures/gds/fixture.json` is the baseline
+plus the GDS administrator).
+
+- Endpoint: `opc.tcp://<advertised-host>:<port><endpoint-path>`, port 4840 and
+  path `/opcua-interop` with the fixtures (§11 defaults). The listener binds
+  every interface (`--bind-address` is accepted and has no effect).
+- Security: None/None always; with `--certificate` / `--private-key` also the
+  secure profiles of `securityProfiles` above, with that certificate as the
+  application instance certificate. `--pki-dir` uses the §11 layout:
+  `trusted/certs` (+ `trusted/crl`) and `issuers/certs` (+ `issuers/crl`) are
+  copied into the stack's directory stores; clients signed by a CA in
+  `trusted/certs` are accepted; rejected certificates go to
+  `<pki-dir>/rejected` when writable.
+- ApplicationUri: the URI SAN of `--certificate`, else the fixture's
+  `server.applicationUri` — `urn:otfabric:opcua-interop:server` either way
+  with the test PKI's `dotnet-server` identity and the fixtures.
+  ApplicationType Server, ServerCapabilities `["GDS"]`, ServerProfileArray
+  `GlobalDiscoveryAndCertificateManagement2017`.
+- Namespaces: `ns=1` the server's ApplicationUri, `ns=2`
+  `http://opcfoundation.org/UA/GDS/applications/` (ApplicationIds and
+  RequestIds are GUID NodeIds in it, e.g. `ns=2;g=7322e67a-…`), `ns=3`
+  `http://opcfoundation.org/UA/GDS/`: Directory `ns=3;i=141`,
+  DefaultApplicationGroup `ns=3;i=615`, its TrustList `ns=3;i=616`.
+- Users: the fixture `users` (UserName tokens; a wrong password is
+  `BadUserAccessDenied` at ActivateSession) and Anonymous. A user is granted
+  AuthenticatedUser and the roles named in its `roles` by BrowseName:
+  `DiscoveryAdmin`, `CertificateAuthorityAdmin`, `RegistrationAuthorityAdmin`
+  (GdsRole, Part 12 §6.2), `SecurityAdmin`, `ConfigureAdmin`, `Observer`,
+  `Operator`, `Engineer`, `Supervisor` (Part 3 §4.9.2). The sample server's
+  own user validation turns them into a `GdsRoleBasedIdentity` (in-memory
+  `LinqUserDatabase`). The administrator of `fixtures/gds/fixture.json`:
+
+  ```json
+  { "username": "gds-admin", "password": "gds-admin-password",
+    "roles": ["AuthenticatedUser", "DiscoveryAdmin", "CertificateAuthorityAdmin", "SecurityAdmin"] }
+  ```
+
+- Who may call what (the 1.5.378 ApplicationsNodeManager):
+
+  | Method | Required |
+  |--------|----------|
+  | QueryServers, QueryApplications | anyone, also Anonymous |
+  | FindApplications | AuthenticatedUser (Anonymous: `BadUserAccessDenied`) |
+  | GetApplication, GetCertificateStatus | AuthenticatedUser or ApplicationSelfAdmin |
+  | RegisterApplication, UpdateApplication | DiscoveryAdmin |
+  | UnregisterApplication | DiscoveryAdmin or ApplicationSelfAdmin |
+  | StartSigningRequest, StartNewKeyPairRequest, FinishRequest, GetCertificateGroups, GetTrustList, GetCertificates | CertificateAuthorityAdmin or ApplicationSelfAdmin |
+  | RevokeCertificate | CertificateAuthorityAdmin |
+  | TrustList Open / Read / Close | CertificateAuthorityAdmin or SecurityAdmin (or the application's own trust list) |
+  | CheckRevocationStatus | meant for a SignAndEncrypt channel; 1.5.378 answers Good on a Sign channel too |
+
+  ApplicationSelfAdmin is granted by the stack to a session without a user
+  token whose client certificate is the one the GDS issued to a registered
+  application (the sample server's rule, not exercised by the suite).
+- Ready file (§10) once the server listens; SIGTERM / SIGINT → exit 0.
+- Refused (exit 2): `--lds`, `--lds-cleanup-timeout`, `--mdns-name`,
+  `--mdns-capability`, `--reverse-connect`, `--reverse-connect-interval-ms`,
+  `--pubsub-config`, `--https-port`, `--wss-port`, `--register-with`.
+
+### 16.2 `client gds-pull`
+
+```
+<image> client gds-pull --endpoint <url> [global flags (§1)] [gds-pull flags]
+```
+
+The pull-model client of Part 12 §6.6 / §7.9 with the stack's
+`GlobalDiscoveryServerClient` (`Opc.Ua.Gds.Client.Common`). Global flags as
+in §1: `--security-policy`, `--security-mode`, `--certificate`,
+`--private-key`, `--trust-list`, `--username`, `--password`,
+`--application-uri`, `--connect-timeout`, `--request-timeout`,
+`--disconnect-timeout` (RSA policies only). The session is created on the
+endpoint of `--security-policy` / `--security-mode` that GetEndpoints lists,
+dialled at `--endpoint` (§9); the domain check of the server certificate is
+skipped, and without `--trust-list` every server certificate is accepted.
+Most GDS methods need a user with the GDS roles (§16.1), so a run normally
+has `--username` / `--password` and SignAndEncrypt.
+
+| Flag | Meaning | Default |
+|------|---------|---------|
+| `--app-uri <uri>` | ApplicationUri of the record to register / find | `urn:opcua-interop:gds-pull:app` |
+| `--app-type <Server\|Client\|ClientAndServer>` | ApplicationType of the record | `Server` |
+| `--discovery-url <url>` | DiscoveryUrl of the record (repeatable; required by the spec for servers) | `opc.tcp://localhost:4850` |
+| `--request <csr\|new-key-pair>` | StartSigningRequest with a CSR the adapter makes, or StartNewKeyPairRequest | `csr` |
+| `--certificate-type <RsaSha256\|NistP256>` | certificateTypeId of the request: RsaSha256ApplicationCertificateType (i=12560) or EccNistP256ApplicationCertificateType (i=23538) | `RsaSha256` |
+| `--revoke` | RevokeCertificate of the issued certificate, then CheckRevocationStatus of it | off |
+| `--unregister` | UnregisterApplication at the end | off |
+| `--finish-timeout-ms <n>` | how long FinishRequest is polled while it answers `BadNothingToDo` | 30000 |
+
+`--revoke` and `--unregister` are presence flags. An invalid `--app-type`,
+`--request`, `--certificate-type` or `--finish-timeout-ms` is exit 2 before
+connecting.
+
+Steps, stopping at the first Bad status:
+
+1. **FindApplications**(app uri).
+2. **RegisterApplication** if nothing was found: ApplicationUri = app uri,
+   ApplicationType, ApplicationNames `[en-US: <name>]` where `<name>` is the
+   last `:` / `/` segment of the app uri (`"opcua-interop gds-pull app"` if
+   empty), ProductUri `urn:opcua-interop:dotnet-gds`, DiscoveryUrls (none for
+   `Client`), ServerCapabilities `["NA"]` (none for `Client`). If a record was
+   found, its ApplicationId (the first one) is used and nothing is registered.
+3. **StartSigningRequest** (DefaultApplicationGroup, the certificate type, a
+   PKCS #10 request with a fresh RSA 2048 / ECC P-256 key, subject
+   `CN=<name>`, URI SAN = app uri, DNS SAN `localhost`, SHA-256) or
+   **StartNewKeyPairRequest** (DefaultApplicationGroup, the certificate type,
+   subject `CN=<name>`, domainNames `["localhost"]`, privateKeyFormat `PEM`,
+   empty password).
+4. **FinishRequest** every 200 ms while it answers `BadNothingToDo` (pending),
+   at most `--finish-timeout-ms`.
+5. **GetCertificateGroups**(applicationId).
+6. **GetTrustList**(applicationId, DefaultApplicationGroup), then the
+   TrustList object is read: `Open` (mode Read, i.e. all lists), `Read` in
+   4096-byte chunks, `Close`.
+7. **GetCertificateStatus**(applicationId, DefaultApplicationGroup, certificate type).
+8. `--revoke`: **RevokeCertificate**(applicationId, issued certificate), then
+   **CheckRevocationStatus**(issued certificate).
+9. `--unregister`: **UnregisterApplication**(applicationId).
+
+`results` has one element; a key is present only when its step ran:
+
+```json
+{
+  "findApplications": ["ns=2;g=…"],
+  "registered": true,
+  "registerStatus": { "name": "Good", "code": 0, "severity": "Good" },
+  "applicationId": "ns=2;g=…",
+  "requestKind": "csr",
+  "startRequestStatus": { … },
+  "requestId": "ns=2;g=…",
+  "finishRequestStatus": { … },
+  "certificate": "<base64 DER>",
+  "privateKeyFormat": "PEM",
+  "privateKey": "<base64 of the returned key bytes>",
+  "issuerCertificates": ["<base64 DER>", …],
+  "certificateGroups": ["ns=3;i=615"],
+  "trustListId": "ns=3;i=616",
+  "trustList": { "specifiedLists": 15, "trustedCertificates": […], "trustedCrls": […],
+                 "issuerCertificates": […], "issuerCrls": […] },
+  "getCertificateStatusStatus": { … },
+  "updateRequired": false,
+  "revokeStatus": { … },
+  "checkRevocationStatus": { … },
+  "certificateStatus": { "name": "BadCertificateRevocationUnknown", … },
+  "unregisterStatus": { … }
+}
+```
+
+| Key | Meaning |
+|-----|---------|
+| `findApplications` | the ApplicationIds of the records FindApplications returned (empty array if none) |
+| `registered` | true if step 2 registered the record, false if an existing record was used |
+| `registerStatus` | status of RegisterApplication (only when it ran) |
+| `applicationId` | the ApplicationId the later steps use |
+| `requestKind` | `csr` or `new-key-pair` |
+| `startRequestStatus`, `requestId` | status and RequestId of StartSigningRequest / StartNewKeyPairRequest |
+| `finishRequestStatus` | status of the FinishRequest that ended the polling |
+| `certificate` | the issued certificate (base64 DER) |
+| `privateKeyFormat`, `privateKey` | new-key-pair only: `"PEM"` and the base64 of the returned private key bytes (the PEM text) |
+| `issuerCertificates` | the issuer chain FinishRequest returned (the group's CA) |
+| `certificateGroups` | GetCertificateGroups result |
+| `trustListId`, `trustList` | GetTrustList result and the decoded TrustListDataType (base64 DER certificates and CRLs) |
+| `getCertificateStatusStatus`, `updateRequired` | GetCertificateStatus status and its output |
+| `revokeStatus` | status of RevokeCertificate |
+| `checkRevocationStatus` | the method result status of CheckRevocationStatus |
+| `certificateStatus` | the CertificateStatus output of CheckRevocationStatus |
+| `unregisterStatus` | status of UnregisterApplication |
+
+NodeIds are in the canonical form of §6 with the namespace index the server
+reports. Status objects are as in §3. When a step without a status key of its
+own fails (FindApplications, GetCertificateGroups, GetTrustList, the TrustList
+read) the result carries `findApplicationsStatus`,
+`getCertificateGroupsStatus`, `getTrustListStatus` or `readTrustListStatus`
+with the Bad status instead. `success` is true when every step that ran was
+Good; otherwise `success` is false, `serviceResult` is the failing status,
+`error.category` is `service` and the exit code is 4. Connect failures
+(including `BadUserAccessDenied` at ActivateSession for a wrong password) are
+exit 3, bad input exit 2 (§5).
+
+### 16.3 UA-.NETStandard 1.5.378 behaviour
+
+- The GDS server and client of 1.5.378.182 implement every Part 12 pull
+  method the command uses, including CheckRevocationStatus and GetCertificates
+  (`GetCertificates` is not called by `gds-pull`). EccNistP256 issuing works
+  for CSRs and new key pairs (`--certificate-type NistP256`).
+- One certificate request per application: StartSigningRequest /
+  StartNewKeyPairRequest for an application that already has one reuse its
+  RequestId (the request is reset and re-processed), so two runs on the same
+  record report the same `requestId`.
+- CheckRevocationStatus builds an X509Chain with online revocation checking
+  against the server's issuer store: for a certificate the GDS issued (and
+  just revoked) it reports `certificateStatus` `BadCertificateRevocationUnknown`
+  (the method itself is Good); it does not consult the GDS CRL.
+- UnregisterApplication also revokes the certificates the GDS issued to the
+  application.
+- The test PKI CA is not in the GDS trust list: `trustList` holds the GDS's
+  own CAs (RSA and ECC) and their CRLs (`trustedCertificates`,
+  `trustedCrls`), the issuer lists are empty.
+- QueryServers / QueryApplications have no access check in 1.5.378, so
+  Anonymous sessions may call them (not exercised by `gds-pull`);
+  FindApplications needs AuthenticatedUser.
