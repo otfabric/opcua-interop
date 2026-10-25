@@ -44,6 +44,8 @@ export const CLIENT_OPERATIONS = [
     "alarms",
     "push",
     "query",
+    "history-read-events",
+    "history-update-events",
 ];
 
 export const CLIENT_FEATURES = [
@@ -68,6 +70,8 @@ export const SERVER_FEATURES = [
     // the alarm fixture's s=Alarms.Clear (condition branches) and AudibleEnabled / AudibleSound (adapter 0.15.0)
     "alarms-branches",
     "alarms-audible",
+    // Not declared: history-events / history-events-update — node-opcua 2.187.12 has no event
+    // history (no s=History.Events) and its server does not serve HistoryUpdate.
 ];
 
 export const SECURITY_PROFILES: { policy: string; mode: string }[] = [

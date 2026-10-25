@@ -41,6 +41,7 @@ import {
     FindServersOnNetworkRequest,
     HistoryData,
     HistoryReadRequest,
+    HistoryUpdateRequest,
     LiteralOperand,
     LocalizedText,
     makeRelativePath,
@@ -59,6 +60,7 @@ import {
     QueryFirstRequest,
     QueryNextRequest,
     NodeTypeDescription,
+    ReadEventDetails,
     ReadRawModifiedDetails,
     ReadRequest,
     RegisteredServer,
@@ -82,11 +84,20 @@ import {
     WriteRequest,
 } from "node-opcua";
 import { CertificateGroup, ClientPushCertificateManagement, TrustListMasks } from "node-opcua-server-configuration";
-import { TrustListDataType, VariableAttributes } from "node-opcua-types";
+import {
+    DeleteEventDetails,
+    HistoryEvent,
+    HistoryEventFieldList,
+    PerformUpdateType,
+    TrustListDataType,
+    UpdateEventDetails,
+    VariableAttributes,
+} from "node-opcua-types";
 
 import { certificateUri, readCertificateDer, toPemFiles } from "./server.js";
 import {
     Args,
+    buildVariant,
     buildVariantLenient,
     codeOf,
     dataTypeName,
@@ -1359,6 +1370,360 @@ async function cmdHistoryRead(a: Args, r: Result): Promise<number> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// history-read-events / history-update-events (HistoryRead with ReadEventDetails,
+// HistoryUpdate with UpdateEventDetails / DeleteEventDetails), raw requests.
+// ---------------------------------------------------------------------------
+
+/** The default SelectClauses of history-read-events (BaseEventType fields). */
+export const HISTORY_EVENT_SELECT = ["EventId", "EventType", "SourceNode", "SourceName", "Time", "ReceiveTime", "Message", "Severity"];
+
+/** A `/`-separated browse path from BaseEventType (`ns:Name` for other namespaces) as a SimpleAttributeOperand. */
+export function selectOperand(path: string): SimpleAttributeOperand {
+    if (!path || path.split("/").some((s) => s.length === 0)) throw new InputError(`invalid --select path '${path}'`);
+    const browsePath = path.split("/").map((seg) => {
+        const m = /^(\d+):(.+)$/.exec(seg);
+        return m ? new QualifiedName({ namespaceIndex: Number(m[1]), name: m[2] }) : new QualifiedName({ namespaceIndex: 0, name: seg });
+    });
+    return new SimpleAttributeOperand({ typeDefinitionId: "i=2041", browsePath, attributeId: AttributeIds.Value });
+}
+
+/**
+ * The WhereClause of --of-type / --min-severity: one element, or
+ * [And(1, 2), OfType, GreaterThanOrEqual] (element 0 is the root and an
+ * ElementOperand refers to a later element, Part 4 §7.7.1); empty when neither.
+ */
+export function eventWhere(ofType: NodeId | undefined, minSeverity: number | undefined): ContentFilter {
+    const elements: ContentFilterElement[] = [];
+    if (ofType !== undefined) {
+        elements.push(new ContentFilterElement({
+            filterOperator: FilterOperator.OfType,
+            filterOperands: [new LiteralOperand({ value: new Variant({ dataType: DataType.NodeId, value: ofType }) })],
+        }));
+    }
+    if (minSeverity !== undefined) {
+        elements.push(new ContentFilterElement({
+            filterOperator: FilterOperator.GreaterThanOrEqual,
+            filterOperands: [selectOperand("Severity"), new LiteralOperand({ value: new Variant({ dataType: DataType.UInt16, value: minSeverity }) })],
+        }));
+    }
+    if (elements.length === 2) {
+        elements.unshift(new ContentFilterElement({
+            filterOperator: FilterOperator.And,
+            filterOperands: [new ElementOperand({ index: 1 }), new ElementOperand({ index: 2 })],
+        }));
+    }
+    return new ContentFilter({ elements });
+}
+
+/** --timestamps source|server|both|neither (any case; default both). */
+export function eventTimestamps(v: string | undefined): TimestampsToReturn {
+    const m: Record<string, TimestampsToReturn> = {
+        source: TimestampsToReturn.Source,
+        server: TimestampsToReturn.Server,
+        both: TimestampsToReturn.Both,
+        neither: TimestampsToReturn.Neither,
+    };
+    const ts = m[(v ?? "both").toLowerCase()];
+    if (ts === undefined) throw new InputError(`invalid --timestamps ${v} (source, server, both or neither)`);
+    return ts;
+}
+
+function parseTime(s: string | undefined, flag: string): Date | undefined {
+    if (s === undefined) return undefined;
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) throw new InputError(`${flag} must be RFC 3339: ${s}`);
+    return d;
+}
+
+function eventsJson(he: unknown, names: string[]): Record<string, unknown>[] {
+    if (!(he instanceof HistoryEvent)) return [];
+    return (he.events ?? []).map((fl) => ({
+        fields: (fl?.eventFields ?? []).map((v, i) => ({ name: i < names.length ? names[i] : `field${i}`, ...variantType(v), value: variantValueJson(v) })),
+    }));
+}
+
+interface EventPage {
+    svc: number;
+    item: number;
+    cp: string | null;
+    events: Record<string, unknown>[];
+}
+
+async function cmdHistoryReadEvents(a: Args, r: Result): Promise<number> {
+    const nodeStrs = a.all("--node");
+    if (!a.get("--endpoint") || nodeStrs.length === 0) throw new InputError("missing --endpoint or --node");
+    nodeStrs.forEach(parseNodeIdString);
+    const start = parseTime(a.get("--start"), "--start");
+    const end = parseTime(a.get("--end"), "--end");
+    const num = a.num("--num-values", 0);
+    if (num < 0 || !Number.isInteger(num)) throw new InputError("--num-values must be an integer >= 0");
+    let selectPaths = a.all("--select");
+    if (selectPaths.length === 0) selectPaths = [...HISTORY_EVENT_SELECT];
+    const select = selectPaths.map(selectOperand);
+    const ofTypeStr = a.get("--of-type");
+    if (ofTypeStr !== undefined) parseNodeIdString(ofTypeStr);
+    const minSevStr = a.get("--min-severity");
+    if (minSevStr !== undefined && (!/^\d+$/.test(minSevStr) || Number(minSevStr) > 65535)) throw new InputError("--min-severity must be a UInt16");
+    const cpIn = a.get("--continuation-point") ?? null;
+    if (cpIn !== null && nodeStrs.length !== 1) throw new InputError("--continuation-point takes exactly one --node");
+    const release = flagArg(a, "--release-continuation-point");
+    if (release && cpIn === null) throw new InputError("--release-continuation-point needs --continuation-point");
+    const scenario = a.get("--scenario");
+    if (scenario !== undefined && scenario !== "continue") throw new InputError(`unknown --scenario ${scenario}`);
+    const maxPages = a.num("--max-pages", 8);
+    if (maxPages < 1) throw new InputError("--max-pages must be >= 1");
+    const ts = eventTimestamps(a.get("--timestamps"));
+
+    const c = await connect(a);
+    try {
+        const nodes = nodeStrs.map((s) => resolve(c, s));
+        const filter = new EventFilter({
+            selectClauses: select,
+            whereClause: eventWhere(ofTypeStr === undefined ? undefined : resolve(c, ofTypeStr), minSevStr === undefined ? undefined : Number(minSevStr)),
+        });
+        const details = new ReadEventDetails({ startTime: start, endTime: end, numValuesPerNode: num, filter });
+
+        const request = async (ids: NodeId[], cps: (string | null)[], rel: boolean): Promise<EventPage[]> => {
+            const { resp, status } = await tx(c, new HistoryReadRequest({
+                historyReadDetails: details,
+                timestampsToReturn: ts,
+                releaseContinuationPoints: rel,
+                nodesToRead: ids.map((nodeId, i) => ({ nodeId, continuationPoint: cps[i] ? Buffer.from(cps[i]!, "base64") : undefined })),
+            }));
+            return ids.map((_, i) => {
+                const page: EventPage = { svc: status, item: 0, cp: null, events: [] };
+                if (!resp || !isGood(status)) return page;
+                const hr = resp.results?.[i];
+                if (!hr) {
+                    page.item = StatusCodes.BadUnexpectedError.value;
+                    return page;
+                }
+                page.item = codeOf(hr.statusCode);
+                if (hr.continuationPoint && hr.continuationPoint.length > 0) page.cp = Buffer.from(hr.continuationPoint).toString("base64");
+                page.events = eventsJson(hr.historyData, selectPaths);
+                return page;
+            });
+        };
+
+        let serviceFault = 0, firstBad = 0;
+        const track = (p: EventPage) => {
+            if (!isGood(p.svc)) {
+                if (serviceFault === 0) serviceFault = p.svc;
+            } else if (isBad(p.item) && firstBad === 0) {
+                firstBad = p.item;
+            }
+        };
+        const pageStatus = (p: EventPage) => statusJson(isGood(p.svc) ? p.item : p.svc);
+
+        if (scenario === "continue") {
+            // Each node pages on its own: follow the continuation points until none is
+            // left (or --max-pages), then release the last one received and try to reuse it.
+            for (const nodeId of nodes) {
+                const pages: Record<string, unknown>[] = [];
+                const all: Record<string, unknown>[] = [];
+                let cur = cpIn, lastCp: string | null = null;
+                let p: EventPage | undefined;
+                for (let i = 0; i < maxPages; i++) {
+                    p = (await request([nodeId], [cur], false))[0];
+                    track(p);
+                    all.push(...p.events);
+                    pages.push({ statusCode: pageStatus(p), continuationPoint: p.cp, events: p.events });
+                    if (!isGood(p.svc) || isBad(p.item) || !p.cp) break;
+                    cur = p.cp;
+                    lastCp = cur;
+                }
+                let releaseSc: unknown = null, reuseSc: unknown = null;
+                if (lastCp !== null) {
+                    releaseSc = pageStatus((await request([nodeId], [lastCp], true))[0]);
+                    reuseSc = pageStatus((await request([nodeId], [lastCp], false))[0]);
+                }
+                r.add({
+                    scenario: "continue",
+                    nodeId: nodeIdToString(nodeId),
+                    statusCode: pageStatus(p!),
+                    continuationPoint: p!.cp,
+                    selectClauses: selectPaths,
+                    events: all,
+                    pages,
+                    releaseStatusCode: releaseSc,
+                    reuseAfterReleaseStatusCode: reuseSc,
+                });
+            }
+        } else {
+            const pages = await request(nodes, nodes.map(() => cpIn), release);
+            pages.forEach((p, i) => {
+                track(p);
+                r.add({ nodeId: nodeIdToString(nodes[i]), statusCode: pageStatus(p), continuationPoint: p.cp, selectClauses: selectPaths, events: p.events });
+            });
+        }
+        if (serviceFault !== 0) {
+            r.setService(serviceFault).fail("service", "HistoryRead failed");
+            return EXIT_SERVICE;
+        }
+        if (firstBad !== 0) {
+            r.setService(firstBad).fail("service", "HistoryRead returned a Bad result for a node");
+            return EXIT_SERVICE;
+        }
+        return EXIT_OK;
+    } finally {
+        await close(c);
+    }
+}
+
+/** One --event field before NodeIds are resolved. */
+export interface EventFieldInput {
+    path: string;
+    type: string;
+    value: unknown;
+}
+
+/** Parses one --event JSON object (keys are select paths; values §7, or {"type": …, "value": …}). */
+export function parseEventJson(json: string): EventFieldInput[] {
+    let obj: unknown;
+    try {
+        obj = JSON.parse(json);
+    } catch (e) {
+        throw new InputError(`--event is not JSON: ${(e as Error).message}`);
+    }
+    if (obj === null || typeof obj !== "object" || Array.isArray(obj)) throw new InputError("--event must be a JSON object keyed by select path");
+    const out: EventFieldInput[] = [];
+    for (const [path, v] of Object.entries(obj as Record<string, unknown>)) {
+        selectOperand(path);
+        let f: EventFieldInput;
+        if (v !== null && typeof v === "object" && !Array.isArray(v) && typeof (v as Record<string, unknown>).type === "string") {
+            f = { path, type: (v as Record<string, unknown>).type as string, value: (v as Record<string, unknown>).value };
+        } else if (typeof v === "string") {
+            f = { path, type: "String", value: v };
+        } else if (typeof v === "boolean") {
+            f = { path, type: "Boolean", value: v };
+        } else if (typeof v === "number") {
+            f = { path, type: Number.isInteger(v) && Math.abs(v) <= 2147483647 ? "Int32" : "Double", value: v };
+        } else if (v === null) {
+            f = { path, type: "Null", value: null };
+        } else if (typeof v === "object" && !Array.isArray(v) && "text" in (v as object)) {
+            f = { path, type: "LocalizedText", value: v };
+        } else {
+            throw new InputError(`--event field ${path}: give {"type": …, "value": …}`);
+        }
+        // syntax check (NodeIds with a namespace URI are resolved after connecting)
+        eventFieldVariant(f, (s) => resolveParsed(parseNodeIdString(s), undefined), true);
+        out.push(f);
+    }
+    return out;
+}
+
+/** The Variant of an --event field (§7 encodings). */
+export function eventFieldVariant(f: EventFieldInput, node: (s: string) => NodeId, syntaxOnly = false): Variant {
+    const v = f.value;
+    if (f.type === "Null" || v === null || v === undefined) return new Variant({ dataType: DataType.Null });
+    try {
+        switch (f.type) {
+            case "LocalizedText": {
+                if (typeof v === "string") return new Variant({ dataType: DataType.LocalizedText, value: new LocalizedText({ text: v }) });
+                const o = v as { locale?: string; text?: string };
+                return new Variant({ dataType: DataType.LocalizedText, value: new LocalizedText({ locale: o.locale || null, text: o.text ?? null }) });
+            }
+            case "QualifiedName": {
+                if (typeof v === "object") {
+                    const o = v as { ns?: number; name?: string };
+                    return new Variant({ dataType: DataType.QualifiedName, value: new QualifiedName({ namespaceIndex: o.ns ?? 0, name: o.name }) });
+                }
+                return buildVariant("QualifiedName", String(v));
+            }
+            case "NodeId":
+                if (syntaxOnly && String(v).startsWith("nsu=")) {
+                    parseNodeIdString(String(v));
+                    return new Variant({ dataType: DataType.Null });
+                }
+                return new Variant({ dataType: DataType.NodeId, value: node(String(v)) });
+            case "StatusCode":
+                if (typeof v === "object") return buildVariant("StatusCode", String((v as { code?: number }).code));
+                return buildVariant("StatusCode", String(v));
+            case "ByteString":
+                if (typeof v !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(v)) throw new InputError("not Base64");
+                return buildVariant("ByteString", v);
+            default:
+                return buildVariant(f.type, typeof v === "string" ? v : JSON.stringify(v));
+        }
+    } catch (e) {
+        throw new InputError(`--event field ${f.path} (${f.type}): ${(e as Error).message}`);
+    }
+}
+
+async function cmdHistoryUpdateEvents(a: Args, r: Result): Promise<number> {
+    const nodeStr = a.get("--node");
+    if (!a.get("--endpoint") || !nodeStr) throw new InputError("missing --endpoint or --node");
+    parseNodeIdString(nodeStr);
+    const perform = a.get("--perform");
+    if (perform === undefined) throw new InputError("missing --perform insert|replace|update|delete");
+    const types: Record<string, PerformUpdateType | null> = {
+        insert: PerformUpdateType.Insert,
+        replace: PerformUpdateType.Replace,
+        update: PerformUpdateType.Update,
+        delete: null,
+    };
+    const type = types[perform.toLowerCase()];
+    if (type === undefined) throw new InputError(`invalid --perform ${perform} (insert, replace, update or delete)`);
+    const events = a.all("--event").map(parseEventJson);
+    let selectPaths = a.all("--select");
+    const eventIds: Buffer[] = [];
+    if (type === null) {
+        for (const id of a.all("--event-id")) {
+            if (!/^[A-Za-z0-9+/]*={0,2}$/.test(id)) throw new InputError(`--event-id must be Base64: ${id}`);
+            eventIds.push(Buffer.from(id, "base64"));
+        }
+        if (eventIds.length === 0) throw new InputError("--perform delete needs --event-id");
+    } else {
+        if (events.length === 0) throw new InputError(`--perform ${perform} needs --event`);
+        // the paths of the --event objects, in order of appearance
+        if (selectPaths.length === 0) selectPaths = [...new Set(events.flatMap((e) => e.map((f) => f.path)))];
+        selectPaths.forEach(selectOperand);
+        for (const e of events) {
+            for (const f of e) if (!selectPaths.includes(f.path)) throw new InputError(`--event field ${f.path} is not a --select path`);
+        }
+    }
+    const performName = type === null ? "Delete" : PerformUpdateType[type];
+
+    const c = await connect(a);
+    try {
+        const nodeId = resolve(c, nodeStr);
+        const details = type === null
+            ? new DeleteEventDetails({ nodeId, eventIds })
+            : new UpdateEventDetails({
+                nodeId,
+                performInsertReplace: type,
+                filter: new EventFilter({ selectClauses: selectPaths.map(selectOperand), whereClause: new ContentFilter({ elements: [] }) }),
+                eventData: events.map((e) => new HistoryEventFieldList({
+                    eventFields: selectPaths.map((p) => {
+                        const f = e.find((x) => x.path === p);
+                        return f ? eventFieldVariant(f, (s) => resolve(c, s)) : new Variant({ dataType: DataType.Null });
+                    }),
+                })),
+            });
+        const { resp, status } = await tx(c, new HistoryUpdateRequest({ historyUpdateDetails: [details] }));
+        if (!resp || !isGood(status) || !resp.results?.length) {
+            r.setService(isGood(status) ? StatusCodes.BadUnexpectedError.value : status).fail("service", "HistoryUpdate failed");
+            return EXIT_SERVICE;
+        }
+        const hr = resp.results[0];
+        const item = codeOf(hr.statusCode);
+        r.add({
+            nodeId: nodeIdToString(nodeId),
+            performUpdateType: performName,
+            statusCode: statusJson(item),
+            operationResults: (hr.operationResults ?? []).map((sc: StatusCode) => statusJson(codeOf(sc))),
+        });
+        if (isBad(item)) {
+            r.setService(item).fail("service", "HistoryUpdate returned a Bad result for the node");
+            return EXIT_SERVICE;
+        }
+        return EXIT_OK;
+    } finally {
+        await close(c);
+    }
+}
+
 function uintArg(a: Args, name: string): number {
     const v = a.get(name);
     if (v === undefined || !/^\d+$/.test(v) || Number(v) > 0xffffffff) throw new InputError(`${name} must be a uint32`);
@@ -2333,6 +2698,8 @@ const COMMANDS: Record<string, Cmd> = {
     "subscription-lifecycle": cmdSubscriptionLifecycle,
     "event-subscribe": cmdEventSubscribe,
     "history-read": cmdHistoryRead,
+    "history-read-events": cmdHistoryReadEvents,
+    "history-update-events": cmdHistoryUpdateEvents,
     republish: cmdRepublish,
     "transfer-subscriptions": cmdTransferSubscriptions,
     "register-nodes": cmdRegisterNodes,
@@ -2354,7 +2721,7 @@ const UNSUPPORTED_OPS: Record<string, string> = {
 export const CLIENT_USAGE =
     "usage: client <endpoints|find-servers|read|write|browse|translate|call|subscribe|subscription-lifecycle|" +
     "event-subscribe|history-read [--scenario continue]|republish|transfer-subscriptions|register-nodes|node-management|" +
-    "find-servers-on-network|register-server|alarms|push|query> --endpoint <url> [flags]";
+    "find-servers-on-network|register-server|alarms|push|query|history-read-events|history-update-events> --endpoint <url> [flags]";
 
 export async function clientCommand(argv: string[]): Promise<number> {
     if (argv.length < 1) {

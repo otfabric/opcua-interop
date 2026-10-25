@@ -66,7 +66,11 @@ or PFX private key, ResetToServerDefaults, CancelChanges and the
 TransactionDiagnostics, the methods node-opcua's client has no helper for as
 plain Call requests; contract §1 / §4 / §15 `push`), `query` (QueryFirst for
 one NodeTypeDescription, then QueryNext until no continuation point is left;
-contract §1 / §4 `query`).
+contract §1 / §4 `query`), `history-read-events` (HistoryRead with
+ReadEventDetails: SelectClauses, the `--of-type` / `--min-severity`
+WhereClause, continuation points, `--scenario continue`) and
+`history-update-events` (HistoryUpdate with UpdateEventDetails insert /
+replace / update or DeleteEventDetails; since 0.17.0, contract §1 / §4).
 
 **Client features:** `channel-lifetime`, `deadband`, `reverse-listen`
 (also with security), `application-uri`, `register-server2`, `push-groups`,
@@ -134,6 +138,7 @@ User tokens: Anonymous, UserName (see deviation 4 for UserName over None).
 | AddNodes / DeleteNodes on the server (`node-management` server feature) | `OPCUAServer` answers AddNodes, DeleteNodes, AddReferences and DeleteReferences with `BadServiceUnsupported` (`node-opcua-server/dist/opcua_server.js`); the client operation `node-management` is provided |
 | `--lds`, `--lds-cleanup-timeout`, `--mdns-name`, `--mdns-capability` | `OPCUAServer` is no discovery server: it answers RegisterServer, RegisterServer2 and FindServersOnNetwork with `BadServiceUnsupported`. node-opcua's LDS (and its mDNS) is the separate `OPCUADiscoveryServer` application, which has no fixture address space; it is not wired into this adapter |
 | `--pubsub-config`, `codec pubsub-*` | node-opcua has no open-source PubSub (Part 14; PubSub is a commercial add-on); `print-capabilities` → `pubsub.supported: false` |
+| Event history on the server (`history-events`, `history-events-update` server features, no `s=History.Events`) | node-opcua 2.187.12 historizes variables only: a HistoryRead with ReadEventDetails makes the engine's `historyRead` throw, and the server answers the whole request with the service fault `BadHistoryOperationInvalid` (`node-opcua-server/dist/opcua_server.js`, `_on_HistoryReadRequest`). HistoryUpdate is not served at all (`_on_HistoryUpdate` → `BadServiceUnsupported`). The client operations `history-read-events` / `history-update-events` are provided |
 | `codec` | node-opcua has no Part 6 XML encoding of a Variant / DataValue, and its OPC UA 1.05 JSON encoder (`node-opcua-json`) is not wired into the adapter; `codec` is not in `clientOperations` (exit 2) |
 
 ## PKI and trust
