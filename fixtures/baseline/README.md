@@ -150,7 +150,8 @@ Compatibility
 └── Alarms            (nsu=urn:otfabric:opcua-interop:model;s=Alarms, FolderType, Organizes)
     └── Alarms.Source (s=Alarms.Source, BaseObjectType, EventNotifier SubscribeToEvents, Organizes)
         ├── InteropAlarm  (s=Alarms.InteropAlarm, AlarmConditionType, HasComponent + HasCondition)
-        └── Reset         (s=Alarms.Reset, Method, HasComponent, no arguments)
+        ├── Reset         (s=Alarms.Reset, Method, HasComponent, no arguments)
+        └── Clear         (s=Alarms.Clear, Method, HasComponent, no arguments; node-opcua since 0.15.0)
 ```
 
 `Alarms.Source` is a notifier of the Server object (HasNotifier Server →
@@ -163,6 +164,7 @@ Alarms.Source; node-opcua: HasEventSource), so an event monitored item on
 | ConditionName | `InteropAlarm` |
 | SourceNode / SourceName | `s=Alarms.Source` / `Alarms.Source` |
 | Initial state (and after `Reset`) | EnabledState true, ActiveState true, AckedState false, ConfirmedState false, Retain true, Severity `500`, Message `interop-alarm` (locale `en`), Comment empty |
+| AudibleEnabled / AudibleSound (serverFeatures `alarms-audible`, node-opcua since 0.15.0) | AudibleEnabled `true`; AudibleSound (AudioVariableType, AudioDataType) the 35 bytes `RIFF$\0\0\0WAVEfmt interop-alarm-sound` (Latin-1), its ListId `urn:otfabric:opcua-interop:sounds` |
 
 The stack's own handlers serve Acknowledge (`i=9111`), Confirm (`i=9113`),
 AddComment (`i=9029`), Enable (`i=9027`), Disable (`i=9028`) and
@@ -171,7 +173,25 @@ ConditionRefresh (`i=3875` on ConditionType `i=2782`; ConditionRefresh2
 method reports a new condition event. Calling `Reset` on
 `s=Alarms.Source` re-arms the alarm (re-enables a disabled condition, new
 EventId, reports an event) and returns Good — call it first, the server
-container is shared by several tests. Per-stack differences (repeated
+container is shared by several tests.
+
+**Condition branches** (serverFeatures `alarms-branches`, node-opcua since
+0.15.0). `Clear` on `s=Alarms.Source` returns the alarm to normal; while it is
+active, unacknowledged and retained (as after `Reset`) the stack keeps that
+state in a new condition branch (Part 9 §4.4, §5.5.2). In this order it
+reports an event of the branch (BranchId non-null, ActiveState true,
+AckedState false, Retain true, the EventId to acknowledge the branch with)
+and an event of the condition itself (BranchId null, ActiveState false,
+AckedState true). Acknowledge and Confirm with the branch's EventId act on
+the branch (events with its BranchId); after Confirm the branch is not
+retained and is deleted. `Clear` returns `Bad_InvalidState` when the alarm is
+not active and `Bad_ConditionDisabled` when it is disabled; `Reset` also
+drops the branches. ConditionRefresh reports the condition, not its branches
+(node-opcua 2.187.12 `_resend_conditionEvents`). node-opcua's own
+`signalNewCondition(null, false, "")` does this; branch zero then has its
+default normal state: Message `Back to normal`, Severity `0`.
+
+Per-stack differences (repeated
 Acknowledge status, Message after an action, RefreshStart/End on other
 notifiers, Time): docs/CLIENT_CONTRACT.md §13 "Alarm servers"; the client side
 is `client alarms` (§1 / §4).

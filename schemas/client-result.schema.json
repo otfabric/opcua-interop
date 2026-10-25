@@ -23,7 +23,7 @@
         "history-read", "republish", "transfer-subscriptions",
         "register-nodes", "node-management",
         "find-servers-on-network", "register-server", "codec", "pubsub-discover",
-        "alarms"
+        "alarms", "push", "query"
       ]
     },
     "success": {

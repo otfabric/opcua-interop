@@ -252,11 +252,13 @@ server ... --certificate /certs/cert.crt --private-key /certs/cert.key --https-p
 # open62541, UA-.NETStandard, node-opcua (v0.13.0, serverFeatures "push-management"): with
 # --certificate / --private-key / --pki-dir the ServerConfiguration push certificate management of
 # Part 12 §7; fixture users with role "SecurityAdmin" may call it (docs/CLIENT_CONTRACT.md §15)
+# node-opcua (v0.15.0, serverFeatures "alarms-branches", "alarms-audible"): s=Alarms.Clear keeps the
+# unacknowledged state in a condition branch; InteropAlarm has AudibleEnabled / AudibleSound
 ```
 
 ### Client commands
 
-Nineteen client operations, plus `pubsub-discover` on the dotnet adapter and `push` on node-opcua (see `print-capabilities` → `clientOperations` and
+Nineteen client operations, plus `pubsub-discover` on the dotnet adapter and `push` and `query` on node-opcua (see `print-capabilities` → `clientOperations` and
 [`docs/CLIENT_CONTRACT.md`](docs/CLIENT_CONTRACT.md)):
 
 ```sh
@@ -278,6 +280,13 @@ client alarms    --endpoint ... [--node i=2253] [--condition-name InteropAlarm] 
 client push      --endpoint ... --security-mode SignAndEncrypt --username ... --password ... \
                  [--add-certificate cert.der] [--remove-certificate <thumbprint>] [--issuer] \
                  [--csr] [--apply]                        # node-opcua (v0.13.0), §15
+                 [--group Application|Https|UserToken] [--get-certificates] \
+                 [--create-self-signed --subject CN=x --dns host] [--delete-certificate <typeId>] \
+                 [--update-certificate cert.der [--update-private-key key.pfx] [--issuer-certificate ca.der]] \
+                 [--reset-to-defaults] [--cancel] [--transaction-diagnostics]   # node-opcua (v0.15.0)
+client query     --endpoint ... --type-definition '<typeId>' [--include-subtypes] \
+                 [--data-to-return '.Serial'] [--data-to-return '#BrowseName'] [--max-data-sets 2] \
+                 [--release-continuation-point]           # node-opcua (v0.15.0), QueryFirst / QueryNext
 client history-read --endpoint ... --node '...' --start <rfc3339> --end <rfc3339> \
                  [--num-values 0] [--timestamps Both] [--scenario continue]
 client republish --endpoint ... --subscription-id <n> --sequence-number <n>
