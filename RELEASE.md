@@ -72,6 +72,32 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.14.0
+
+**Date:** 2026-10-25
+**Previous release:** v0.13.0
+
+### Summary
+
+The GDS pull model (Part 12 §6 and §7.9): a new adapter, `dotnet-gds`, has a Global Discovery Server and a GDS pull client. It is built on UA-.NETStandard 1.5.378.182, whose GDS packages have no 2.0.x release.
+
+### Added
+
+- **dotnet-gds adapter** (image `ghcr.io/otfabric/opcua-interop-dotnet-gds`, compose port 4846), with every Opc.Ua.* package pinned to 1.5.378.182:
+  - The server runs a GDS (serverFeatures `gds-pull`): Directory, CertificateDirectory, request approval and revocation.
+  - The client has the pull operations (clientOperations `gds-pull`): register an application, StartSigningRequest, StartNewKeyPairRequest, FinishRequest, read the trust list, and revoke.
+  - CLIENT_CONTRACT.md §16 lists the flags and results.
+- **CI and release:** the adapter is built, smoke-tested and released with the others.
+
+### Notes
+
+- CLIENT_CONTRACT.md §16.3 records three behaviours of UA-.NETStandard 1.5.378:
+  - The CRL of its ECC CA names sha256WithRSAEncryption inside the TBSCertList but ecdsa-with-SHA256 outside, which RFC 5280 §5.1.1.2 forbids.
+  - Its GDS client reads a TrustList through the FileType methods of the type.
+  - Its new key pairs come as PFX.
+
+---
+
 ## v0.13.0
 
 **Date:** 2026-10-25

@@ -304,7 +304,7 @@ public class ServerCommand {
                 fixture.server.productUri,
                 "OTFabric",
                 "opcua-interop-milo",
-                "0.13.0",
+                "0.14.0",
                 "1.1.8",
                 DateTime.now());
 
