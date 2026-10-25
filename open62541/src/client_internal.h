@@ -58,3 +58,5 @@ int cmd_codec(int argc, char **argv);
 int cmd_codec_pubsub(int argc, char **argv); /* codec pubsub-{uadp,json}-{encode,decode} */
 int cmd_find_servers_on_network(int argc, char **argv);
 int cmd_register_server(int argc, char **argv);
+int cmd_push(int argc, char **argv);     /* push.c, Part 12 §7 push management */
+int cmd_gds_pull(int argc, char **argv); /* gds_pull.c, Part 12 §6 / §7.9 GDS pull */

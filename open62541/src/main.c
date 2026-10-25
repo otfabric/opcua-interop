@@ -122,7 +122,11 @@ static int cmd_print_capabilities(void) {
     printf("    \"node-management\",\n");
     printf("    \"find-servers-on-network\",\n");
     printf("    \"register-server\",\n");
-    printf("    \"codec\"\n");
+    printf("    \"codec\",\n");
+    /* Part 12 push management and GDS pull model as plain Calls (push.c,
+     * gds_pull.c): open62541 v1.5.9 has no push or GDS client API. */
+    printf("    \"push\",\n");
+    printf("    \"gds-pull\"\n");
     printf("  ],\n");
     printf("  \"clientFeatures\": [\n");
     printf("    \"channel-lifetime\",\n");
@@ -134,7 +138,11 @@ static int cmd_print_capabilities(void) {
     printf("    \"register-server2\",\n");
     printf("    \"codec-json\",\n");
     printf("    \"codec-xml\",\n");
-    printf("    \"codec-pubsub\"\n");
+    printf("    \"codec-pubsub\",\n");
+    /* The `client push` flags of adapter 0.15.0 (CLIENT_CONTRACT §1 "push flags") */
+    printf("    \"push-groups\",\n");
+    printf("    \"push-certificates\",\n");
+    printf("    \"push-transaction-diagnostics\"\n");
     printf("  ],\n");
     printf("  \"serverFeatures\": [\n");
     printf("    \"deadband\",\n");
