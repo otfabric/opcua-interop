@@ -3038,7 +3038,7 @@ recorded with `RecordEvent`), except where noted:
 |---|---|
 | `--start 2026-07-24T10:00:00Z --end 2026-07-24T10:01:00Z` | `hist-evt-0` … `hist-evt-4`, oldest first |
 | `--start 2026-07-24T10:01:00Z --end 2026-07-24T09:59:00Z` (end before start: newest first) | `hist-evt-4` … `hist-evt-0` |
-| forward, `--num-values 2 --scenario continue` | pages of 2, 2, 1; `reuseAfterReleaseStatusCode` `BadContinuationPointInvalid`; `releaseStatusCode` (the last continuation point was already consumed) is server-specific: `BadContinuationPointInvalid` on UA-.NETStandard, `Good` on go-opcua |
+| forward, `--num-values 2 --scenario continue` | pages of 2, 2, 1; `reuseAfterReleaseStatusCode` `BadContinuationPointInvalid`; `releaseStatusCode` (the last continuation point was already consumed) `BadContinuationPointInvalid` (Part 4 §5.10.3; go-opcua since v1.26.0, which answered `Good` before; asyncua answers `Good`, §17.4) |
 | forward, `--of-type i=2130` | `hist-evt-3` |
 | forward, `--min-severity 300` | `hist-evt-2`, `hist-evt-3`, `hist-evt-4` |
 | forward, `--of-type i=2041 --min-severity 300` | `hist-evt-2`, `hist-evt-3`, `hist-evt-4` (OfType matches subtypes) |
@@ -3049,7 +3049,7 @@ recorded with `RecordEvent`), except where noted:
 | `insert` of a new EventId and of `hist-evt-0` | `GoodEntryInserted`, `BadEntryExists` |
 | `replace` of `hist-evt-0` and of an unknown EventId | `GoodEntryReplaced`, `BadNoEntryExists` |
 | `update` of an unknown EventId and of `hist-evt-0` | `GoodEntryInserted`, `GoodEntryReplaced` |
-| `delete` of `hist-evt-1` and of an unknown EventId | `Good`, `BadNoEntryExists` (go-opcua: `Good`, `BadNoData`) |
+| `delete` of `hist-evt-1` and of an unknown EventId | `Good`, `BadNoEntryExists` (go-opcua: `Good`, `BadNoData`, the node status Part 11 §6.9.7.2 gives when no event matches) |
 
 ### 17.2 UA-.NETStandard 2.0.1 (dotnet)
 
