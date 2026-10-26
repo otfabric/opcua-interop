@@ -35,7 +35,7 @@ const-oid = { version = "0.9", features = ["db"] }
 arc-swap = "1"
 # `client gds-pull` certificate requests (PKCS #10, RSA 2048 / ECC P-256).
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
-rand = "0.8"
+rand = "0.10"
 
 [profile.release]
 opt-level = 3
