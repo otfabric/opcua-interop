@@ -3,7 +3,7 @@
 # is built: the tag is vMAJOR.MINOR.PATCH, every adapter reports that version
 # (print-capabilities adapter.version, Milo BuildInfo; the dotnet and dotnet-gds
 # BuildInfo is their adapter.version), and RELEASE.md has a
-# non-empty section for it.
+# non-empty section for it that ends with a "---" line.
 #
 #   scripts/check-release.sh v0.8.0
 set -euo pipefail
@@ -35,8 +35,8 @@ check node-opcua/src/util.ts 's/^export const ADAPTER_VERSION = "([0-9.]+)";$/\1
 check node-opcua/package.json 's/^  "version": "([0-9.]+)",$/\1/p' "node-opcua package version"
 check asyncua/src/opcua_interop_asyncua/common.py 's/^ADAPTER_VERSION = "([0-9.]+)"$/\1/p' "asyncua adapter.version (also its BuildInfo version)"
 
-notes="$("${ROOT}/scripts/release-notes.sh" "${TAG}")" || fail "RELEASE.md has no section \"## ${TAG}\""
-[[ -n "${notes//[[:space:]]/}" ]] || fail "RELEASE.md section \"## ${TAG}\" is empty"
+# release-notes.sh fails when the section is missing, empty or not closed by "---".
+notes="$("${ROOT}/scripts/release-notes.sh" "${TAG}")" || fail "RELEASE.md has no closed, non-empty section \"## ${TAG}\""
 if grep -qiE '^\*\*Date:\*\* *(unreleased|tbd)' <<<"${notes}"; then
     fail "RELEASE.md section \"## ${TAG}\" has no release date"
 fi

@@ -141,6 +141,7 @@ buildx-node-opcua: ## Build and push node-opcua image (multi-arch)
 # ── Validation ───────────────────────────────────────────────────────────────
 
 validate: validate-fixtures ## Run all validation checks
+	@scripts/release-notes.sh > /dev/null && echo "ok   RELEASE.md has closed notes for its newest version"
 
 validate-fixtures: ## Validate all fixture files against schema
 	@echo "Validating fixture files..."

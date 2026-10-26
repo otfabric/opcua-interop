@@ -54,6 +54,16 @@
    OPCUA_INTEROP_REQUIRE_CAPABILITIES=1 go test -count=1 -tags=interop -timeout 60m ./interop/...
    ```
 
+The notes are the body of the GitHub release, followed by the image digests:
+everything after the heading `## vX.Y.Z` up to the next line that is exactly
+`---` (`scripts/release-notes.sh vX.Y.Z` prints it; without a version it
+prints the newest section). This is the format of every otfabric repository
+and the rule of the shared release workflow, so: one section per version,
+newest first, each ending with a `---` line, and no `---` line inside a
+section. `make validate` (and CI) fails when the newest section is missing,
+empty or not closed, and the Release workflow checks the section of the new
+version before anything is built.
+
 Tags are immutable. A fix is a new version; a published tag is never moved
 (`:vX.Y` and `:vX` follow the latest release of their line).
 
@@ -698,3 +708,5 @@ and a client behind one command contract, serving one deterministic fixture.
   CreateMonitoredItems, Publish.
 - Baseline fixture with scalar types, methods and dynamic values; cross-stack
   smoke test.
+
+---

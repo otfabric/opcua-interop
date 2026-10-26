@@ -50,6 +50,11 @@ jobs:
       - name: Validate fixtures
         run: scripts/validate-fixtures.sh
 
+      # The newest section of RELEASE.md must be non-empty and end with "---"
+      # (the GitHub release body is the text up to that line).
+      - name: RELEASE.md has the notes of its newest version
+        run: scripts/release-notes.sh > /dev/null
+
       # The version the adapters report must have a section in RELEASE.md
       # (its date may still say "unreleased"; the Release workflow requires one).
       - name: Release notes for the adapter version
