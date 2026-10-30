@@ -6,8 +6,8 @@
 # (=0.19.0) and Cargo.lock. Pure-Rust crypto (RustCrypto): no OpenSSL, so the
 # same Dockerfile builds natively for linux/amd64 and linux/arm64.
 
-ARG RUST_IMAGE=rust:1.99.0-slim-bookworm
-ARG RUNTIME_IMAGE=debian:bookworm-20261005-slim
+ARG RUST_IMAGE=rust:1.99.0-slim-bookworm@sha256:2c3a22f0a5533ea2dd5a16627bc841228151faa2d4de2644ac9987e4a2f1f2fa
+ARG RUNTIME_IMAGE=debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
 # ---------------------------------------------------------------------------
 # Stage 1 — compile (dependencies in their own layer)

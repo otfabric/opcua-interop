@@ -5,7 +5,8 @@
 # ---------------------------------------------------------------------------
 # Stage 1 — build open62541 amalgam from source
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim AS open62541-build
+ARG DEBIAN_DIGEST=sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+FROM debian:bookworm-slim@${DEBIAN_DIGEST} AS open62541-build
 
 ARG OPEN62541_COMMIT=v1.5.9
 ARG OPEN62541_REPO=https://github.com/open62541/open62541
@@ -94,7 +95,7 @@ RUN cmake .. \
 # ---------------------------------------------------------------------------
 # Stage 2 — compile the adapter
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim AS adapter-build
+FROM debian:bookworm-slim@${DEBIAN_DIGEST} AS adapter-build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
@@ -133,7 +134,7 @@ RUN cmake .. \
 # ---------------------------------------------------------------------------
 # Stage 3 — minimal runtime image
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@${DEBIAN_DIGEST} AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bash \

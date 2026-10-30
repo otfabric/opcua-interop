@@ -17,7 +17,7 @@
      `async-opcua/Cargo.toml` (crate `version`)
    - `dotnet/src/Capabilities.cs` (`AdapterVersion`, also the server's
      `BuildInfo` software version)
-3. Write the section `## vX.Y.Z` below, with its **Date**; `make release-notes
+3. Set `interop_version` in versions.yaml and write the section `## vX.Y.Z` below, with its **Date**; `make release-notes
    VERSION=vX.Y.Z` prints what the GitHub release will say. Commit and push
    to `main`.
 4. Run the `Release` workflow on `main` (Actions → Release → Run workflow)
