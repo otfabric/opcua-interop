@@ -78,9 +78,11 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "rsa"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "p256"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       rustcrypto:
-        patterns: ["x509-cert", "spki", "sha2", "const-oid", "der", "rsa"]
+        patterns: ["x509-cert", "spki", "sha2", "const-oid", "der", "rsa", "p256"]
 
   - package-ecosystem: "docker"
     directory: "/node-opcua"
