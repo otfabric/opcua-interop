@@ -19,7 +19,11 @@
 #
 # Exit codes:
 #   0  — all checks passed
-#   1  — one or more checks failed
+#   1  — one or more checks failed, or none passed
+#
+# With REPORT_DIR set, writes ${REPORT_DIR}/results.json (interop-result-v1,
+# scripts/results.sh): only a pass counts as passing, and a known deviation of
+# tests/known-differences.tsv is reported as such.
 
 set -euo pipefail
 
@@ -35,8 +39,15 @@ PASS=0
 FAIL=0
 
 log()  { echo "[smoke] $*" >&2; }
-ok()   { log "OK: $*"; PASS=$((PASS + 1)); }
-fail() { log "FAIL: $*"; FAIL=$((FAIL + 1)); }
+ok()   { log "OK: $*"; PASS=$((PASS + 1)); record pass; }
+fail() { log "FAIL: $*"; FAIL=$((FAIL + 1)); record fail "$*"; }
+
+# shellcheck source=scripts/results.sh
+source "${SCRIPT_DIR}/results.sh"
+case "${MODE}" in cross*) SUITE="${MODE}" ;; *) SUITE=single ;; esac
+RESULT_ADAPTER="${MODE}"
+RESULTS_ARGS="${MODE} $*"
+results_start "$@"
 
 # ── Container lifecycle helpers ───────────────────────────────────────────────
 
@@ -71,7 +82,11 @@ stop_server() {
 
 wait_ready() {
     local cname="$1"
-    "${SCRIPT_DIR}/wait-ready.sh" "${cname}" "${WAIT_TIMEOUT}"
+    "${SCRIPT_DIR}/wait-ready.sh" "${cname}" "${WAIT_TIMEOUT}" && return 0
+    at harness.server-ready
+    infra "${cname} did not become ready"
+    results_finish
+    exit 1
 }
 
 run_client_op() {
@@ -120,6 +135,7 @@ HEV_NODE="nsu=urn:otfabric:opcua-interop:model;s=History.Events"
 # check_history_events_caps <image> <label>: print-capabilities lists both operations.
 check_history_events_caps() {
     local image="$1" label="$2" out
+    at history.caps "${label}"
     out=$(docker run --rm "${image}" print-capabilities 2>/dev/null) || true
     if echo "${out}" | jq -e '(.clientOperations | index("history-read-events")) and (.clientOperations | index("history-update-events"))' >/dev/null 2>&1; then
         ok "${label}: print-capabilities lists history-read-events / history-update-events"
@@ -134,6 +150,7 @@ check_history_events_caps() {
 # or no events, the check takes either).
 check_history_events_envelope() {
     local image="$1" endpoint="$2" label="$3" out
+    at history.envelope "${label}"
     out=$(run_client_op "${image}" history-read-events --endpoint "${endpoint}" \
             --node "nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32" \
             --start 2026-07-24T10:00:00Z --end 2026-07-24T10:01:00Z) || true
@@ -149,6 +166,7 @@ check_history_events_envelope() {
 # of History.Events, oldest first, and the newest first with start > end.
 check_history_events_read() {
     local image="$1" endpoint="$2" label="$3" out
+    at history.read "${label}"
     out=$(run_client_op "${image}" history-read-events --endpoint "${endpoint}" --node "${HEV_NODE}" \
             --start 2026-07-24T10:00:00Z --end 2026-07-24T10:01:00Z) || true
     validate_envelope "${out}" "${label}:history-read-events" || return
@@ -168,6 +186,7 @@ check_endpoints() {
     local client_image="$1"
     local endpoint="$2"
     local label="$3"
+    at endpoints "${label}"
 
     local output
     if output=$(run_client_op "${client_image}" endpoints --endpoint "${endpoint}"); then
@@ -186,6 +205,7 @@ check_browse() {
     local client_image="$1"
     local endpoint="$2"
     local label="$3"
+    at browse "${label}"
 
     local output
     if output=$(run_client_op "${client_image}" browse --endpoint "${endpoint}" --node "i=85"); then
@@ -204,6 +224,7 @@ check_read_scalar() {
     local client_image="$1"
     local endpoint="$2"
     local label="$3"
+    at read-scalar "${label}"
 
     local node="nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32"
     local output
@@ -223,6 +244,7 @@ check_write() {
     local client_image="$1"
     local endpoint="$2"
     local label="$3"
+    at write "${label}"
 
     local node="nsu=urn:otfabric:opcua-interop:model;s=Access.ReadWrite"
     local output
@@ -246,6 +268,7 @@ check_call() {
     local client_image="$1"
     local endpoint="$2"
     local label="$3"
+    at call "${label}"
 
     local obj="nsu=urn:otfabric:opcua-interop:model;s=Methods"
     local meth="nsu=urn:otfabric:opcua-interop:model;s=Methods.Add"
@@ -271,6 +294,7 @@ check_subscribe() {
     local client_image="$1"
     local endpoint="$2"
     local label="$3"
+    at subscribe "${label}"
 
     local node="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter"
     local output
@@ -295,6 +319,7 @@ check_register_nodes() {
     local client_image="$1"
     local endpoint="$2"
     local label="$3"
+    at register-nodes "${label}"
 
     local node="nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32"
     local output
@@ -320,6 +345,7 @@ check_channel_renewal() {
     local client_image="$1"
     local endpoint="$2"
     local label="$3"
+    at channel-renewal "${label}"
 
     local node="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter"
     local output
@@ -348,6 +374,7 @@ check_deadband() {
     local client_image="$1"
     local endpoint="$2"
     local label="$3"
+    at deadband.absolute "${label}"
 
     local node="nsu=urn:otfabric:opcua-interop:model;s=Analog.Level"
     local output
@@ -371,6 +398,7 @@ check_deadband() {
     fi
 
     local ramp="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Ramp"
+    at deadband.percent-no-eurange "${label}"
     output=$(run_client_op "${client_image}" subscribe \
             --endpoint "${endpoint}" --node "${ramp}" --notifications 1 \
             --deadband-percent 10) || true
@@ -389,6 +417,7 @@ check_codec_node() {
     local client_image="$1"
     local endpoint="$2"
     local label="$3"
+    at codec.node "${label}"
 
     local node="nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32"
     local output
@@ -421,6 +450,7 @@ check_codec_roundtrip() {
                 "xml|Double[]|1.5,2.5" "xml|String|interop"; do
         fmt="${spec%%|*}"; value="${spec#*|}"; type="${value%%|*}"; value="${value#*|}"
         [[ " ${formats} " == *" ${fmt} "* ]] || continue
+        at "codec.roundtrip-${fmt}-${type}" "${label}"
         local enc dec doc bin
         enc=$(docker run --rm "${enc_image}" client codec encode --format "${fmt}" \
                 --type "${type}" --value "${value}" 2>/dev/null | grep -m1 '^{') || true
@@ -449,6 +479,7 @@ check_codec_xml_unqualified_rejected() {
     local enc_image="$1"
     local dec_image="$2"
     local label="$3"
+    at codec.xml-unqualified "${label}"
 
     local enc doc dec
     enc=$(docker run --rm "${enc_image}" client codec encode --format xml \
@@ -506,8 +537,10 @@ check_history_events() {
     b64() { printf %s "$1" | base64 | tr -d '\n'; }
 
     out=$(run_client_op "${img}" call --endpoint "${ep}" --object "${n}" --method "${m}History.ResetEvents") || true
+    at "history.history.resetevents" "${label}"
     hev_expect "${label}: History.ResetEvents" '.success == true' "${out}"
     out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}") || true
+    at "history.history-read-events-forward-hist-evt-0-4-with-the-default" "${label}"
     hev_expect "${label}: history-read-events forward → hist-evt-0…4 with the default SelectClauses" \
         ".success == true and ${ids} == [\"hist-evt-0\",\"hist-evt-1\",\"hist-evt-2\",\"hist-evt-3\",\"hist-evt-4\"]
          and (.results[0].selectClauses | length) == 8
@@ -515,21 +548,26 @@ check_history_events() {
          and .results[0].events[0].fields[6].value.text == \"history-event-0\" and .results[0].events[4].fields[7].value == 500" "${out}"
     out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" \
             --start 2026-07-24T10:01:00Z --end 2026-07-24T09:59:00Z) || true
+    at "history.history-read-events-reverse-hist-evt-4-0" "${label}"
     hev_expect "${label}: history-read-events reverse → hist-evt-4…0" \
         ".success == true and ${ids} == [\"hist-evt-4\",\"hist-evt-3\",\"hist-evt-2\",\"hist-evt-1\",\"hist-evt-0\"]" "${out}"
     out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}" \
             --num-values 2 --scenario continue) || true
+    at "history.history-read-events-num-values-2-scenario-continue-pages-2-2-1" "${label}"
     hev_expect "${label}: history-read-events --num-values 2 --scenario continue → pages 2,2,1" \
         '.success == true and [.results[0].pages[] | (.events | length)] == [2,2,1] and (.results[0].events | length) == 5
          and .results[0].continuationPoint == null and .results[0].releaseStatusCode != null' "${out}"
     out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}" --of-type i=2130) || true
+    at "history.history-read-events-of-type-i-2130-hist-evt-3" "${label}"
     hev_expect "${label}: history-read-events --of-type i=2130 → hist-evt-3" \
         ".success == true and ${ids} == [\"hist-evt-3\"]" "${out}"
     out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}" --min-severity 300) || true
+    at "history.history-read-events-min-severity-300-hist-evt-2-4" "${label}"
     hev_expect "${label}: history-read-events --min-severity 300 → hist-evt-2…4" \
         ".success == true and ${ids} == [\"hist-evt-2\",\"hist-evt-3\",\"hist-evt-4\"]" "${out}"
     out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}" \
             --of-type i=2041 --min-severity 300 --select EventId --select Severity) || true
+    at "history.history-read-events-of-type-i-2041-min-severity-300-and-hist" "${label}"
     hev_expect "${label}: history-read-events --of-type i=2041 --min-severity 300 (And) → hist-evt-2…4" \
         ".success == true and ${ids} == [\"hist-evt-2\",\"hist-evt-3\",\"hist-evt-4\"] and .results[0].selectClauses == [\"EventId\",\"Severity\"]" "${out}"
 
@@ -543,27 +581,33 @@ check_history_events() {
     # GoodEntryInserted 0x00A20000, GoodEntryReplaced 0x00A30000, BadEntryExists 0x809F0000, BadNoEntryExists 0x80A00000
     out=$(run_client_op "${img}" history-update-events --endpoint "${ep}" --node "${n}" --perform insert "${sel[@]}" \
             --event "$(ev hist-evt-5 2026-07-24T10:00:25Z 600 inserted)" --event "$(ev hist-evt-0 2026-07-24T10:00:00Z 700 dup)") || true
+    at "history.history-update-events-insert-goodentryinserted-badentryexists" "${label}"
     hev_expect "${label}: history-update-events insert → GoodEntryInserted, BadEntryExists" \
         ".success == true and .results[0].performUpdateType == \"Insert\" and ${ops} == [10616832, 2157903872]" "${out}"
     out=$(run_client_op "${img}" history-update-events --endpoint "${ep}" --node "${n}" --perform replace "${sel[@]}" \
             --event "$(ev hist-evt-0 2026-07-24T10:00:00Z 700 replaced)" --event "$(ev hist-evt-9 2026-07-24T10:00:30Z 900 nope)") || true
+    at "history.history-update-events-replace-goodentryreplaced-badnoentryexists" "${label}"
     hev_expect "${label}: history-update-events replace → GoodEntryReplaced, BadNoEntryExists" \
         ".success == true and ${ops} == [10682368, 2157969408]" "${out}"
     out=$(run_client_op "${img}" history-update-events --endpoint "${ep}" --node "${n}" --perform update "${sel[@]}" \
             --event "$(ev hist-evt-9 2026-07-24T10:00:30Z 900 upserted)" --event "$(ev hist-evt-0 2026-07-24T10:00:00Z 800 updated)") || true
+    at "history.history-update-events-update-goodentryinserted-goodentryreplaced" "${label}"
     hev_expect "${label}: history-update-events update → GoodEntryInserted, GoodEntryReplaced" \
         ".success == true and ${ops} == [10616832, 10682368]" "${out}"
     out=$(run_client_op "${img}" history-update-events --endpoint "${ep}" --node "${n}" --perform delete \
             --event-id "$(b64 hist-evt-1)" --event-id "$(b64 no-such-event)") || true
+    at "history.history-update-events-delete-good-badnoentryexists" "${label}"
     hev_expect "${label}: history-update-events delete → Good, BadNoEntryExists" \
         ".success == true and .results[0].performUpdateType == \"Delete\" and ${ops} == [0, 2157969408]" "${out}"
     out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}" \
             --select EventId --select Severity --select Message) || true
+    at "history.history-read-events-after-the-updates" "${label}"
     hev_expect "${label}: history-read-events after the updates" \
         ".success == true and ${ids} == [\"hist-evt-0\",\"hist-evt-2\",\"hist-evt-3\",\"hist-evt-4\",\"hist-evt-5\",\"hist-evt-9\"]
          and .results[0].events[0].fields[1].value == 800 and .results[0].events[0].fields[2].value.text == \"updated\"" "${out}"
     out=$(run_client_op "${img}" call --endpoint "${ep}" --object "${n}" --method "${m}History.ResetEvents") || true
     out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node "${n}" "${fwd[@]}") || true
+    at "history.history-read-events-after-history.resetevents-the-seed" "${label}"
     hev_expect "${label}: history-read-events after History.ResetEvents → the seed" \
         ".success == true and ${ids} == [\"hist-evt-0\",\"hist-evt-1\",\"hist-evt-2\",\"hist-evt-3\",\"hist-evt-4\"]" "${out}"
 }
@@ -575,9 +619,11 @@ check_history_events_unsupported() {
     local img="$1" ep="$2" label="$3" out
     out=$(run_client_op "${img}" history-read-events --endpoint "${ep}" --node i=2253 \
             --start 2026-07-24T10:00:00Z --end 2026-07-24T10:01:00Z) || true
+    at "history.history-read-events-badhistoryoperationinvalid-no-event-history" "${label}"
     hev_expect "${label}: history-read-events → BadHistoryOperationInvalid (no event history, §17.3)" \
         '.success == false and .serviceResult.name == "BadHistoryOperationInvalid"' "${out}"
     out=$(run_client_op "${img}" history-update-events --endpoint "${ep}" --node i=2253 --perform delete --event-id AAAA) || true
+    at "history.history-update-events-badserviceunsupported-17.3" "${label}"
     hev_expect "${label}: history-update-events → BadServiceUnsupported (§17.3)" \
         '.success == false and .serviceResult.name == "BadServiceUnsupported" and .results == []' "${out}"
 }
@@ -691,6 +737,7 @@ run_open62541_features() {
     out=$(feat_client "${img}" - read --endpoint "${lds_url}" --node "${model}Scalar.Int32" \
             --security-policy Basic256Sha256 --security-mode SignAndEncrypt "${rsa[@]}" \
             --username test-user --password test-password) || true
+    at "features.basic256sha256-signandencrypt-username" "o62541→o62541"
     feat_expect "o62541→o62541: Basic256Sha256/SignAndEncrypt + username" \
         '.success == true and .results[0].value == -123456789' "${out}"
     if [[ -n "${img_milo}" ]]; then
@@ -698,6 +745,7 @@ run_open62541_features() {
                 --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt \
                 --certificate /pki/milo-client/cert.crt --private-key /pki/milo-client/cert.key \
                 --trust-list /pki/ca/ca.crt) || true
+        at "features.aes256_sha256_rsapss-signandencrypt" "milo→o62541"
         feat_expect "milo→o62541: Aes256_Sha256_RsaPss/SignAndEncrypt" \
             '.success == true and .results[0].value == -123456789' "${out}"
     fi
@@ -715,6 +763,7 @@ run_open62541_features() {
                 --private-key "/pki/open62541-client/ecc-${curve}/cert.key" \
                 --trust-list /pki/ca/ca.crt \
                 --username test-user --password test-password) || true
+        at "features.${policy}-${mode}-username" "o62541→o62541"
         feat_expect "o62541→o62541: ${policy}/${mode} + username" \
             '.success == true and .results[0].value == -123456789' "${out}"
     done
@@ -723,6 +772,7 @@ run_open62541_features() {
             --certificate /pki/untrusted/ecc-nistp256/cert.crt \
             --private-key /pki/untrusted/ecc-nistp256/cert.key \
             --trust-list /pki/ca/ca.crt) || true
+    at "features.untrusted-ecc-certificate-is-rejected" "o62541→o62541"
     feat_expect "o62541→o62541: untrusted ECC certificate is rejected" \
         '.success == false and .serviceResult.severity == "Bad"' "${out}"
 
@@ -730,6 +780,7 @@ run_open62541_features() {
     out=$(feat_client "${img}" "${rclient}" read --endpoint "${lds_url}" \
             --node "${model}Scalar.Int32" --reverse-listen 4855 --reverse-timeout-ms 30000 \
             --reverse-server-uri urn:otfabric:opcua-interop:server) || true
+    at "features.o62541-reverse-connect-none-none"
     feat_expect "o62541 reverse connect: None/None" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img}" "${rclient}" subscribe --endpoint "${lds_url}" \
@@ -739,10 +790,12 @@ run_open62541_features() {
             --certificate /pki/open62541-client/ecc-nistp256/cert.crt \
             --private-key /pki/open62541-client/ecc-nistp256/cert.key \
             --trust-list /pki/ca/ca.crt) || true
+    at "features.o62541-reverse-connect-ecc_nistp256-signandencrypt-subscription"
     feat_expect "o62541 reverse connect: ECC_nistP256/SignAndEncrypt subscription" \
         '.success == true and (.results[0].notifications | length) == 2' "${out}"
     out=$(feat_client "${img}" "${rclient}" endpoints --endpoint "${lds_url}" \
             --reverse-listen 4855 --reverse-timeout-ms 30000) || true
+    at "features.o62541-reverse-connect-getendpoints"
     feat_expect "o62541 reverse connect: GetEndpoints" \
         '.success == true and (.results | length) > 1' "${out}"
 
@@ -752,12 +805,14 @@ run_open62541_features() {
     local names=("o62541")
     if [[ -n "${img_milo}" ]]; then clients+=("${img_milo}"); names+=("milo"); fi
     out=$(feat_client "${img}" - find-servers --endpoint "${lds_url}") || true
+    at "features.lds-findservers-lists-the-registered-${member_name}-server"
     feat_expect "LDS FindServers lists the registered ${member_name} server" \
         "[.results[].discoveryUrls[]] | index(\"opc.tcp://${member}:4840${ENDPOINT_PATH}\") != null" "${out}"
     local i
     for i in "${!clients[@]}"; do
         local c="${clients[$i]}" n="${names[$i]}"
         out=$(feat_client "${c}" - find-servers-on-network --endpoint "${lds_url}") || true
+        at "features.findserversonnetwork-lds-record-registered-server" "${n}→LDS"
         feat_expect "${n}→LDS: FindServersOnNetwork (LDS record + registered server)" \
             ".success == true
              and ([.results[] | select(.serverCapabilities | index(\"LDS\"))] | length) >= 1
@@ -765,20 +820,24 @@ run_open62541_features() {
         out=$(feat_client "${c}" - register-server --endpoint "${lds_url}" \
                 --server-uri "urn:smoke:${n}" --server-name "smoke ${n}" \
                 --discovery-url "opc.tcp://smoke-${n}:4999" --mdns-name "smoke-${n}") || true
+        at "features.register-server-registerserver2" "${n}→LDS"
         feat_expect "${n}→LDS: register-server (RegisterServer2)" \
             '.success == true and .results[0].service == "RegisterServer2"' "${out}"
         out=$(feat_client "${img}" - find-servers --endpoint "${lds_url}") || true
+        at "features.registration-visible-in-findservers" "${n}→LDS"
         feat_expect "${n}→LDS: registration visible in FindServers" \
             "[.results[].applicationUri] | index(\"urn:smoke:${n}\") != null" "${out}"
         out=$(feat_client "${c}" - register-server --endpoint "${lds_url}" \
                 --server-uri "urn:smoke:${n}" --discovery-url "opc.tcp://smoke-${n}:4999" \
                 --mdns-name "smoke-${n}" --online false) || true
         out=$(feat_client "${img}" - find-servers --endpoint "${lds_url}") || true
+        at "features.unregistered-server-is-gone" "${n}→LDS"
         feat_expect "${n}→LDS: unregistered server is gone" \
             "[.results[].applicationUri] | index(\"urn:smoke:${n}\") == null" "${out}"
     done
     out=$(feat_client "${img}" - register-server --endpoint "opc.tcp://${member}:4840${ENDPOINT_PATH}" \
             --server-uri urn:smoke:x --discovery-url opc.tcp://x:1) || true
+    at "features.register-server-against-a-non-lds-${member_name}-reports-the"
     feat_expect "register-server against a non-LDS (${member_name}) reports the service fault" \
         '.success == false and .results[0].fallback == true' "${out}"
 
@@ -797,12 +856,13 @@ check_o62541_none_deviation() {
     local client_image="$1" endpoint="$2"
     local node="nsu=urn:otfabric:opcua-interop:model;s=Scalar.Int32"
     local output
+    at none-none-session "o62541→async-opcua"
     output=$(run_client_op "${client_image}" read --endpoint "${endpoint}" --node "${node}") || true
     validate_envelope "${output}" "o62541→async-opcua:read" || return
     if echo "${output}" | jq -e '.success == false and .serviceResult.name == "BadSecurityChecksFailed"' >/dev/null 2>&1; then
-        ok "o62541→async-opcua: None/None session refused (known async-opcua 0.19 deviation: null ActivateSession nonce)"
+        known async-opcua-null-session-nonce "o62541→async-opcua: None/None session refused (known async-opcua 0.19 deviation: null ActivateSession nonce)"
     elif echo "${output}" | jq -e '.success == true' >/dev/null 2>&1; then
-        fail "o62541→async-opcua: None/None read succeeded — the ActivateSession nonce deviation is gone; run check_interop_set for this pair"
+        stale async-opcua-null-session-nonce "o62541→async-opcua: None/None read succeeded — the ActivateSession nonce deviation is gone; run check_interop_set for this pair"
     else
         fail "o62541→async-opcua: None/None read — unexpected result: ${output}"
     fi
@@ -821,6 +881,7 @@ check_o62541_node_renewal_deviation() {
     local client_image="$1" endpoint="$2"
     local node="nsu=urn:otfabric:opcua-interop:model;s=Dynamic.Counter"
     local output
+    at channel-renewal "o62541→node-opcua"
     output=$(run_client_op "${client_image}" subscribe \
             --endpoint "${endpoint}" \
             --node "${node}" \
@@ -832,7 +893,7 @@ check_o62541_node_renewal_deviation() {
     if echo "${output}" | jq -e '.success == true and (.results[0].notifications | length) == 24' >/dev/null 2>&1; then
         ok "o62541→node-opcua: subscribe across SecureChannel renewals (lifetime 6s)"
     elif echo "${output}" | jq -e '.success == false and .error.category == "timeout" and (.results[0].notifications | length) > 0' >/dev/null 2>&1; then
-        ok "o62541→node-opcua: subscription stalled after a SecureChannel renewal (known node-opcua 2.187 deviation: responses keep the request's old token)"
+        known node-opcua-renewal-old-token "o62541→node-opcua: subscription stalled after a SecureChannel renewal (known node-opcua 2.187 deviation: responses keep the request's old token)"
     else
         fail "o62541→node-opcua: channel renewal — unexpected result: ${output}"
     fi
@@ -848,6 +909,7 @@ run_async_opcua_secure_cross() {
 
     prepare_pki
     if [[ ! -f "${FEAT_TMP}/pki/async-opcua-server/cert.crt" ]]; then
+        at secure.pki
         fail "async-opcua secure cross-stack: the test PKI has no async-opcua-server identity (certs/generate.sh --add-async-opcua)"
         feature_cleanup
         return
@@ -873,39 +935,47 @@ run_async_opcua_secure_cross() {
     local out
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             "${b256[@]}" "${o62541[@]}") || true
+    at "secure.basic256sha256-signandencrypt-read" "o62541→async-opcua"
     feat_expect "o62541→async-opcua: Basic256Sha256/SignAndEncrypt read" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img_open62541}" - write --endpoint "${url}" --node "${model}Access.ReadWrite" \
             --type Int32 --value 4242 "${b256[@]}" "${o62541[@]}") || true
+    at "secure.basic256sha256-signandencrypt-write" "o62541→async-opcua"
     feat_expect "o62541→async-opcua: Basic256Sha256/SignAndEncrypt write" \
         '.success == true and .results[0].statusCode.name == "Good"' "${out}"
     out=$(feat_client "${img_open62541}" - call --endpoint "${url}" --object "${model}Methods" \
             --method "${model}Methods.Add" --input Int32:10 --input Int32:20 "${b256[@]}" "${o62541[@]}") || true
+    at "secure.basic256sha256-signandencrypt-call-methods.add-10-20-30" "o62541→async-opcua"
     feat_expect "o62541→async-opcua: Basic256Sha256/SignAndEncrypt call Methods.Add(10,20)=30" \
         '.success == true and .results[0].outputArguments[0] == 30' "${out}"
     out=$(feat_client "${img_open62541}" - subscribe --endpoint "${url}" --node "${model}Dynamic.Counter" \
             --publishing-interval-ms 500 --notifications 3 --timeout-ms 15000 \
             "${b256[@]}" "${o62541[@]}") || true
+    at "secure.basic256sha256-signandencrypt-subscribe-dynamic.counter" "o62541→async-opcua"
     feat_expect "o62541→async-opcua: Basic256Sha256/SignAndEncrypt subscribe Dynamic.Counter" \
         '.success == true and (.results[0].notifications | length) >= 3' "${out}"
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             --security-policy Basic256Sha256 --security-mode Sign "${o62541[@]}" \
             --username test-user --password test-password) || true
+    at "secure.basic256sha256-sign-username" "o62541→async-opcua"
     feat_expect "o62541→async-opcua: Basic256Sha256/Sign + username" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             --security-policy Aes128_Sha256_RsaOaep --security-mode SignAndEncrypt "${o62541[@]}") || true
+    at "secure.aes128_sha256_rsaoaep-signandencrypt-read" "o62541→async-opcua"
     feat_expect "o62541→async-opcua: Aes128_Sha256_RsaOaep/SignAndEncrypt read" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img_milo}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt \
             --certificate /pki/milo-client/cert.crt --private-key /pki/milo-client/cert.key \
             --trust-list /pki/ca/ca.crt) || true
+    at "secure.aes256_sha256_rsapss-signandencrypt-read" "milo→async-opcua"
     feat_expect "milo→async-opcua: Aes256_Sha256_RsaPss/SignAndEncrypt read" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             "${b256[@]}" --certificate /pki/untrusted/cert.crt --private-key /pki/untrusted/cert.key \
             --trust-list /pki/ca/ca.crt) || true
+    at "secure.untrusted-client-certificate-is-rejected" "o62541→async-opcua"
     feat_expect "o62541→async-opcua: untrusted client certificate is rejected" \
         '.success == false' "${out}"
 
@@ -925,6 +995,7 @@ run_node_opcua_secure_cross() {
 
     prepare_pki
     if [[ ! -f "${FEAT_TMP}/pki/node-opcua-server/cert.crt" ]]; then
+        at secure.pki
         fail "node-opcua secure cross-stack: the test PKI has no node-opcua-server identity (certs/generate.sh --add-node-opcua)"
         feature_cleanup
         return
@@ -952,29 +1023,35 @@ run_node_opcua_secure_cross() {
     local out
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             "${b256[@]}" "${o62541[@]}") || true
+    at "secure.basic256sha256-signandencrypt-read" "o62541→node-opcua"
     feat_expect "o62541→node-opcua: Basic256Sha256/SignAndEncrypt read" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img_open62541}" - call --endpoint "${url}" --object "${model}Methods" \
             --method "${model}Methods.Add" --input Int32:10 --input Int32:20 "${b256[@]}" "${o62541[@]}") || true
+    at "secure.basic256sha256-signandencrypt-call-methods.add-10-20-30" "o62541→node-opcua"
     feat_expect "o62541→node-opcua: Basic256Sha256/SignAndEncrypt call Methods.Add(10,20)=30" \
         '.success == true and .results[0].outputArguments[0] == 30' "${out}"
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             --security-policy Basic256Sha256 --security-mode Sign "${o62541[@]}" \
             --username test-user --password test-password) || true
+    at "secure.basic256sha256-sign-username" "o62541→node-opcua"
     feat_expect "o62541→node-opcua: Basic256Sha256/Sign + username" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img_milo}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             --security-policy Aes128_Sha256_RsaOaep --security-mode SignAndEncrypt "${milo[@]}") || true
+    at "secure.aes128_sha256_rsaoaep-signandencrypt-read" "milo→node-opcua"
     feat_expect "milo→node-opcua: Aes128_Sha256_RsaOaep/SignAndEncrypt read" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img_milo}" - subscribe --endpoint "${url}" --node "${model}Dynamic.Counter" \
             --publishing-interval-ms 500 --notifications 3 --timeout-ms 15000 \
             --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt "${milo[@]}") || true
+    at "secure.aes256_sha256_rsapss-signandencrypt-subscribe-dynamic.counter" "milo→node-opcua"
     feat_expect "milo→node-opcua: Aes256_Sha256_RsaPss/SignAndEncrypt subscribe Dynamic.Counter" \
         '.success == true and (.results[0].notifications | length) >= 3' "${out}"
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             "${b256[@]}" --certificate /pki/untrusted/cert.crt --private-key /pki/untrusted/cert.key \
             --trust-list /pki/ca/ca.crt) || true
+    at "secure.untrusted-client-certificate-is-rejected" "o62541→node-opcua"
     feat_expect "o62541→node-opcua: untrusted client certificate is rejected" \
         '.success == false' "${out}"
 
@@ -995,11 +1072,13 @@ run_node_opcua_secure_cross() {
         wait_ready "${psrv}"
         out=$(feat_client "${img_node_opcua}" - read --endpoint "opc.tcp://${psrv}:4840${ENDPOINT_PATH}" \
                 --node "${model}Scalar.Int32" "${b256[@]}" "${node[@]}") || true
+        at "secure.basic256sha256-signandencrypt-read" "node-opcua→${peer}"
         feat_expect "node-opcua→${peer}: Basic256Sha256/SignAndEncrypt read" \
             '.success == true and .results[0].value == -123456789' "${out}"
         out=$(feat_client "${img_node_opcua}" - read --endpoint "opc.tcp://${psrv}:4840${ENDPOINT_PATH}" \
                 --node "${model}Scalar.Int32" --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt \
                 "${node[@]}" --username test-user --password test-password) || true
+        at "secure.aes256_sha256_rsapss-signandencrypt-username" "node-opcua→${peer}"
         feat_expect "node-opcua→${peer}: Aes256_Sha256_RsaPss/SignAndEncrypt + username" \
             '.success == true and .results[0].value == -123456789' "${out}"
     done
@@ -1262,6 +1341,7 @@ run_dotnet_chain_checks() {
     done
     wait_ready "${chain}"
     wait_ready "${leaf}"
+    at chain.no-certificate-chain
     if docker logs "${leaf}" 2>&1 | grep "sent without its issuer chain" >/dev/null; then
         ok "dotnet: --no-certificate-chain"
     else
@@ -1277,20 +1357,23 @@ run_dotnet_chain_checks() {
     for c in "${chain}:chain" "${leaf}:--no-certificate-chain"; do
         out=$(feat_client "${img_dotnet}" - read --endpoint "opc.tcp://${c%%:*}:4840${ENDPOINT_PATH}" \
                 --node "${model}Scalar.Int32" "${b256[@]}" "${dn[@]}") || true
+        at "chain.basic256sha256-signandencrypt-read" "dotnet→dotnet (${c#*:})"
         feat_expect "dotnet→dotnet (${c#*:}): Basic256Sha256/SignAndEncrypt read" \
             '.success == true and .results[0].value == -123456789' "${out}"
     done
     if [[ -n "${img_open62541}" ]]; then
         out=$(feat_client "${img_open62541}" - read --endpoint "opc.tcp://${leaf}:4840${ENDPOINT_PATH}" \
                 --node "${model}Scalar.Int32" "${b256[@]}" "${o62541[@]}") || true
+        at "chain.basic256sha256-signandencrypt-read" "o62541→dotnet (--no-certificate-chain)"
         feat_expect "o62541→dotnet (--no-certificate-chain): Basic256Sha256/SignAndEncrypt read" \
             '.success == true and .results[0].value == -123456789' "${out}"
         out=$(feat_client "${img_open62541}" - read --endpoint "opc.tcp://${chain}:4840${ENDPOINT_PATH}" \
                 --node "${model}Scalar.Int32" "${b256[@]}" "${o62541[@]}") || true
+        at chain.basic256sha256-read "o62541→dotnet (chain)"
         if echo "${out}" | jq -e '.success == false and .serviceResult.name == "BadCertificateInvalid"' >/dev/null 2>&1; then
-            ok "o62541→dotnet (chain): BadCertificateInvalid (known open62541 v1.5.9 limitation: CreateSession certificate compared with the leaf, CLIENT_CONTRACT.md §16.3)"
+            known open62541-chain-leaf-compare "o62541→dotnet (chain): BadCertificateInvalid (known open62541 v1.5.9 limitation: CreateSession certificate compared with the leaf, CLIENT_CONTRACT.md §16.3)"
         elif echo "${out}" | jq -e '.success == true' >/dev/null 2>&1; then
-            fail "o62541→dotnet (chain): secure read succeeded — open62541 takes the chain now; update CLIENT_CONTRACT.md §16.3"
+            stale open62541-chain-leaf-compare "o62541→dotnet (chain): secure read succeeded — open62541 takes the chain now; update CLIENT_CONTRACT.md §16.3"
         else
             fail "o62541→dotnet (chain): unexpected result: ${out}"
         fi
@@ -1384,11 +1467,12 @@ check_asyncua_deadband_deviation() {
     local output
     output=$(run_client_op "${client_image}" subscribe --endpoint "${endpoint}" --node "${ramp}" \
             --notifications 1 --timeout-ms 15000 --deadband-percent 10) || true
+    at deadband.percent-no-eurange "${label}"
     validate_envelope "${output}" "${label}:percent-deadband" || return
     if echo "${output}" | jq -e '.success == true and .results[0].monitoredItemStatusCode.code == 0' >/dev/null 2>&1; then
-        ok "${label}: percent deadband without EURange accepted (known asyncua 2.1.0 deviation, asyncua/README.md)"
+        known asyncua-percent-deadband "${label}: percent deadband without EURange accepted (known asyncua 2.1.0 deviation, asyncua/README.md)"
     elif echo "${output}" | jq -e '.results[0].monitoredItemStatusCode.severity == "Bad"' >/dev/null 2>&1; then
-        fail "${label}: percent deadband without EURange is rejected now — the asyncua deviation is gone; run check_deadband for this server"
+        stale asyncua-percent-deadband "${label}: percent deadband without EURange is rejected now — the asyncua deviation is gone; run check_deadband for this server"
     else
         fail "${label}: percent deadband — unexpected result: ${output}"
     fi
@@ -1403,11 +1487,12 @@ check_asyncua_history_update_deviation() {
     local image="$1" endpoint="$2" label="$3" out
     out=$(run_client_op "${image}" history-update-events --endpoint "${endpoint}" --node "${HEV_NODE}" \
             --perform delete --event-id aGlzdC1ldnQtMA==) || true
+    at history.update-refused "${label}"
     validate_envelope "${out}" "${label}:history-update-events" || return
     if echo "${out}" | jq -e '.success == false and (.serviceResult.name == "BadUserAccessDenied" or .serviceResult.name == "BadServiceUnsupported")' >/dev/null 2>&1; then
-        ok "${label}: history-update-events refused (known asyncua 2.1.0 deviation, asyncua/README.md)"
+        known asyncua-no-history-update "${label}: history-update-events refused (known asyncua 2.1.0 deviation, asyncua/README.md)"
     else
-        fail "${label}: history-update-events — unexpected (did asyncua gain HistoryUpdate?): ${out}"
+        stale asyncua-no-history-update "${label}: history-update-events — unexpected (did asyncua gain HistoryUpdate?): ${out}"
     fi
 }
 
@@ -1423,6 +1508,7 @@ run_asyncua_secure_cross() {
 
     prepare_pki
     if [[ ! -f "${FEAT_TMP}/pki/asyncua-server/cert.crt" ]]; then
+        at secure.pki
         fail "asyncua secure cross-stack: the test PKI has no asyncua-server identity (certs/generate.sh --add-asyncua)"
         feature_cleanup
         return
@@ -1469,29 +1555,35 @@ run_asyncua_secure_cross() {
 
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             "${b256[@]}" "${o62541[@]}") || true
+    at "secure.basic256sha256-signandencrypt-read" "o62541→asyncua"
     feat_expect "o62541→asyncua: Basic256Sha256/SignAndEncrypt read" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img_open62541}" - call --endpoint "${url}" --object "${model}Methods" \
             --method "${model}Methods.Add" --input Int32:10 --input Int32:20 "${b256[@]}" "${o62541[@]}") || true
+    at "secure.basic256sha256-signandencrypt-call-methods.add-10-20-30" "o62541→asyncua"
     feat_expect "o62541→asyncua: Basic256Sha256/SignAndEncrypt call Methods.Add(10,20)=30" \
         '.success == true and .results[0].outputArguments[0] == 30' "${out}"
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             --security-policy Basic256Sha256 --security-mode Sign "${o62541[@]}" \
             --username test-user --password test-password) || true
+    at "secure.basic256sha256-sign-username" "o62541→asyncua"
     feat_expect "o62541→asyncua: Basic256Sha256/Sign + username" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             --security-policy Aes128_Sha256_RsaOaep --security-mode SignAndEncrypt "${o62541[@]}") || true
+    at "secure.aes128_sha256_rsaoaep-signandencrypt-read" "o62541→asyncua"
     feat_expect "o62541→asyncua: Aes128_Sha256_RsaOaep/SignAndEncrypt read" \
         '.success == true and .results[0].value == -123456789' "${out}"
     out=$(feat_client "${img_milo}" - subscribe --endpoint "${url}" --node "${model}Dynamic.Counter" \
             --publishing-interval-ms 500 --notifications 3 --timeout-ms 15000 \
             --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt "${milo[@]}") || true
+    at "secure.aes256_sha256_rsapss-signandencrypt-subscribe-dynamic.counter" "milo→asyncua"
     feat_expect "milo→asyncua: Aes256_Sha256_RsaPss/SignAndEncrypt subscribe Dynamic.Counter" \
         '.success == true and (.results[0].notifications | length) >= 3' "${out}"
     out=$(feat_client "${img_open62541}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
             "${b256[@]}" --certificate /pki/untrusted/cert.crt --private-key /pki/untrusted/cert.key \
             --trust-list /pki/ca/ca.crt) || true
+    at "secure.untrusted-client-certificate-is-rejected" "o62541→asyncua"
     feat_expect "o62541→asyncua: untrusted client certificate is rejected" \
         '.success == false' "${out}"
 
@@ -1501,11 +1593,13 @@ run_asyncua_secure_cross() {
         out=$(feat_client "${img_asyncua}" - read --endpoint "opc.tcp://${target}:4840${ENDPOINT_PATH}" \
                 --node "${model}Scalar.Int32" "${b256[@]}" "${aua[@]}" \
                 --username test-user --password test-password) || true
+        at "secure.basic256sha256-signandencrypt-username" "asyncua→${name}"
         feat_expect "asyncua→${name}: Basic256Sha256/SignAndEncrypt + username" \
             '.success == true and .results[0].value == -123456789' "${out}"
         out=$(feat_client "${img_asyncua}" - write --endpoint "opc.tcp://${target}:4840${ENDPOINT_PATH}" \
                 --node "${model}Access.ReadWrite" --type Int32 --value 4242 \
                 --security-policy Aes256_Sha256_RsaPss --security-mode SignAndEncrypt "${aua[@]}") || true
+        at "secure.aes256_sha256_rsapss-signandencrypt-write" "asyncua→${name}"
         feat_expect "asyncua→${name}: Aes256_Sha256_RsaPss/SignAndEncrypt write" \
             '.success == true and .results[0].statusCode.name == "Good"' "${out}"
     done
@@ -1514,6 +1608,7 @@ run_asyncua_secure_cross() {
             --node "${model}Scalar.Int32" "${b256[@]}" \
             --certificate /pki/asyncua-client/cert.crt --private-key /pki/asyncua-client/cert.key \
             --trust-list /pki/untrusted/cert.crt) || true
+    at "secure.server-certificate-not-issued-by-a-trust-list-entry-is-rejected" "asyncua→milo"
     feat_expect "asyncua→milo: server certificate not issued by a --trust-list entry is rejected" \
         '.success == false' "${out}"
 
@@ -1526,20 +1621,24 @@ run_asyncua_secure_cross() {
         fi
         sleep 1
     done
+    at lds.asyncua-registered
     if [[ "${registered}" == 1 ]]; then
         ok "asyncua server registered with the open62541 LDS (--register-with, RegisterServer)"
     else
         fail "asyncua server is not listed by the open62541 LDS after 30 polls: ${out}"
     fi
     out=$(feat_client "${img_asyncua}" - find-servers-on-network --endpoint "${lds_url}") || true
+    at "secure.findserversonnetwork-lds-record" "asyncua→LDS"
     feat_expect "asyncua→LDS: FindServersOnNetwork (LDS record)" \
         '.success == true and ([.results[] | select(.serverCapabilities | index("LDS"))] | length) >= 1' "${out}"
     out=$(feat_client "${img_asyncua}" - register-server --endpoint "${lds_url}" \
             --server-uri urn:smoke:asyncua --server-name "smoke asyncua" \
             --discovery-url opc.tcp://smoke-asyncua:4999 --mdns-name smoke-asyncua) || true
+    at "secure.register-server-registerserver2" "asyncua→LDS"
     feat_expect "asyncua→LDS: register-server (RegisterServer2)" \
         '.success == true and .results[0].service == "RegisterServer2"' "${out}"
     out=$(feat_client "${img_open62541}" - find-servers --endpoint "${lds_url}") || true
+    at "secure.registration-visible-in-findservers" "asyncua→LDS"
     feat_expect "asyncua→LDS: registration visible in FindServers" \
         '[.results[].applicationUri] | index("urn:smoke:asyncua") != null' "${out}"
 
@@ -1635,16 +1734,19 @@ run_dotnet_gds_smoke() {
     local out kind
 
     out=$(docker run --rm "${img}" print-capabilities) || true
+    at "gds.dotnet-gds-print-capabilities"
     feat_expect "dotnet-gds: print-capabilities" \
         '.adapter.name == "dotnet-gds" and (.clientOperations | index("gds-pull")) and (.serverFeatures | index("gds-pull"))' "${out}"
 
     out=$(feat_client "${img}" - endpoints --endpoint "${ep}") || true
+    at "gds.endpoints" "dotnet-gds→dotnet-gds"
     feat_expect "dotnet-gds→dotnet-gds: endpoints" \
         '.success == true and ([.results[] | select(.securityMode == "SignAndEncrypt")] | length) > 0' "${out}"
 
     for kind in csr new-key-pair; do
         out=$(feat_client "${img}" - gds-pull --endpoint "${ep}" "${sec[@]}" "${admin[@]}" \
                 --app-uri "urn:opcua-interop:gds-pull:smoke-${kind}" --request "${kind}" --revoke --unregister) || true
+        at "gds.gds-pull-request-${kind}-revoke-unregister" "dotnet-gds→dotnet-gds"
         feat_expect "dotnet-gds→dotnet-gds: gds-pull --request ${kind} --revoke --unregister" \
             '.success == true and .results[0].registered == true and (.results[0].certificate | length) > 0
              and (.results[0].issuerCertificates | length) > 0 and .results[0].trustList.specifiedLists == 15
@@ -1652,6 +1754,7 @@ run_dotnet_gds_smoke() {
     done
 
     out=$(feat_client "${img}" - gds-pull --endpoint "${ep}" "${sec[@]}") || true
+    at "gds.anonymous-registerapplication-denied" "dotnet-gds→dotnet-gds"
     feat_expect "dotnet-gds→dotnet-gds: anonymous RegisterApplication denied" \
         '.success == false and .serviceResult.name == "BadUserAccessDenied" and .results[0].findApplications == []
          and .results[0].registerStatus.name == "BadUserAccessDenied"' "${out}"
@@ -1667,6 +1770,7 @@ run_dotnet_gds_smoke() {
         --certificate /pki/dotnet-server/cert.crt --private-key /pki/dotnet-server/cert.key \
         --pki-dir /pki/dotnet-server/pki --no-certificate-chain >/dev/null
     wait_ready "${gds_leaf}"
+    at gds.no-certificate-chain
     if docker logs "${gds_leaf}" 2>&1 | grep "sent without its issuer chain" >/dev/null; then
         ok "dotnet-gds: --no-certificate-chain"
     else
@@ -1674,6 +1778,7 @@ run_dotnet_gds_smoke() {
     fi
     out=$(feat_client "${img}" - gds-pull --endpoint "opc.tcp://${gds_leaf}:4840${ENDPOINT_PATH}" "${sec[@]}" "${admin[@]}" \
             --app-uri "urn:opcua-interop:gds-pull:smoke-leaf" --unregister) || true
+    at "gds.gds-pull" "dotnet-gds→dotnet-gds (--no-certificate-chain)"
     feat_expect "dotnet-gds→dotnet-gds (--no-certificate-chain): gds-pull" \
         '.success == true and (.results[0].certificate | length) > 0 and .results[0].unregisterStatus.code == 0' "${out}"
 
@@ -1723,4 +1828,6 @@ esac
 echo ""
 log "Results: ${PASS} passed, ${FAIL} failed"
 
+results_finish
+if [[ "${PASS}" -eq 0 ]]; then log "no check passed: this run proves nothing"; exit 1; fi
 [[ "${FAIL}" -eq 0 ]]

@@ -53,8 +53,15 @@ FOLLOW_TIMEOUT=20
 PASS=0
 FAIL=0
 log()  { echo "[pubsub-smoke] $*" >&2; }
-ok()   { log "OK: $*"; PASS=$((PASS + 1)); }
-fail() { log "FAIL: $*"; FAIL=$((FAIL + 1)); }
+ok()   { log "OK: $*"; PASS=$((PASS + 1)); record pass; }
+fail() { log "FAIL: $*"; FAIL=$((FAIL + 1)); record fail "$*"; }
+
+# shellcheck source=scripts/results.sh
+source "${SCRIPT_DIR}/results.sh"
+SUITE=pubsub
+RESULT_ADAPTER="${IMG##*/}"; RESULT_ADAPTER="${RESULT_ADAPTER%%[:@]*}"; RESULT_ADAPTER="${RESULT_ADAPTER#opcua-interop-}"
+RESULTS_ARGS="${IMG} ${SCENARIOS[*]}"
+results_start "${IMG}"
 
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
 
@@ -114,7 +121,8 @@ start_server() {
         --advertised-host "${alias}" --endpoint-path "${ENDPOINT_PATH}" \
         --pubsub-config "/pubsub/${config}" "$@" >/dev/null
     if ! "${SCRIPT_DIR}/wait-ready.sh" "${name}" 60; then
-        fail "${name}: server with ${config} did not become ready"
+        at "harness.server-ready-${config%.json}"
+        infra "${name}: server with ${config} did not become ready"
         return 1
     fi
 }
@@ -140,6 +148,7 @@ ensure_mosquitto() {
 check_follow() {
     local label="$1"
     shift
+    at "${label}.follow"
     local pub="opc.tcp://pubsub-publisher:4840${ENDPOINT_PATH}"
     local sub="opc.tcp://pubsub-subscriber:4840${ENDPOINT_PATH}"
     local n=$(( (RANDOM << 8) + RANDOM + 1 ))
@@ -194,6 +203,7 @@ scenario_mqtt_late_broker() {
     docker run -d --name "${refuser}" --network "${NET}" --network-alias mosquitto \
         --entrypoint sleep "${MOSQUITTO_IMAGE}" 600 >/dev/null
     start_server "${pubc}" pubsub-publisher "mqtt-json-publisher.json" || { stop_servers "${refuser}"; return; }
+    at mqtt-late-broker.error-state
     for i in $(seq 1 20); do
         publog; grep -q "is in Error" "${plog}" && break
         sleep 0.5
@@ -206,6 +216,7 @@ scenario_mqtt_late_broker() {
     stop_servers "${refuser}"
     ensure_mosquitto
     if [[ "$(docker inspect -f '{{.State.Running}}' "${pubc}" 2>/dev/null)" != true ]]; then
+        at mqtt-late-broker.publisher-alive
         fail "mqtt-late-broker: the publisher exited ($(docker inspect -f '{{.State.ExitCode}}' "${pubc}" 2>/dev/null))"
         stop_servers "${pubc}"
         return
@@ -214,6 +225,7 @@ scenario_mqtt_late_broker() {
     local before=${FAIL}
     check_follow "mqtt-late-broker"
     publog
+    at mqtt-late-broker.recovery
     if grep -q "re-enabled" "${plog}"; then
         ok "mqtt-late-broker: the publisher re-enabled its components"
     else
@@ -257,8 +269,10 @@ scenario_codec() {
                        {"name":"Arr","dataType":"Int32","value":[1,2,3]}]}]}'
     out=$(client codec pubsub-uadp-encode --document "${desc}") || true
     b64=$(echo "${out}" | jq -r '.results[0].encoded // empty')
+    at "codec-pubsub-uadp-encode"
     expect "codec: pubsub-uadp-encode" '.success == true and (.results[0].encoded | length) > 0' "${out}"
     out=$(client codec pubsub-uadp-decode --document "${b64}") || true
+    at "codec-pubsub-uadp-decode-round-trip"
     expect "codec: pubsub-uadp-decode round trip" \
         ".success == true and .results[0].reencoded == \"${b64}\"
          and .results[0].networkMessage.publisherId == {\"type\":\"UInt16\",\"value\":2234}
@@ -271,6 +285,7 @@ scenario_codec() {
     b64=$(client codec pubsub-uadp-encode --document "${desc}" | jq -r '.results[0].encoded // empty') || true
     out=$(client codec pubsub-uadp-decode --document "${b64}" \
             --metadata '{"Name":"ds","Fields":[{"Name":"a","BuiltInType":6,"DataType":"i=6","ValueRank":-1},{"Name":"b","BuiltInType":11,"DataType":"i=11","ValueRank":-1}]}') || true
+    at "codec-rawdata-decode-with-metadata"
     expect "codec: RawData decode with --metadata" \
         '.success == true and .results[0].networkMessage.messages[0].fields[1].value == 1.5' "${out}"
 
@@ -278,9 +293,11 @@ scenario_codec() {
            "messages":[{"dataSetWriterId":7,"messageType":"KeyFrame","fieldEncoding":"DataValue","sequenceNumber":9,
              "fields":[{"name":"Temp","dataType":"Double","value":21.5,"sourceTimestamp":"2026-10-23T09:59:59.5Z"}]}]}'
     out=$(client codec pubsub-json-encode --document "${desc}") || true
+    at "codec-pubsub-json-encode"
     expect "codec: pubsub-json-encode" '.success == true and (.results[0].encoded | fromjson | .Messages[0].Payload.Temp.Value) == 21.5' "${out}"
     json=$(echo "${out}" | jq -r '.results[0].encoded // empty')
     out=$(client codec pubsub-json-decode --document "${json}") || true
+    at "codec-pubsub-json-decode-round-trip"
     expect "codec: pubsub-json-decode round trip" \
         ".success == true and .results[0].reencoded == $(jq -Rn --arg j "${json}" '$j')
          and .results[0].networkMessage.messages[0].fields[0].name == \"Temp\"" "${out}"
@@ -305,6 +322,7 @@ scenario_sks_push() {
             --input 'String:http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes256-CTR' \
             --input UInt32:1 --input "ByteString:${key}" --input 'ByteString[]:' \
             --input Double:0 --input Double:60000) || true
+    at "sks-push-setsecuritykeys-signandencrypt"
     expect "sks-push: SetSecurityKeys (SignAndEncrypt)" '.success == true' "${out}"
     check_follow "sks-push"
     stop_servers "${pubc}" "${subc}"
@@ -327,20 +345,24 @@ scenario_infomodel() {
     out=$(client call --endpoint "${ep}" "${sec[@]}" --object i=14443 --method i=15215 \
             --input String:InteropGroup --input UInt32:0 --input UInt32:1) || true
     # 68-byte (PubSub-Aes256-CTR) / 52-byte (PubSub-Aes128-CTR) keys = 92 / 72 Base64 characters
+    at "infomodel-getsecuritykeys-signandencrypt-returns-pubsub-aes256"
     expect "infomodel: GetSecurityKeys (SignAndEncrypt) returns PubSub-Aes256-CTR keys of 68 bytes" \
         '.success == true and (.results[0].outputArguments[0] | endswith("PubSub-Aes256-CTR"))
          and (.results[0].outputArguments[2] | length) >= 1
          and (.results[0].outputArguments[2][0] | length) == 92' "${out}"
     out=$(client call --endpoint "${ep}" --object i=14443 --method i=15215 \
             --input String:InteropGroup --input UInt32:0 --input UInt32:1) || true
+    at "infomodel-getsecuritykeys-over-none-is-refused"
     expect "infomodel: GetSecurityKeys over None is refused" \
         '.results[0].statusCode.name == "BadSecurityModeInsufficient"' "${out}"
     out=$(client call --endpoint "${ep}" --object i=15443 --method i=15444 --input String:SmokeGroup \
             --input Double:30000 --input 'String:http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR' \
             --input UInt32:2 --input UInt32:1) || true
+    at "infomodel-addsecuritygroup"
     expect "infomodel: AddSecurityGroup" '.success == true and .results[0].outputArguments[0] == "SmokeGroup"' "${out}"
     out=$(client call --endpoint "${ep}" "${sec[@]}" --object i=14443 --method i=15215 \
             --input String:SmokeGroup --input UInt32:0 --input UInt32:2) || true
+    at "infomodel-getsecuritykeys-of-the-added-group-pubsub-aes128-ctr"
     expect "infomodel: GetSecurityKeys of the added group (PubSub-Aes128-CTR, 52-byte keys)" \
         '.success == true and (.results[0].outputArguments[2][0] | length) == 72' "${out}"
 
@@ -353,9 +375,11 @@ scenario_infomodel() {
             | jq -r '.results[0].binary' | base64 -d | tail -c +10 | base64 | tr -d '\n') || true
     out=$(client call --endpoint "${ep}" --object i=14443 --method i=17366 \
             --input "ExtensionObject:i=15694|${body}") || true
+    at "infomodel-addconnection-pubsubconnectiondatatype"
     expect "infomodel: AddConnection (PubSubConnectionDataType)" '.success == true' "${out}"
     cid=$(echo "${out}" | jq -r '.results[0].outputArguments[0] // empty')
     out=$(client call --endpoint "${ep}" --object i=14443 --method i=17369 --input "NodeId:${cid}") || true
+    at "infomodel-removeconnection"
     expect "infomodel: RemoveConnection" '.success == true' "${out}"
 
     # Disable / Enable the WriterGroup through its Status object
@@ -365,12 +389,16 @@ scenario_infomodel() {
     status=$(client browse --endpoint "${ep}" --node "${wg}" | jq -r '.results[] | select(.browseName.name=="Status") | .nodeId')
     state=$(client browse --endpoint "${ep}" --node "${status}" | jq -r '.results[] | select(.browseName.name=="State") | .nodeId')
     out=$(client call --endpoint "${ep}" --object "${status}" --method i=14646) || true
+    at "infomodel-writergroup-status.disable"
     expect "infomodel: WriterGroup Status.Disable" '.success == true' "${out}"
     out=$(client read --endpoint "${ep}" --node "${state}") || true
+    at "infomodel-writergroup-state-disabled-0"
     expect "infomodel: WriterGroup State = Disabled (0)" '.results[0].value == 0' "${out}"
     out=$(client call --endpoint "${ep}" --object "${status}" --method i=14645) || true
+    at "infomodel-writergroup-status.enable"
     expect "infomodel: WriterGroup Status.Enable" '.success == true' "${out}"
     out=$(client read --endpoint "${ep}" --node "${state}") || true
+    at "infomodel-writergroup-state-operational-2"
     expect "infomodel: WriterGroup State = Operational (2)" '.results[0].value == 2' "${out}"
     stop_servers "${pubc}" "${subc}"
 }
@@ -382,12 +410,14 @@ scenario_discovery() {
     log "Scenario discovery: pubsub-discover <- udp-multicast-publisher.json"
     start_server "${pubc}" pubsub-publisher udp-multicast-publisher.json || return
     out=$(client pubsub-discover --url opc.udp://224.0.0.22:4840 --type DataSetMetaData --timeout-ms 5000) || true
+    at "discovery-datasetmetadata-announcement"
     expect "discovery: DataSetMetaData announcement" \
         '.success == true and .results[0].dataSetMetaData[0].publisherId == {"type":"UInt16","value":2234}
          and .results[0].dataSetMetaData[0].dataSetWriterId == 1
          and .results[0].dataSetMetaData[0].metaData.name == "InteropDataSet"
          and (.results[0].dataSetMetaData[0].metaData.fields | map(.name) | index("Counter")) != null' "${out}"
     out=$(client pubsub-discover --url opc.udp://224.0.0.22:4840 --type DataSetWriterConfiguration --writer-ids 1 --timeout-ms 5000) || true
+    at "discovery-datasetwriterconfiguration-announcement"
     expect "discovery: DataSetWriterConfiguration announcement" \
         '.success == true and .results[0].writerConfigurations[0].writerGroup.writerGroupId == 100
          and .results[0].writerConfigurations[0].writerGroup.dataSetWriters[0].dataSetWriterId == 1' "${out}"
@@ -420,4 +450,6 @@ done
 
 echo ""
 log "Results: ${PASS} passed, ${FAIL} failed"
+results_finish
+if [[ "${PASS}" -eq 0 ]]; then log "no check passed: this run proves nothing"; exit 1; fi
 [[ "${FAIL}" -eq 0 ]]

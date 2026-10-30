@@ -32,7 +32,7 @@ FIXTURE_DIRS   = $(wildcard fixtures/*/fixture.json)
 .PHONY: help all ci \
         image image-open62541 image-milo image-async-opcua image-dotnet image-node-opcua \
         buildx buildx-open62541 buildx-milo buildx-async-opcua buildx-dotnet buildx-node-opcua \
-        validate validate-fixtures \
+        validate validate-fixtures unittests results \
         test test-open62541 test-milo test-async-opcua test-dotnet test-node-opcua \
         smoke smoke-open62541 smoke-milo smoke-async-opcua smoke-dotnet smoke-node-opcua smoke-cross-stack smoke-cross-dotnet smoke-pubsub smoke-pubsub-dotnet \
         shutdown shutdown-open62541 shutdown-milo shutdown-async-opcua shutdown-dotnet shutdown-node-opcua \
@@ -140,9 +140,16 @@ buildx-node-opcua: ## Build and push node-opcua image (multi-arch)
 
 # ── Validation ───────────────────────────────────────────────────────────────
 
-validate: validate-fixtures ## Run all validation checks
+validate: validate-fixtures unittests ## Run all validation checks
 	@python3 scripts/check-versions.py
 	@scripts/release-notes.sh > /dev/null && echo "ok   RELEASE.md has closed notes for its newest version"
+
+unittests: ## Unit tests of the result scripts
+	@python3 -m unittest discover -q -s scripts -p 'test_*.py'
+
+results: ## Run every smoke test and write reports/results.json, interop-result-v1 (images must be built)
+	@rm -rf reports && mkdir -p reports
+	@REPORT_DIR=reports $(MAKE) --no-print-directory smoke
 
 validate-fixtures: ## Validate all fixture files against schema
 	@echo "Validating fixture files..."

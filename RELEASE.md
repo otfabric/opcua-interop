@@ -82,6 +82,25 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.18.0
+
+**Date:** 2026-10-30
+
+**Previous release:** v0.17.0
+
+## Summary
+
+Smoke results as the organisation's interop-result-v1; known deviations are no longer counted as passes.
+
+## Changes
+
+### Added
+
+- **`reports/results.json`** ([interop-result-v1](schemas/interop-result-v1.schema.json)): `scripts/smoke.sh` and `scripts/pubsub-smoke.sh` write it when `REPORT_DIR` is set; several scripts with one `REPORT_DIR` are one run (`make results`). Only `pass` counts as passing; a run with no pass, or with a waiver that no longer reproduces, fails. Existing reports keep their shape.
+- **`tests/known-differences.tsv`**: the five deviations the smoke knew, each with its waiver. They are now reported as known, not as passed, so `Results: N passed` is lower by those checks.
+
+---
+
 ## v0.17.0
 
 **Date:** 2026-10-25
