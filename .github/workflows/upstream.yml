@@ -65,6 +65,7 @@ jobs:
           pinned: ${{ steps.resolve.outputs.pin }}
           latest: ${{ steps.resolve.outputs.latest }}
           result-pattern: '^\[smoke\] Results: [0-9]+ passed'
+          cache-paths: "{name} scripts Makefile"
           command: scripts/candidate.sh "${{ matrix.adapter }}" "${{ steps.resolve.outputs.latest }}"
 
       - name: Table row

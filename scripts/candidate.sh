@@ -86,12 +86,19 @@ case "${ADAPTER}" in
         scripts/smoke.sh "${ADAPTER}" "${IMAGE}"
         ;;
     node-opcua)
-        # The pin is exact and the build is `npm ci`: node-opcua-types moves
-        # with node-opcua.
+        # The pin is exact and the build is `npm ci`: every node-opcua-* package
+        # moves with node-opcua, to the version node-opcua depends on
+        # (node-opcua-types) or else to the same release
+        # (node-opcua-server-configuration). A package left behind puts a
+        # second node-opcua-server in the tree and the build fails.
         edit node-opcua/package.json node-opcua/package-lock.json
-        types=$(npm view "node-opcua@${VERSION}" dependencies.node-opcua-types)
-        (cd node-opcua && npm install --package-lock-only --save-exact --no-audit --no-fund \
-            "node-opcua@${VERSION}" "node-opcua-types@${types}")
+        packages=("node-opcua@${VERSION}")
+        for pkg in $(jq -r '.dependencies | keys[] | select(startswith("node-opcua-"))' node-opcua/package.json); do
+            version=$(npm view "node-opcua@${VERSION}" "dependencies.${pkg}")
+            packages+=("${pkg}@${version:-${VERSION}}")
+        done
+        log "Pointing node-opcua/package.json at: ${packages[*]}"
+        (cd node-opcua && npm install --package-lock-only --save-exact --no-audit --no-fund "${packages[@]}")
         git diff --stat -- node-opcua
         build
         scripts/smoke.sh node-opcua "${IMAGE}"
