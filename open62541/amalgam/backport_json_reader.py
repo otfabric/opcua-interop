@@ -98,7 +98,7 @@ new_json = """    if(rg->config.encodingMimeType == UA_PUBSUB_ENCODING_JSON) {
     }"""
 
 # Applied only to the exact v1.5.9 code. A newer upstream (the Upstream
-# candidates workflow builds the latest release) that already contains the fix,
+# workflow builds the latest release) that already contains the fix,
 # or changed this code, is left alone; scripts/pubsub-smoke.sh (mqtt-json)
 # shows whether JSON subscribing works there.
 applied = 0

@@ -164,9 +164,9 @@ opcua-interop/
 ├── docs/               # Client command contract (CLIENT_CONTRACT.md)
 ├── pubsub/examples/    # PubSub configurations (--pubsub-config) used by the PubSub smoke
 ├── mqtt/               # Eclipse Mosquitto configuration for the MQTT PubSub tests
-├── scripts/            # Readiness, smoke (incl. pubsub-smoke.sh), and validation helpers
+├── scripts/            # Readiness, smoke (incl. pubsub-smoke.sh), validation and upstream-check helpers
 ├── compose.yaml        # Docker Compose service definitions
-└── .github/            # CI workflows and Dependabot config
+└── .github/            # CI, Release and daily Upstream workflows; Dependabot config
 ```
 
 ### Fixture format

@@ -48,8 +48,8 @@ updates:
     labels:
       - "dependencies"
 
-  # The async-opcua crate itself is pinned exactly (=X.Y.Z) and probed by the
-  # Upstream candidates workflow; Dependabot keeps the adapter's other crates
+  # The async-opcua crate itself is pinned exactly (=X.Y.Z) and checked by the
+  # daily Upstream workflow; Dependabot keeps the adapter's other crates
   # current.
   - package-ecosystem: "cargo"
     directory: "/async-opcua"
@@ -91,8 +91,8 @@ updates:
       - "dependencies"
 
   # node-opcua itself is pinned exactly (all node-opcua* packages move
-  # together) and probed by the Upstream candidates workflow; Dependabot keeps
-  # the adapter's dev dependencies (TypeScript, @types/node) current.
+  # together) and checked by the daily Upstream workflow; Dependabot keeps the
+  # adapter's dev dependencies (TypeScript, @types/node) current.
   - package-ecosystem: "npm"
     directory: "/node-opcua"
     schedule:
@@ -119,8 +119,8 @@ updates:
       - "dependencies"
 
   # asyncua itself is pinned exactly (asyncua==X.Y.Z in requirements.in) and
-  # probed by the Upstream candidates workflow; Dependabot keeps the other
-  # locked wheels of the adapter (requirements.txt) current.
+  # checked by the daily Upstream workflow; Dependabot keeps the other locked
+  # wheels of the adapter (requirements.txt) current.
   - package-ecosystem: "pip"
     directory: "/asyncua"
     schedule:

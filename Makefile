@@ -37,7 +37,7 @@ FIXTURE_DIRS   = $(wildcard fixtures/*/fixture.json)
         smoke smoke-open62541 smoke-milo smoke-async-opcua smoke-dotnet smoke-node-opcua smoke-cross-stack smoke-cross-dotnet smoke-pubsub smoke-pubsub-dotnet \
         shutdown shutdown-open62541 shutdown-milo shutdown-async-opcua shutdown-dotnet shutdown-node-opcua \
         run-open62541 run-milo run-async-opcua run-dotnet run-node-opcua run-mosquitto \
-        certs check-release release-notes publish publish-arch publish-manifest digests clean
+        candidate certs check-release release-notes publish publish-arch publish-manifest digests clean
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-26s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -460,6 +460,15 @@ run-dotnet-gds: ## Start the dotnet-gds Global Discovery Server on port $(DOTNET
 clean-dotnet-gds:
 	docker rmi $(IMAGE_DOTNET_GDS):$(VERSION) 2>/dev/null || true
 	rm -rf dotnet-gds/src/bin/ dotnet-gds/src/obj/
+
+# ── Upstream candidates ──────────────────────────────────────────────────────
+#
+# The daily Upstream workflow (.github/workflows/upstream.yml) compares every
+# stack pin with the latest release (scripts/latest-upstream.py) and runs this
+# for each pin that is behind. Pins are not changed (see scripts/candidate.sh).
+
+candidate: ## Build and test one adapter at an upstream release: ADAPTER=<adapter> CANDIDATE_VERSION=<version>
+	@scripts/candidate.sh $(ADAPTER) $(CANDIDATE_VERSION)
 
 # ── Certificates ─────────────────────────────────────────────────────────────
 

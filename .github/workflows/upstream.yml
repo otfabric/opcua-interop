@@ -1,0 +1,111 @@
+name: Upstream
+run-name: "Upstream check (${{ github.event_name }})"
+
+# Daily check of every pin against the latest upstream: the release of every
+# OPC UA stack (open62541, Milo, async-opcua, UA-.NETStandard and its GDS
+# packages, node-opcua, opcua-asyncio; scripts/latest-upstream.py) and the
+# digest of every base image. A stack whose pin is behind is built at the
+# latest release and tested like CI tests it: unit/self-test where the adapter
+# has one, then the smoke against the candidate image (scripts/candidate.sh;
+# once per pin -> latest pair, later runs reuse that result). The table goes to
+# the Job Summary and to the issue "Upstream releases: pins behind the latest",
+# which is opened or updated (with a comment when a new version shows up) and
+# closed once every pin is current. Pins in Dockerfiles / pom.xml / Cargo.toml
+# / package.json / requirements.in are never changed here (the async-opcua,
+# node-opcua and asyncua candidates edit their manifest and lock file in the
+# job's checkout only): a bump is a reviewed change. Shared steps:
+# https://github.com/otfabric/.github/tree/main/actions
+on:
+  schedule:
+    - cron: "43 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream
+  cancel-in-progress: false
+
+env:
+  BASE_REGISTRY: mirror.gcr.io/library
+
+jobs:
+  images:
+    name: Base images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: otfabric/.github/actions/upstream-images@main
+
+  candidate:
+    name: ${{ matrix.adapter }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [open62541, milo, async-opcua, dotnet, dotnet-gds, node-opcua, asyncua]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve the pin against upstream
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/latest-upstream.py "${{ matrix.adapter }}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Build and test at the latest release
+        id: test
+        if: steps.resolve.outputs.update == 'yes'
+        uses: otfabric/.github/actions/upstream-candidate@main
+        with:
+          name: ${{ matrix.adapter }}
+          pinned: ${{ steps.resolve.outputs.pin }}
+          latest: ${{ steps.resolve.outputs.latest }}
+          result-pattern: '^\[smoke\] Results: [0-9]+ passed'
+          command: scripts/candidate.sh "${{ matrix.adapter }}" "${{ steps.resolve.outputs.latest }}"
+
+      - name: Table row
+        if: always()
+        uses: otfabric/.github/actions/upstream-row@main
+        with:
+          component: ${{ matrix.adapter }}
+          source: ${{ steps.resolve.outputs.source }}
+          pinned: ${{ steps.resolve.outputs.pin }}
+          latest: ${{ steps.resolve.outputs.latest }}
+          update: ${{ steps.resolve.outputs.update }}
+          detail: ${{ steps.resolve.outcome == 'failure' && 'upstream lookup failed (see the job log)' || '' }}
+          test-outcome: ${{ steps.test.outputs.outcome }}
+          test-result: ${{ steps.test.outputs.result }}
+          test-cached: ${{ steps.test.outputs.cached }}
+
+  report:
+    name: Report
+    runs-on: ubuntu-latest
+    needs: [images, candidate]
+    if: always()
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: otfabric/.github/actions/upstream-report@main
+        with:
+          needs: ${{ toJSON(needs) }}
+          notes: |
+            ### To update
+
+            - **open62541:** `ARG OPEN62541_COMMIT` in `open62541/Dockerfile` (a release tag).
+            - **Milo:** `<milo.version>` in `milo/pom.xml`.
+            - **async-opcua:** `async-opcua = "=X.Y.Z"` in `async-opcua/Cargo.toml`, `Cargo.lock`
+              (`cargo update -p async-opcua`) and `STACK_VERSION` in `async-opcua/src/common.rs`.
+            - **dotnet / dotnet-gds:** `ARG OPCUA_VERSION` in `dotnet/Dockerfile` /
+              `dotnet-gds/Dockerfile` and the default in the adapter's `.csproj`.
+            - **node-opcua:** `node-opcua`, `node-opcua-server-configuration` and the matching
+              `node-opcua-types` (exact) in `node-opcua/package.json`, then `package-lock.json`.
+            - **asyncua:** `asyncua==X.Y.Z` in `asyncua/requirements.in`, then re-lock the hashed
+              `asyncua/requirements.txt`.
+            - **Base image:** replace the digest in every file that pins it.
+            - Reproduce a candidate with `make candidate ADAPTER=<adapter> CANDIDATE_VERSION=<version>`;
+              a `failure` needs the log of the run first. Record a bump in `RELEASE.md`.
