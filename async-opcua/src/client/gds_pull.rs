@@ -154,7 +154,7 @@ pub fn make_csr(kind: CertKind, name: &str, uri: &str) -> Result<Vec<u8>, String
         GeneralName::UniformResourceIdentifier(Ia5String::new(uri).map_err(|e| format!("URI SAN: {e}"))?),
         GeneralName::DnsName(Ia5String::new("localhost").map_err(|e| e.to_string())?),
     ]);
-    let mut rng = rand::rngs::OsRng;
+    let mut rng = OsRng;
     let req = match kind {
         CertKind::RsaSha256 => {
             let key = rsa::RsaPrivateKey::new(&mut rng, 2048).map_err(|e| format!("RSA key: {e}"))?;
@@ -172,6 +172,27 @@ pub fn make_csr(kind: CertKind, name: &str, uri: &str) -> Result<Vec<u8>, String
     };
     req.to_der().map_err(|e| e.to_string())
 }
+
+/// The OS random source behind the rand_core 0.6 traits: rsa 0.9 and p256 0.13
+/// take those, rand 0.10 is on rand_core 0.10.
+struct OsRng;
+
+impl rsa::rand_core::RngCore for OsRng {
+    fn next_u32(&mut self) -> u32 {
+        rsa::rand_core::impls::next_u32_via_fill(self)
+    }
+    fn next_u64(&mut self) -> u64 {
+        rsa::rand_core::impls::next_u64_via_fill(self)
+    }
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.try_fill_bytes(dest).expect("OS random source")
+    }
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rsa::rand_core::Error> {
+        rand::TryRng::try_fill_bytes(&mut rand::rngs::SysRng, dest).map_err(rsa::rand_core::Error::new)
+    }
+}
+
+impl rsa::rand_core::CryptoRng for OsRng {}
 
 fn ctx() -> ContextOwned {
     ContextOwned::new_default(NamespaceMap::new(), DecodingOptions::default())
