@@ -8,6 +8,10 @@ dotnet/src/obj/
 # Generated test PKI (regenerate with make certs)
 certs/test-pki/
 
+# Self-test results
+reports/
+scripts/__pycache__/
+
 # Editor and OS
 .DS_Store
 *.swp

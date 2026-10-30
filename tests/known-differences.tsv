@@ -1,0 +1,8 @@
+# Accepted deviations of the stacks: scripts/smoke.sh reports them as known-difference, never as
+# pass. A deviation that is gone fails the run (the check says what to do); remove the line then.
+# Columns (tab-separated): id	scope (role@implementation)	upstream_version	evidence_url	note
+async-opcua-null-session-nonce	server@async-opcua	0.19.0	https://github.com/FreeOpcUa/async-opcua/tree/9ad28fc011002398f2e8a95696a50408a14531d9	A None/None session of the open62541 client is refused: null ActivateSession nonce.
+node-opcua-renewal-old-token	server@node-opcua	2.187.12	https://github.com/node-opcua/node-opcua/tree/9c009a2e5f27957885938510e424a8f95a7a633f	Responses keep the token of the request across a SecureChannel renewal; the open62541 subscription can stall. Depends on publish timing.
+open62541-chain-leaf-compare	client@open62541	v1.5.9	https://github.com/open62541/open62541/tree/05c2b389b65cc35884eb40d800301af1f3d130cf	The client compares the CreateSession server certificate with the leaf byte for byte, so it refuses a server that sends its chain (CLIENT_CONTRACT.md 16.3).
+asyncua-percent-deadband	server@asyncua	2.1.0	https://github.com/FreeOpcUa/opcua-asyncio/tree/a5a3ce0f6c012e8b09d3e9a948e25a64b2e29b37	A percent deadband on a node without EURange is accepted (asyncua/README.md).
+asyncua-no-history-update	server@asyncua	2.1.0	https://github.com/FreeOpcUa/opcua-asyncio/tree/a5a3ce0f6c012e8b09d3e9a948e25a64b2e29b37	HistoryUpdate is refused: the server has no handler for it (asyncua/README.md).

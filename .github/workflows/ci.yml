@@ -50,6 +50,9 @@ jobs:
       - name: Validate fixtures
         run: scripts/validate-fixtures.sh
 
+      - name: Result scripts
+        run: make unittests
+
       - name: versions.yaml agrees with the build inputs
         run: python3 scripts/check-versions.py
 
@@ -196,7 +199,17 @@ jobs:
           docker load < /tmp/node-opcua.tar.gz
 
       - name: Cross-stack smoke
+        env:
+          REPORT_DIR: reports
         run: scripts/smoke.sh cross "${OPEN62541_IMAGE}" "${MILO_IMAGE}" "${ASYNC_OPCUA_IMAGE}" "${NODE_OPCUA_IMAGE}"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: results-cross-stack
+          path: reports/results.json
+          if-no-files-found: ignore
 
   cross-stack-dotnet:
     name: Cross-stack smoke (dotnet)
