@@ -1,0 +1,91 @@
+# Machine-readable version manifest of opcua-interop. The Dockerfiles,
+# pom.xml, Cargo.toml, package.json and requirements.in are the source of
+# truth for a build; scripts/check-versions.py (make validate) fails when
+# this file disagrees with them.
+# No source archive hash is recorded: package registries and the open62541
+# tag are the pins.
+
+interop_version: "0.17.0"
+contract_version: "1.0"        # docs/CLIENT_CONTRACT.md
+
+protocol:
+  name: "OPC UA"
+
+implementations:
+  open62541:
+    upstream: "open62541"
+    repository: "https://github.com/open62541/open62541"
+    version: "v1.5.9"
+    tag_commit: "05c2b389b65cc35884eb40d800301af1f3d130cf"   # resolved from the tag; the Dockerfile clones the tag
+    license: "MPL-2.0"
+    roles: [server, client, pubsub]
+    published: true
+    pinned_in:
+      - open62541/Dockerfile
+  milo:
+    upstream: "Eclipse Milo"
+    repository: "https://github.com/eclipse-milo/milo"
+    version: "1.1.8"
+    license: "EPL-2.0"
+    roles: [server, client]
+    published: true
+    pinned_in:
+      - milo/pom.xml
+  async-opcua:
+    upstream: "async-opcua"
+    repository: "https://github.com/FreeOpcUa/async-opcua"
+    version: "0.19.0"
+    license: "MPL-2.0"
+    roles: [server, client]
+    published: true
+    pinned_in:
+      - async-opcua/Cargo.toml
+  dotnet:
+    upstream: "OPC Foundation UA-.NETStandard"
+    repository: "https://github.com/OPCFoundation/UA-.NETStandard"
+    version: "2.0.1"
+    license: "LicenseRef-OPC-Foundation-MIT-1.00"
+    roles: [server, client, pubsub]
+    published: true
+    pinned_in:
+      - dotnet/Dockerfile
+  dotnet-gds:
+    upstream: "OPC Foundation UA-.NETStandard GDS"
+    repository: "https://github.com/OPCFoundation/UA-.NETStandard"
+    version: "2.0.1"
+    license: "LicenseRef-OPC-Foundation-MIT-1.00"
+    roles: [gds-server, gds-client]
+    published: true
+    pinned_in:
+      - dotnet-gds/Dockerfile
+  node-opcua:
+    upstream: "node-opcua"
+    repository: "https://github.com/node-opcua/node-opcua"
+    version: "2.187.12"
+    license: "MIT"
+    roles: [server, client]
+    published: true
+    pinned_in:
+      - node-opcua/package.json
+  asyncua:
+    upstream: "opcua-asyncio (PyPI asyncua)"
+    repository: "https://github.com/FreeOpcUa/opcua-asyncio"
+    version: "2.1.0"
+    license: "LGPL-3.0"
+    roles: [server, client]
+    published: true
+    pinned_in:
+      - asyncua/requirements.in
+
+base_images:
+  debian: "docker.io/library/debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"
+  debian_dated: "docker.io/library/debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587"
+  rust: "docker.io/library/rust:1.99.0-slim-bookworm@sha256:2c3a22f0a5533ea2dd5a16627bc841228151faa2d4de2644ac9987e4a2f1f2fa"
+  maven: "docker.io/library/maven:3.9.16-eclipse-temurin-25@sha256:93b8a14ea2f412782e4e842651273b4d903e35cc496284f178fbbe2d67d00976"
+  temurin_jre: "docker.io/library/eclipse-temurin:25-jre-jammy@sha256:659b528cca74a0edc5c25315ec5819f35bce40bbcec645c4c534987e4c6be7c1"
+  dotnet_sdk: "mcr.microsoft.com/dotnet/sdk:10.0.402-noble@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2"
+  dotnet_runtime: "mcr.microsoft.com/dotnet/runtime:10.0.13-alpine3.24@sha256:6a97a629f6c44e7263b41175e79cb9aeb1df631d3714e74e80a4ddd016258646"
+  dotnet_aspnet: "mcr.microsoft.com/dotnet/aspnet:10.0.13-alpine3.24@sha256:ecf8dcbaab8ebc4bdfb2322d6fe4217bbb118894310ebb6d53c580874ab4b27d"
+  node: "docker.io/library/node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53"
+  python: "docker.io/library/python:3.15.0-slim-trixie@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58"
+  mosquitto: "docker.io/library/eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c"

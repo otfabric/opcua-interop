@@ -50,6 +50,9 @@ jobs:
       - name: Validate fixtures
         run: scripts/validate-fixtures.sh
 
+      - name: versions.yaml agrees with the build inputs
+        run: python3 scripts/check-versions.py
+
       # The newest section of RELEASE.md must be non-empty and end with "---"
       # (the GitHub release body is the text up to that line).
       - name: RELEASE.md has the notes of its newest version
