@@ -5,7 +5,7 @@
 # No source archive hash is recorded: package registries and the open62541
 # tag are the pins.
 
-interop_version: "0.18.0"
+interop_version: "0.18.1"
 contract_version: "1.0"        # docs/CLIENT_CONTRACT.md
 
 protocol:
