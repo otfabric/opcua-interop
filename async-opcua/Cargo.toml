@@ -1,6 +1,6 @@
 [package]
 name = "opcua-interop-async-opcua"
-version = "0.18.0"
+version = "0.18.1"
 edition = "2021"
 publish = false
 description = "opcua-interop adapter for the async-opcua (Rust) OPC UA stack"
