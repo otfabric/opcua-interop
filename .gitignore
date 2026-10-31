@@ -28,3 +28,9 @@ milo/org/
 
 # Claude Code worktrees and session files
 .claude/
+
+# Build artefacts live in /bin/ and /release/ (otfabric/engineering REPO-005)
+/bin/
+/release/
+*.test
+coverage.out
