@@ -10,7 +10,7 @@ public class CapabilitiesCommand {
     public static void run() throws Exception {
         Map<String, Object> adapter = new LinkedHashMap<>();
         adapter.put("name",    "milo");
-        adapter.put("version", "0.18.0");
+        adapter.put("version", "0.18.1");
 
         Map<String, Object> stack = new LinkedHashMap<>();
         stack.put("name",    "eclipse-milo");
