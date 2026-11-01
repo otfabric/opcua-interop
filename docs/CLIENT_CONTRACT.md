@@ -655,7 +655,7 @@ when not applicable). `error` is always either `null` or an error object.
 
 ### `adapter`
 
-One of: `"open62541"`, `"milo"`, `"async-opcua"`, `"dotnet"`, `"node-opcua"`, `"asyncua"`. Never abbreviated or versioned in this field.
+One of: `"open62541"`, `"milo"`, `"async-opcua"`, `"dotnet"`, `"node-opcua"`, `"asyncua"`, and `"otfabric"` for the image of OT Fabric's own stack (`own/go-opcua/README.md`). Never abbreviated or versioned in this field.
 
 ### `serviceResult`
 
@@ -1718,6 +1718,7 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `securityProfiles` | `{policy, mode}` pairs usable on both the client and the server side |
 | `codec` | `{formats, jsonVersion, jsonModes, xmlEncodeUnsupported, xmlDecodeUnsupported}` |
 | `pubsub` | PubSub (Part 14) support, §14.11. Milo: `{"supported": false, …}` with empty lists |
+| `upstream` | only in an image of OT Fabric's own stack: `{name, version, revision, independentEngine}`, with `independentEngine` false. It is not a reference: `own/go-opcua/README.md`, which also says what it leaves out of this contract |
 
 | Feature string | In | open62541 | Milo | async-opcua | UA-.NETStandard | node-opcua | asyncua | Meaning |
 |----------------|----|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|---------|

@@ -86,6 +86,22 @@ base_images:
   dotnet_sdk: "mcr.microsoft.com/dotnet/sdk:10.0.402-noble@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2"
   dotnet_runtime: "mcr.microsoft.com/dotnet/runtime:10.0.13-alpine3.24@sha256:6a97a629f6c44e7263b41175e79cb9aeb1df631d3714e74e80a4ddd016258646"
   dotnet_aspnet: "mcr.microsoft.com/dotnet/aspnet:10.0.13-alpine3.24@sha256:ecf8dcbaab8ebc4bdfb2322d6fe4217bbb118894310ebb6d53c580874ab4b27d"
+  golang: "docker.io/library/golang:1.27.2-trixie@sha256:e58d6f83b3416618d8bcac2b3dde1b7f7e3c4a77d25e88637f8bbae81536c48d"
   node: "docker.io/library/node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53"
   python: "docker.io/library/python:3.15.0-slim-trixie@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58"
   mosquitto: "docker.io/library/eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c"
+
+# OT Fabric's own stacks. Not independent implementations, not in a release of
+# this repository or its manifest: see own/<library>/README.md.
+own_implementations:
+  otfabric:
+    upstream: "go-opcua"
+    repository: "https://github.com/otfabric/go-opcua"
+    artifact: "go:github.com/otfabric/go-opcua"
+    version: "latest release, resolved when the image is built by hand"
+    license: "MIT"
+    language: "Go"
+    independent_engine: false
+    roles: [server, client]
+    image: "ghcr.io/otfabric/opcua-interop-otfabric"
+    build: "own/go-opcua"

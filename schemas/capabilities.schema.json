@@ -27,6 +27,17 @@
         "version": { "type": "string" }
       }
     },
+    "upstream": {
+      "type": "object",
+      "description": "Only an image of OT Fabric's own stack (own/) has this: which release of it, and that it is not an independent implementation.",
+      "required": ["name", "version", "revision", "independentEngine"],
+      "properties": {
+        "name":              { "type": "string" },
+        "version":           { "type": "string" },
+        "revision":          { "type": "string" },
+        "independentEngine": { "type": "boolean" }
+      }
+    },
     "fixtureSchemaVersions": {
       "type": "array",
       "items": { "type": "string" },

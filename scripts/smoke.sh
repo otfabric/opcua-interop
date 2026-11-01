@@ -16,6 +16,9 @@
 #   smoke.sh asyncua <image>                          # single-adapter smoke
 #   smoke.sh cross-asyncua <image-asyncua> <image-open62541> <image-milo> [image-async-opcua] [image-dotnet]
 #                                                     # asyncua against the reference stacks
+#   smoke.sh otfabric <image>                         # an image of OT Fabric's own stack (own/): self-smoke
+#   smoke.sh cross-otfabric <image> <image-reference>...
+#                                                     # that image against reference stacks, in both roles
 #
 # Exit codes:
 #   0  — all checks passed
@@ -32,7 +35,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENDPOINT_PATH="/opcua-interop"
 WAIT_TIMEOUT=60
 
-MODE="${1:?Usage: smoke.sh <open62541|milo|async-opcua|dotnet|dotnet-gds|node-opcua|asyncua|cross|cross-dotnet|cross-asyncua> <image> [images...]}"
+MODE="${1:?Usage: smoke.sh <open62541|milo|async-opcua|dotnet|dotnet-gds|node-opcua|asyncua|otfabric|cross|cross-dotnet|cross-asyncua|cross-otfabric> <image> [images...]}"
 shift
 
 PASS=0
@@ -1131,7 +1134,7 @@ run_single_smoke() {
     else
         check_deadband "${image}" "${endpoint}" "${adapter}→${adapter}"
     fi
-    if [[ "${adapter}" != "async-opcua" && "${adapter}" != "node-opcua" && "${adapter}" != "asyncua" ]]; then
+    if [[ "${adapter}" != "async-opcua" && "${adapter}" != "node-opcua" && "${adapter}" != "asyncua" && "${adapter}" != "otfabric" ]]; then
         check_codec_node "${image}" "${endpoint}" "${adapter}→${adapter}"
         check_codec_roundtrip "${image}" "${image}" "${adapter}→${adapter}"
     fi
@@ -1158,6 +1161,8 @@ run_single_smoke() {
         run_open62541_features "${image}"
     elif [[ "${adapter}" == "dotnet" ]]; then
         run_dotnet_chain_checks "${image}"
+    elif [[ "${adapter}" == "otfabric" ]]; then
+        run_otfabric_secure "${image}"
     fi
     trap - EXIT
 }
@@ -1700,6 +1705,144 @@ run_cross_asyncua_smoke() {
     trap - EXIT
 }
 
+# ── Mode: an image of OT Fabric's own stack (own/, adapter name otfabric) ──────
+
+# Secured channels and user tokens of such an image on a feature network: its
+# client and server with each other and, when given, with the open62541 and Milo
+# reference stacks. Its server has the go-server identity of the test PKI, whose
+# certificate names host.docker.internal, so it has that alias on the network.
+run_otfabric_secure() {
+    local img="$1" img_open62541="${2:-}" img_milo="${3:-}"
+    local model="nsu=urn:otfabric:opcua-interop:model;s="
+
+    prepare_pki
+    FEAT_NET="smoke-net-$$"
+    docker network create "${FEAT_NET}" >/dev/null
+    local srv="smoke-otfabric-sec-$$"
+    FEAT_CONTAINERS+=("${srv}")
+    local url="opc.tcp://host.docker.internal:4840${ENDPOINT_PATH}"
+    docker run -d --name "${srv}" --network "${FEAT_NET}" --network-alias host.docker.internal \
+        -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+        "${img}" server --fixture /fixtures/baseline/fixture.json \
+        --advertised-host host.docker.internal --endpoint-path "${ENDPOINT_PATH}" \
+        --certificate /pki/go-server/cert.crt --private-key /pki/go-server/cert.key \
+        --pki-dir /pki/go-server/pki >/dev/null
+    wait_ready "${srv}"
+
+    local own=(--certificate /pki/consumer/cert.crt --private-key /pki/consumer/cert.key --trust-list /pki/ca/ca.crt)
+    local client name image identity profile policy mode out
+    local clients=("otfabric|${img}|consumer")
+    [[ -z "${img_open62541}" ]] || clients+=("open62541|${img_open62541}|open62541-client")
+    [[ -z "${img_milo}" ]] || clients+=("milo|${img_milo}|milo-client")
+    for client in "${clients[@]}"; do
+        IFS='|' read -r name image identity <<<"${client}"
+        local cred=(--certificate "/pki/${identity}/cert.crt" --private-key "/pki/${identity}/cert.key" --trust-list /pki/ca/ca.crt)
+        for profile in Basic256Sha256/Sign Basic256Sha256/SignAndEncrypt \
+                       Aes128_Sha256_RsaOaep/SignAndEncrypt Aes256_Sha256_RsaPss/SignAndEncrypt; do
+            policy="${profile%/*}"; mode="${profile#*/}"
+            out=$(feat_client "${image}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+                    --security-policy "${policy}" --security-mode "${mode}" "${cred[@]}") || true
+            at "secure.${policy}-${mode}-read" "${name}→otfabric"
+            feat_expect "${name}→otfabric: ${policy}/${mode} read" \
+                '.success == true and .results[0].value == -123456789' "${out}"
+        done
+        out=$(feat_client "${image}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+                --security-policy Basic256Sha256 --security-mode SignAndEncrypt "${cred[@]}" \
+                --username test-user --password test-password) || true
+        at "secure.basic256sha256-signandencrypt-username" "${name}→otfabric"
+        feat_expect "${name}→otfabric: Basic256Sha256/SignAndEncrypt + username" \
+            '.success == true and .results[0].value == -123456789' "${out}"
+        out=$(feat_client "${image}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+                --security-policy Basic256Sha256 --security-mode SignAndEncrypt "${cred[@]}" \
+                --username test-user --password wrong) || true
+        at "secure.wrong-password-is-rejected" "${name}→otfabric"
+        feat_expect "${name}→otfabric: a wrong password is rejected" '.success == false' "${out}"
+        out=$(feat_client "${image}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+                --security-policy Basic256Sha256 --security-mode SignAndEncrypt \
+                --certificate /pki/untrusted/cert.crt --private-key /pki/untrusted/cert.key --trust-list /pki/ca/ca.crt) || true
+        at "secure.untrusted-client-certificate-is-rejected" "${name}→otfabric"
+        feat_expect "${name}→otfabric: an untrusted client certificate is rejected" '.success == false' "${out}"
+    done
+
+    out=$(feat_client "${img}" - read --endpoint "${url}" --node "${model}Scalar.Int32" \
+            --security-policy Basic256Sha256 --security-mode SignAndEncrypt \
+            --certificate /pki/consumer/cert.crt --private-key /pki/consumer/cert.key --trust-list /pki/untrusted/cert.crt) || true
+    at "secure.server-certificate-not-issued-by-a-trust-list-entry-is-rejected" "otfabric→otfabric"
+    feat_expect "otfabric→otfabric: a server certificate not issued by a --trust-list entry is rejected" '.success == false' "${out}"
+
+    local server peer
+    local servers=()
+    [[ -z "${img_open62541}" ]] || servers+=("open62541|${img_open62541}")
+    [[ -z "${img_milo}" ]] || servers+=("milo|${img_milo}")
+    for server in ${servers[@]+"${servers[@]}"}; do
+        IFS='|' read -r name image <<<"${server}"
+        peer="smoke-${name}-sec-$$"
+        FEAT_CONTAINERS+=("${peer}")
+        docker run -d --name "${peer}" --network "${FEAT_NET}" \
+            -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${FEAT_TMP}/pki:/pki" \
+            "${image}" server --fixture /fixtures/baseline/fixture.json \
+            --advertised-host "${peer}" --endpoint-path "${ENDPOINT_PATH}" \
+            --certificate "/pki/${name}-server/cert.crt" --private-key "/pki/${name}-server/cert.key" \
+            --pki-dir "/pki/${name}-server/pki" >/dev/null
+        wait_ready "${peer}"
+        for profile in Basic256Sha256/Sign Basic256Sha256/SignAndEncrypt \
+                       Aes128_Sha256_RsaOaep/SignAndEncrypt Aes256_Sha256_RsaPss/SignAndEncrypt; do
+            policy="${profile%/*}"; mode="${profile#*/}"
+            out=$(feat_client "${img}" - read --endpoint "opc.tcp://${peer}:4840${ENDPOINT_PATH}" --node "${model}Scalar.Int32" \
+                    --security-policy "${policy}" --security-mode "${mode}" "${own[@]}") || true
+            at "secure.${policy}-${mode}-read" "otfabric→${name}"
+            feat_expect "otfabric→${name}: ${policy}/${mode} read" \
+                '.success == true and .results[0].value == -123456789' "${out}"
+        done
+        out=$(feat_client "${img}" - write --endpoint "opc.tcp://${peer}:4840${ENDPOINT_PATH}" --node "${model}Access.ReadWrite" \
+                --type Int32 --value 4242 --security-policy Basic256Sha256 --security-mode SignAndEncrypt "${own[@]}" \
+                --username test-user --password test-password) || true
+        at "secure.basic256sha256-signandencrypt-username-write" "otfabric→${name}"
+        feat_expect "otfabric→${name}: Basic256Sha256/SignAndEncrypt + username write" \
+            '.success == true and .results[0].statusCode.name == "Good"' "${out}"
+    done
+    feature_cleanup
+}
+
+# cross-otfabric <image> <image-reference>...: the image's client against each
+# reference server and each reference client against its server, with the set
+# every adapter pair runs; then secured channels with open62541 and Milo. The
+# reference's name is taken from its image, opcua-interop-<name>.
+run_cross_otfabric_smoke() {
+    local img="$1"
+    shift
+    local port=14850 servers=() image name cname img_open62541="" img_milo=""
+    cname=$(start_server "otfabric" "${img}" "${port}")
+    servers+=("${cname}")
+    trap 'for c in "${servers[@]}"; do stop_server "${c}"; done; feature_cleanup' EXIT
+    wait_ready "${cname}"
+    local ep_own="opc.tcp://localhost:${port}${ENDPOINT_PATH}"
+
+    for image in "$@"; do
+        name="${image##*/}"; name="${name%%[:@]*}"; name="${name#opcua-interop-}"
+        [[ "${name}" != open62541 ]] || img_open62541="${image}"
+        [[ "${name}" != milo ]] || img_milo="${image}"
+        port=$((port + 1))
+        cname=$(start_server "${name}" "${image}" "${port}")
+        servers+=("${cname}")
+        wait_ready "${cname}"
+        local ep="opc.tcp://localhost:${port}${ENDPOINT_PATH}"
+
+        log "Cross-stack: otfabric ↔ ${name}"
+        if [[ "${name}" == asyncua ]]; then
+            run_asyncua_pair_checks "${img}" "${ep}" "otfabric→${name}" no
+            check_asyncua_deadband_deviation "${img}" "${ep}" "otfabric→${name}"
+        else
+            check_interop_set "${img}" "${ep}" "otfabric→${name}"
+        fi
+        check_interop_set "${image}" "${ep_own}" "${name}→otfabric"
+        stop_server "${cname}"
+    done
+    stop_server "${servers[0]}"
+    run_otfabric_secure "${img}" "${img_open62541}" "${img_milo}"
+    trap - EXIT
+}
+
 # ── Mode: dotnet-gds (GDS pull model, docs/CLIENT_CONTRACT.md §16) ─────────────
 
 # The GDS server of the dotnet-gds image on a feature network (fixtures/gds,
@@ -1819,8 +1962,15 @@ case "${MODE}" in
     cross-asyncua)
         run_cross_asyncua_smoke "${1:?asyncua image required}" "${2:?open62541 image required}" "${3:?milo image required}" "${4:-}" "${5:-}"
         ;;
+    otfabric)
+        run_single_smoke "otfabric" "${1:?image required}"
+        ;;
+    cross-otfabric)
+        [[ $# -ge 2 ]] || { echo "cross-otfabric needs the image and at least one reference image" >&2; exit 1; }
+        run_cross_otfabric_smoke "$@"
+        ;;
     *)
-        echo "Unknown mode: ${MODE}. Use open62541, milo, async-opcua, dotnet, dotnet-gds, node-opcua, asyncua, cross, cross-dotnet or cross-asyncua." >&2
+        echo "Unknown mode: ${MODE}. Use open62541, milo, async-opcua, dotnet, dotnet-gds, node-opcua, asyncua, otfabric, cross, cross-dotnet, cross-asyncua or cross-otfabric." >&2
         exit 1
         ;;
 esac

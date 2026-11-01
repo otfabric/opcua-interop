@@ -72,10 +72,12 @@ def parse_result(line, waivers):
 
 def implementations(rows, versions, digest=interop_result.repo_digest):
     out = []
-    for name, image in dict(r.split("\t") for r in rows).items():
+    for name, (image, *own) in {r.split("\t")[0]: r.split("\t")[1:] for r in rows}.items():
         pin = versions.get(name, {})
         i = {"name": name, "version": pin.get("version", "unrecorded"), "independent": True}
         i.update({k: pin[k] for k in ("revision", "license") if k in pin})
+        if own:  # An image of our own stack, which reported its version and commit.
+            i.update({"version": own[0], "revision": own[1], "independent": False})
         pinned = digest(image)
         if pinned:
             i["image"] = pinned
