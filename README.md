@@ -632,6 +632,14 @@ reference stacks: async-opcua (Rust), the OPC Foundation UA-.NETStandard (C#), n
 (TypeScript) and opcua-asyncio (Python) (`opcua-interop-{async-opcua,dotnet,node-opcua,asyncua}`). Every change to the
 adapter surface gets a new tag; published tags are not moved. Release notes and the release procedure: [`RELEASE.md`](RELEASE.md).
 
+## OT Fabric's own stack
+
+`ghcr.io/otfabric/opcua-interop-otfabric` is go-opcua behind the same contract, a core subset
+of it, so you can test your stack against ours the way we test ours against yours. Despite the
+name it shares with the reference images, it is not an independent implementation and not part
+of a release of this repository, so its tags are go-opcua versions and the release does not list
+it: see [own/go-opcua/README.md](own/go-opcua/README.md).
+
 ## Reference stacks
 
 | Adapter | Language | Stack | Why included |

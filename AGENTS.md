@@ -27,6 +27,7 @@ This repository follows **otfabric/engineering policy 1.2**, profile **interoper
 3. Contract changes update docs/CLIENT_CONTRACT.md and every adapter in the same change.
 4. Every adapter reports the release version; `make check-release VERSION=vX.Y.Z` lists what differs.
 5. Licences: every redistributed component in THIRD_PARTY_NOTICES.md.
+6. `own/` is the one place that builds a library under test (`own/go-opcua/README.md`). Its image is not a reference and is not in a release. It declares a subset of the contract, so a contract change need not extend it.
 
 ## Commands
 

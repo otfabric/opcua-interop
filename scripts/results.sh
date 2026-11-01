@@ -57,16 +57,20 @@ stale() { log "FAIL: $2"; FAIL=$((FAIL + 1)); record fail "$2" "$1"; }
 infra() { log "FAIL: $*"; FAIL=$((FAIL + 1)); record infra-error "$*"; }
 
 # results_start <image...>: the implementations of this script, for results.json.
+# An image that declares upstream.independentEngine false gets its version and
+# commit as further columns: results.json records it as not independent.
 results_start() {
     if [[ -z "${REPORT_DIR:-}" ]]; then return 0; fi
     mkdir -p "${REPORT_DIR}"
     [[ -f "${REPORT_DIR}/started" ]] || date -u +%Y-%m-%dT%H:%M:%SZ > "${REPORT_DIR}/started"
     printf 'REPORT_DIR=reports %s\n' "$(basename "$0") ${RESULTS_ARGS}" >> "${REPORT_DIR}/commands"
-    local image name
+    local image name own
     for image in "$@"; do
         [[ -n "${image}" ]] || continue
         name="${image##*/}"; name="${name%%[:@]*}"; name="${name#opcua-interop-}"
-        printf '%s\t%s\n' "${name}" "${image}" >> "${REPORT_DIR}/implementations.tsv"
+        own=$(docker run --rm "${image}" print-capabilities 2>/dev/null \
+            | jq -r 'select(.upstream.independentEngine == false) | "\t\(.upstream.version)\t\(.upstream.revision)"' 2>/dev/null) || true
+        printf '%s\t%s%s\n' "${name}" "${image}" "${own}" >> "${REPORT_DIR}/implementations.tsv"
     done
 }
 
