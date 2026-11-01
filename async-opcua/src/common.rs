@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 /// print-capabilities.
 pub const ADAPTER: &str = "async-opcua";
 /// opcua-interop release this adapter belongs to.
-pub const ADAPTER_VERSION: &str = "0.18.1";
+pub const ADAPTER_VERSION: &str = "0.18.2";
 /// The async-opcua crate version the adapter is built against (Cargo.toml
 /// pins it with `=`).
 pub const STACK_VERSION: &str = "0.19.0";

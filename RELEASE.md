@@ -92,7 +92,7 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ### Changed
 
-- Policy 1.2: build output in `bin/` and `release/`, and shared CI at v3.3.0.
+- The `Release` workflow also publishes on a pushed `vX.Y.Z` tag. The adapters, the container contract and the fixtures do not change.
 
 ---
 
