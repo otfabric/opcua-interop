@@ -21,27 +21,30 @@
    VERSION=vX.Y.Z` prints what the GitHub release will say. Commit and push
    to `main`.
 4. Run the `Release` workflow on `main` (Actions → Release → Run workflow)
-   with the bump: `patch`, `minor` or `major`. From the command line:
+   with the bump: `patch` (default), `minor` or `major`, or tag that commit
+   `vX.Y.Z` and push the tag. From the command line:
 
    ```bash
    gh workflow run release.yml --repo otfabric/opcua-interop --ref main -f bump=minor
    ```
 
    The workflow
-   - derives the next version from the latest `vX.Y.Z` tag and the bump, and
-     stops if that tag exists, if the adapters report another version, or if
-     this file has no dated section for it (`scripts/check-release.sh`); it
-     validates the fixtures,
+   - on a manual run derives the next version from the latest `vX.Y.Z` tag and
+     the bump, and stops if that tag exists; on any run it stops if
+     versions.yaml or the adapters report another version, or if this file has
+     no dated section for it (`scripts/check-release.sh`); it validates the
+     fixtures,
    - builds the adapter images natively on an amd64 and an arm64 runner, runs the
      adapter unit tests, the smoke tests (single-adapter, cross-stack, PubSub)
      and the shutdown checks on exactly those images, and pushes them as
      `<image>:vX.Y.Z-amd64` / `-arm64`,
    - joins them into the multi-arch `<image>:vX.Y.Z`, `:vX.Y` and `:vX`,
-   - creates the git tag `vX.Y.Z` on the released commit and the GitHub
-     release with this file's section as notes, the image digests,
+   - on a manual run creates the git tag `vX.Y.Z` on the released commit, and
+     creates the GitHub release with this file's section as notes, the image digests,
      `manifest.json` (upstream pins and digests) and `checksums.txt`.
 
-   The tag is created last: a failed run leaves no tag, fix and run again.
+   On a manual run the tag is created last: a failed run leaves no tag, fix
+   and run again.
 5. Consumers pin the digests from the release (`manifest.json`). For go-opcua:
    update `defaultOpen62541Image` / `defaultMiloImage` (and, from v0.9.0,
    `defaultAsyncOpcuaImage` in `interop/asyncopcua_harness_test.go` and

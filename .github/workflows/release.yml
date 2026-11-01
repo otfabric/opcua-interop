@@ -1,21 +1,24 @@
 name: Release
-run-name: "Release (${{ inputs.bump }}) from ${{ github.ref_name }}"
+run-name: "Release ${{ inputs.bump && format('({0}) from {1}', inputs.bump, github.ref_name) || github.ref_name }}"
 
-# Publishes the next release (see RELEASE.md, "How a release is made"). Run it
-# from the Actions tab on main with the version bump. It derives the next tag
-# from the latest vX.Y.Z tag, checks it against the adapter versions and
+# Publishes a release (see RELEASE.md, "How a release is made"). Tag push: publish
+# that tag. Manual run: from the Actions tab on main with the version bump (patch
+# by default); it derives the next tag from the latest vX.Y.Z tag. Either way it
+# checks the tag against versions.yaml, the adapter versions and
 # RELEASE.md, builds the adapter images natively per architecture, runs the full test
 # gate on exactly the images it pushes, joins them into multi-arch tags, and
-# only then creates the git tag and the GitHub release (the RELEASE.md section,
-# the image digests, manifest.json and checksums.txt). A failed run leaves no
-# tag behind.
+# only then creates the GitHub release (the RELEASE.md section, the image digests,
+# manifest.json and checksums.txt) and, on a manual run, the git tag. A failed
+# manual run leaves no tag behind.
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       bump:
-        description: Version bump type
-        required: true
+        description: Semver component to increment from the latest vX.Y.Z tag
         type: choice
         options:
           - patch
@@ -27,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.repository }}
+  group: release
   cancel-in-progress: false
 
 env:
@@ -49,6 +52,7 @@ jobs:
           fetch-tags: true
 
       - name: Release from the default branch only
+        if: github.event_name == 'workflow_dispatch'
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           CURRENT_REF: ${{ github.ref_name }}
@@ -58,29 +62,32 @@ jobs:
             exit 1
           fi
 
-      - name: Determine the next version
+      - name: Resolve tag
         id: next
         env:
-          BUMP: ${{ inputs.bump }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          BUMP: ${{ inputs.bump || 'patch' }}
         run: |
           set -euo pipefail
-          previous_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)"
-          previous_tag="${previous_tag:-v0.0.0}"
-          IFS='.' read -r major minor patch <<< "${previous_tag#v}"
-          case "${BUMP}" in
-            major) major=$((major + 1)); minor=0; patch=0 ;;
-            minor) minor=$((minor + 1)); patch=0 ;;
-            patch) patch=$((patch + 1)) ;;
-            *) echo "::error::invalid bump ${BUMP}"; exit 1 ;;
-          esac
-          tag="v${major}.${minor}.${patch}"
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "::error::Tag ${tag} already exists. Tags are immutable; choose another bump."
-            exit 1
+          git fetch --tags --force origin
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="$(scripts/next-version.sh "${BUMP}")"
+            if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+              echo "::error::tag ${tag} already exists"
+              exit 1
+            fi
+          else
+            tag="${REF_NAME}"
           fi
-          echo "previous_tag=${previous_tag}" >> "$GITHUB_OUTPUT"
+          [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::${tag} is not vX.Y.Z"; exit 1; }
+          grep -qF "interop_version: \"${tag#v}\"" versions.yaml \
+            || { echo "::error::versions.yaml does not say interop_version: \"${tag#v}\""; exit 1; }
+          previous_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -vxF "${tag}" | head -1 || true)"
+          echo "previous_tag=${previous_tag:-none}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "Releasing ${tag} (previous: ${previous_tag}, bump: ${BUMP})"
+          echo "releasing ${tag} (from ${EVENT_NAME}, previous: ${previous_tag:-none})"
 
       - name: Adapter versions and RELEASE.md section match ${{ steps.next.outputs.tag }}
         run: scripts/check-release.sh "${{ steps.next.outputs.tag }}"
@@ -395,6 +402,7 @@ jobs:
           cat manifest.json release-body.md
 
       - name: Create and push the git tag
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -417,7 +425,7 @@ jobs:
       - name: Release summary
         run: |
           {
-            echo "## Released ${VERSION} (${{ inputs.bump }} from ${{ needs.version.outputs.previous_tag }})"
+            echo "## Released ${VERSION} (previous: ${{ needs.version.outputs.previous_tag }})"
             echo
             cat digests.txt | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
