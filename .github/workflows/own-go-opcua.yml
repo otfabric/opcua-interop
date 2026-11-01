@@ -10,8 +10,6 @@ run-name: "Build opcua-interop-otfabric from the latest go-opcua, by @${{ github
 # The harness Release workflow and manifest.json do not contain this image.
 on:
   workflow_dispatch:
-  push:
-    branches: [feat/manual-own-image]
 
 permissions:
   contents: read
