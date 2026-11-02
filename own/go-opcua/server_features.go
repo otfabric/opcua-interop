@@ -142,18 +142,20 @@ func (a *addressSpace) addAlarms(compatibility *ua.NodeID) error {
 		NodeID: a.stringID(alarmsCondition), Name: "InteropAlarm",
 		Type:   ua.NewNumericNodeID(0, id.AlarmConditionType),
 		Source: source.ID(), SourceName: alarmsSource, Severity: 500, Message: "interop-alarm",
-		Confirmable: true, Retain: true,
+		Confirmable: true,
 	})
 	if err != nil {
 		return err
 	}
 	rearm := func() error {
-		if err := cond.Enable(); err != nil {
-			return err
+		if !cond.State().Enabled {
+			if err := cond.Enable(); err != nil {
+				return err
+			}
 		}
-		active, acked, confirmed, retain := true, false, false, true
+		active, acked, confirmed := true, false, false
 		severity, message := uint16(500), "interop-alarm"
-		return cond.Update(server.ConditionUpdate{Active: &active, Acked: &acked, Confirmed: &confirmed, Retain: &retain, Severity: &severity, Message: &message})
+		return cond.Update(server.ConditionUpdate{Active: &active, Acked: &acked, Confirmed: &confirmed, Severity: &severity, Message: &message})
 	}
 	a.addMethodNode(source, alarmsReset, "Reset", func() ua.StatusCode {
 		if err := rearm(); err != nil {

@@ -249,6 +249,8 @@ func parseArray(base string, items []string) (any, error) {
 		"Boolean": false, "SByte": int8(0), "Byte": uint8(0), "Int16": int16(0), "UInt16": uint16(0),
 		"Int32": int32(0), "UInt32": uint32(0), "Int64": int64(0), "UInt64": uint64(0),
 		"Float": float32(0), "Double": float64(0), "String": "", "ByteString": []byte(nil),
+		"DateTime": time.Time{}, "Guid": (*ua.GUID)(nil), "NodeId": (*ua.NodeID)(nil), "StatusCode": ua.StatusCode(0),
+		"QualifiedName": (*ua.QualifiedName)(nil), "LocalizedText": (*ua.LocalizedText)(nil),
 	}[base]
 	if zero == nil {
 		return nil, fmt.Errorf("no arrays of %q in this adapter", base)

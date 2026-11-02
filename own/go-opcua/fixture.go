@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 
 	"github.com/otfabric/go-opcua/ua"
 )
@@ -107,21 +108,22 @@ func initialValue(n *fixtureNode) (any, error) {
 }
 
 // matrix is a two-dimensional array in row-major order, which is how the fixture
-// and go-opcua lay it out. The fixture has Double matrices only.
+// and go-opcua lay it out.
 func matrix(dataType string, items []string, dims []int) (any, error) {
-	if dataType != "Double" || dims[0]*dims[1] != len(items) {
+	if dims[0]*dims[1] != len(items) {
 		return nil, fmt.Errorf("matrix of %d %s, dimensions %v", len(items), dataType, dims)
 	}
-	out := make([][]float64, dims[0])
-	for r := range out {
-		out[r] = make([]float64, dims[1])
-		for c := range out[r] {
-			v, err := parseLiteral("Double", items[r*dims[1]+c])
-			if err != nil {
-				return nil, err
-			}
-			out[r][c] = v.(float64)
+	rows := make([]reflect.Value, dims[0])
+	for r := range rows {
+		row, err := parseArray(dataType, items[r*dims[1]:(r+1)*dims[1]])
+		if err != nil {
+			return nil, err
 		}
+		rows[r] = reflect.ValueOf(row)
 	}
-	return out, nil
+	out := reflect.MakeSlice(reflect.SliceOf(rows[0].Type()), dims[0], dims[0])
+	for r, row := range rows {
+		out.Index(r).Set(row)
+	}
+	return out.Interface(), nil
 }
