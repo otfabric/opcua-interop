@@ -159,8 +159,6 @@ Limits of the public API of go-opcua, or of this adapter:
   `Client.HistoryReadRawModified` always asks for both.
 - The `--trust-list` of opc.https and opc.wss checks the chain, not the host name,
   as the contract asks (the test certificates name other hosts).
-- The UserTokenPolicies of opc.https and opc.wss name no security policy. The dotnet
-  client refuses to send a password on them: `own-token-policy-over-tls`.
 - Revocation lists in the trust directories are not read.
 - No GDS that pushes by itself: `gds.Client` (`gds/gds.go:88`) is what `client push` uses,
   and nothing in `gds/gdsserver` calls it. The contract has no such operation either.
@@ -174,9 +172,6 @@ Limits of the public API of go-opcua, or of this adapter:
   `fixtures/pubsub`, which has strings of no fixed length, its reader refuses to start
   ("MaxStringLength must be set in MetaData when using RawData field encoding") and its
   publisher logs BadInternalError for each message and sends nothing.
-- A value a client wrote has no timestamps: `Write` stores the DataValue as it came
-  (`server/attribute_service.go`), and the publisher leaves out a selected timestamp that
-  is zero (`pubsub/publisher.go:490`). `datavalue` follows the value and its status.
 - `codec pubsub-uadp-decode` has no fields for a DataSetMessage that is not valid
   (`pubsub/uadp/decode.go:295`), so `reencoded` has none either.
 - MQTT 3.1 is refused: go-opcua has 3.1.1 and 5.0 (`pubsub/builders.go:103`).
@@ -184,5 +179,5 @@ Limits of the public API of go-opcua, or of this adapter:
   (`pubsub/subscriber.go:746`), and open62541 generates its own: its publisher runs
   with a subscriber that configures none (`any_version` in `scripts/pubsub-smoke.sh`).
 
-All versions refer to go-opcua v1.29.4. The other deviations of the versions under test are in
+All versions refer to go-opcua v1.29.5. The other deviations of the versions under test are in
 [docs/COMPATIBILITY.md](../../docs/COMPATIBILITY.md).

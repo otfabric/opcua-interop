@@ -2903,7 +2903,7 @@ recorded with `RecordEvent`), except where noted:
 | `insert` of a new EventId and of `hist-evt-0` | `GoodEntryInserted`, `BadEntryExists` |
 | `replace` of `hist-evt-0` and of an unknown EventId | `GoodEntryReplaced`, `BadNoEntryExists` |
 | `update` of an unknown EventId and of `hist-evt-0` | `GoodEntryInserted`, `GoodEntryReplaced` |
-| `delete` of `hist-evt-1` and of an unknown EventId | `Good`, `BadNoEntryExists` (go-opcua: `Good`, `BadNoData`, the node status Part 11 §6.9.7.2 gives when no event matches) |
+| `delete` of `hist-evt-1` and of an unknown EventId | `Good`, `BadNoEntryExists` |
 
 ### 17.2 UA-.NETStandard 2.0.1 (dotnet)
 
