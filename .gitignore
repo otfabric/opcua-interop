@@ -4,6 +4,7 @@ adapters/milo/target/
 adapters/async-opcua/target/
 adapters/dotnet/src/bin/
 adapters/dotnet/src/obj/
+own/go-opcua/go-opcua
 
 # Generated test PKI (regenerate with make certs)
 certs/test-pki/
