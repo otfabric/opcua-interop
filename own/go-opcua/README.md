@@ -26,7 +26,7 @@ docker run -d --name go-opcua -p 127.0.0.1:4840:4840 ghcr.io/otfabric/opcua-inte
 until docker exec go-opcua test -f /run/opcua-interop/ready; do sleep 0.1; done
 ```
 
-`<tag>` is a go-opcua version such as `v1.29.3`, or `latest`, the newest one
+`<tag>` is a go-opcua version such as `v1.29.4`, or `latest`, the newest one
 published. A rebuild of a version replaces its tag, so pin the digest if you need
 an exact build. The digest is in the summary of the
 [workflow run](https://github.com/otfabric/opcua-interop/actions/workflows/own-go-opcua.yml),
@@ -96,9 +96,6 @@ Limits of the public API of go-opcua, or of this adapter:
 
 - `--endpoint-path` is not advertised: `server.EndPoint` takes a host and a port.
   A path in the URL a client dials is accepted, and the ready file names it.
-- A Hello is checked against the listen address. So the server listens without a
-  port when it is on 4840, which is what lets a published port differ. On any other
-  `--bind-port`, a client must dial that port.
 - `sequenceNumber` in a `subscribe` result is the position in the result, since
   go-opcua does not expose the number of the NotificationMessage.
 - Reading a write-only node answers `BadUserAccessDenied`, not the `BadNotReadable`

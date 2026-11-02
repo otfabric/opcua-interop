@@ -549,15 +549,8 @@ func startServer(ctx context.Context, f *serverFlags, fx *fixture) (*server.Serv
 	if advertisedPort == 0 {
 		advertisedPort = bindPort
 	}
-	// go-opcua refuses a Hello whose EndpointUrl names another port than the one
-	// it listens on, and the harness publishes 4840 on other ports. A listen
-	// address without a port binds 4840 and takes any port in the Hello.
-	listenOn := f.bindAddress
-	if bindPort != 4840 {
-		listenOn = fmt.Sprintf("%s:%d", f.bindAddress, bindPort)
-	}
 	opts := []server.Option{
-		server.ListenOn(listenOn),
+		server.ListenOn(fmt.Sprintf("%s:%d", f.bindAddress, bindPort)),
 		server.EndPoint(f.advertisedHost, advertisedPort),
 		server.InsecureNoSecurity(),
 		server.EnableAuthMode(ua.UserTokenTypeAnonymous),
