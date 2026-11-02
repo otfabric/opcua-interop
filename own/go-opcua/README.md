@@ -96,7 +96,8 @@ never as a pass.
 | `codec` JSON, verbose JSON, XML | yes | - | open62541, milo, dotnet documents |
 | Push: trust lists, CSR, UpdateCertificate, ApplyChanges, rejected list, 1.05 methods, transaction diagnostics, `--group` (Application, Https, UserToken) | yes | yes | client: open62541, dotnet, node-opcua servers. Server: every client with `push`. Self-signed, delete, update, reset: itself only |
 | GDS pull: directory, CSR, new key pair, trust list, revocation | yes | yes | `dotnet-gds` both ways; server also every client with `gds-pull` |
-| PubSub UDP unicast and multicast, UADP, field encodings Variant, DataValue, RawData | yes | yes | open62541, dotnet, each role |
+| PubSub UDP unicast and multicast, UADP, field encodings Variant, DataValue | yes | yes | open62541, dotnet, each role; a listener sees the encoding on the wire |
+| PubSub field encoding RawData | yes | yes | itself, dotnet each role; a listener sees it on the wire. Not open62541, see below |
 | PubSub MQTT 3.1.1, UADP and JSON | yes | yes | open62541, dotnet (5.0 at dotnet), each role |
 | PubSub MQTT 5.0 | yes | yes | dotnet, each role; the broker's log says p5 |
 | PubSub message security: Sign, SignAndEncrypt, Aes128-CTR, Aes256-CTR, static keys | yes | yes | open62541, dotnet, each role |
@@ -169,6 +170,10 @@ Limits of the public API of go-opcua, or of this adapter:
   The adapter moves the unicast address of a DatagramWriterGroupTransport2DataType to the
   connection. Two destinations on a connection, or one next to readers, are refused
   (§14.14).
+- RawData has no pairing with open62541, on its side: with the data set of
+  `fixtures/pubsub`, which has strings of no fixed length, its reader refuses to start
+  ("MaxStringLength must be set in MetaData when using RawData field encoding") and its
+  publisher logs BadInternalError for each message and sends nothing.
 - A value a client wrote has no timestamps: `Write` stores the DataValue as it came
   (`server/attribute_service.go`), and the publisher leaves out a selected timestamp that
   is zero (`pubsub/publisher.go:490`). `datavalue` follows the value and its status.

@@ -519,13 +519,15 @@ for _ in range(${count}):
     stop_servers "${snif}" "${pubc}"
 }
 
-# wire_has <label> <jq filter on a decoded message>: a datagram of SNIFFED satisfies it.
+# wire_has <label> <jq filter on a decoded message> [decode arguments]: a datagram of
+# SNIFFED satisfies it.
 wire_has() {
     local label="$1" filter="$2" line out
+    shift 2
     label+="${PAIRING}"
     at "${label}.on-the-wire"
     while read -r line; do
-        out=$(client codec pubsub-uadp-decode --document "${line}") || true
+        out=$(client codec pubsub-uadp-decode --document "${line}" "$@") || true
         if echo "${out}" | jq -e ".results[0].networkMessage | ${filter}" >/dev/null 2>&1; then
             ok "${label}: on the wire: ${filter}"
             return
@@ -557,13 +559,20 @@ scenario_chunking() {
     wire_has chunking '.chunk == true'
 }
 
-# field-encoding <label> <mask>: the unicast pair with this DataSetFieldContentMask.
+# field-encoding <label> <mask> <name>: the unicast pair with this
+# DataSetFieldContentMask, and the wire shows that encoding.
 scenario_field_encoding() {
     local mask=".configuration.Connections[].WriterGroups[].DataSetWriters[].DataSetFieldContentMask = $2"
     local reader=".configuration.Connections[].ReaderGroups[].DataSetReaders[].DataSetFieldContentMask = $2"
     derive udp-unicast-publisher.json "${mask}"
     derive udp-unicast-subscriber.json "${reader}"
     run_pair "$1" udp-unicast
+    derive udp-unicast-publisher.json "${mask}"
+    SNIFFED=$(sniff udp-unicast-publisher.json 6)
+    reset_derived
+    # RawData cannot be read without the metadata.
+    wire_has "$1" ".messages | any(.fieldEncoding == \"$3\")" \
+        --metadata "$(jq -c '.configuration.PublishedDataSets[0].DataSetMetaData' "${EXAMPLES}/udp-unicast-publisher.json")"
 }
 
 # aes128: the udp-secure pair with PubSub-Aes128-CTR and a key of 52 bytes.
@@ -649,8 +658,8 @@ for sc in "${SCENARIOS[@]}"; do
         mqtt-v5)       scenario_mqtt_v5 ;;
         sign)          scenario_sign ;;
         aes128)        scenario_aes128 ;;
-        datavalue)     scenario_field_encoding datavalue 7 ;;   # StatusCode, SourceTimestamp, ServerTimestamp
-        rawdata)       scenario_field_encoding rawdata 32 ;;
+        datavalue)     scenario_field_encoding datavalue 7 DataValue ;;   # StatusCode, SourceTimestamp, ServerTimestamp
+        rawdata)       scenario_field_encoding rawdata 32 RawData ;;
         chunking)      scenario_chunking ;;
         *) echo "unknown scenario: ${sc}" >&2; exit 1 ;;
     esac

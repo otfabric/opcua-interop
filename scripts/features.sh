@@ -438,6 +438,14 @@ run_gds_pull() {
     done
     out=$(run_client "${c}" gds-pull --endpoint "${url}" "${sec[@]}" "${admin[@]}" --request-timeout 30 --app-uri "${uri}-ecc" --certificate-type NistP256 --unregister)
     check_known gds-pull.nistp256 "${c}" "${s}" '.success == true and (.results[0].certificate | length) > 0 and .results[0].unregisterStatus.code == 0' "${out}"
+    # What was asked for: a certificate on the curve, not any certificate.
+    at gds-pull.nistp256-is-on-the-curve "${c}" "${s}"
+    if jq -r '.results[0].certificate // empty' <<<"${out}" | base64 -d 2>/dev/null \
+        | openssl x509 -inform DER -noout -text 2>/dev/null | grep -q 'prime256v1'; then
+        ok "${c}->${s}: the certificate issued for NistP256 is on that curve"
+    else
+        fail "${c}->${s}: the certificate issued for NistP256 is not on that curve: ${out:0:300}"
+    fi
     # A record that exists is used. The certificate chains to the issuer it came with.
     run_client "${c}" gds-pull --endpoint "${url}" "${sec[@]}" "${admin[@]}" --request-timeout 30 --app-uri "${uri}-twice" >/dev/null
     out=$(run_client "${c}" gds-pull --endpoint "${url}" "${sec[@]}" "${admin[@]}" --request-timeout 30 --app-uri "${uri}-twice" --unregister)

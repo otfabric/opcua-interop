@@ -80,7 +80,7 @@ jobs:
       contents: read
       packages: write
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
