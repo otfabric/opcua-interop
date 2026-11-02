@@ -48,6 +48,10 @@ except the one marked as depending on timing.
 
 Each adapter README lists the deviations of its stack found by its consumers.
 
+The Milo client spells status names with an underscore (`Bad_UserAccessDenied`), as
+Milo does; the others have none (`BadUserAccessDenied`). The numeric `code` is the
+same. The cases compare `serviceResult.name` without the underscore.
+
 ## Cross-stack matrix
 
 `make interop` runs every client against every server for the cases of

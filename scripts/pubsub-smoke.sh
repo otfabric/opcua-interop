@@ -58,6 +58,7 @@ require_tools
 WORK=$(mktemp -d)
 results_open "pubsub-${ADAPTER}" "${REPORT_DIR:-${WORK}}" "VERSION=${VERSION} scripts/pubsub-smoke.sh ${ADAPTER} ${SCENARIOS[*]}"
 load_caps "${ADAPTER}"
+load_known_bugs "${ADAPTER}"
 # A scenario here is about the one adapter, publisher and subscriber alike.
 RESULT_SUBJECT="${ADAPTER}"
 
