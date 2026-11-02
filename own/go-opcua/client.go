@@ -142,6 +142,9 @@ type command struct {
 	// offline says that this call needs no server, and local runs it.
 	offline func() bool
 	local   func() outcome
+	// budget replaces the request timeout as the time of the whole command, for a
+	// command of many requests. The timeout still applies to each request.
+	budget func() time.Duration
 }
 
 func runClient(args []string, out io.Writer) int {
@@ -212,6 +215,10 @@ func commandFor(op string, g *globals, fs *flag.FlagSet) (command, bool) {
 		return historyUpdateEventsCommand(fs), true
 	case "codec":
 		return codecCommand(fs, g), true
+	case "push":
+		return pushCommand(fs), true
+	case "gds-pull":
+		return gdsCommand(fs), true
 	}
 	return command{}, false
 }
@@ -268,7 +275,11 @@ func execute(cmd command, g *globals) outcome {
 		defer cancel()
 		logClose(c.Close(ctx))
 	}()
-	ctx, cancel2 := context.WithTimeout(context.Background(), seconds(g.request))
+	limit := seconds(g.request)
+	if cmd.budget != nil {
+		limit = cmd.budget()
+	}
+	ctx, cancel2 := context.WithTimeout(context.Background(), limit)
 	defer cancel2()
 	return cmd.run(ctx, c)
 }

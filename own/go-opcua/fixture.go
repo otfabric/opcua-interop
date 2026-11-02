@@ -38,8 +38,9 @@ type fixture struct {
 		Interval  int64       `json:"intervalMs"`
 	} `json:"behaviors"`
 	Users []struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username string   `json:"username"`
+		Password string   `json:"password"`
+		Roles    []string `json:"roles"`
 	} `json:"users"`
 	SecurityProfiles []struct {
 		Policy string `json:"securityPolicy"`

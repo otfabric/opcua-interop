@@ -49,14 +49,17 @@ func capabilities() map[string]any {
 		"clientOperations": []string{
 			"endpoints", "find-servers", "read", "write", "browse", "call", "subscribe", "register-nodes",
 			"event-subscribe", "alarms", "history-read", "history-read-events", "history-update-events", "codec",
+			"push", "gds-pull",
 		},
 		"clientFeatures": []string{
 			"channel-lifetime", "deadband", "reverse-listen", "ecc-security", "ecc-user-token", "x509-user-token",
 			"transport-https", "transport-wss", "codec-json", "codec-json-verbose", "codec-xml",
+			"push-groups", "push-certificates", "push-transaction-diagnostics",
 		},
 		"serverFeatures": []string{
 			"deadband", "percent-deadband", "reverse-connect", "ecc-security", "ecc-user-token", "x509-user-token",
 			"transport-https", "transport-wss", "alarms", "history-events", "history-events-update",
+			"push-management", "gds-pull",
 		},
 		"pubsub": map[string]any{
 			"supported":        false,
