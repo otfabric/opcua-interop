@@ -19,7 +19,7 @@
 # The document must also be a result envelope (schemaVersion, adapter, success).
 endpoints	ro	0	.success == true and (.results | length) > 0	client:endpoints	endpoints
 browse	ro	0	.success == true and ([.results[].browseName.name? // .results[].nodeId?] | map(test("Compatibility")) | any)	client:browse	browse --node i=85
-read-scalar	ro	0	.success == true and .results[0].statusCode.name == "Good"	client:read	read --node $MScalar.Int32
+read-scalar	ro	0	.success == true and .results[0].statusCode.name == "Good" and .results[0].value == -123456789	client:read	read --node $MScalar.Int32
 write	rw	0	.success == true and .results[0].statusCode.name == "Good"	client:write	write --node $MAccess.ReadWrite --type Int32 --value 999
 call	ro	0	.success == true and .results[0].statusCode.name == "Good" and (.results[0].outputArguments[0] == 30)	client:call	call --object $MMethods --method $MMethods.Add --input Int32:10 --input Int32:20
 subscribe	ro	0	.success == true and (.results[0].notifications | length) == 3	client:subscribe	subscribe --node $MDynamic.Counter --publishing-interval-ms 500 --notifications 3 --timeout-ms 15000
