@@ -105,6 +105,9 @@ func ptr[T any](v T) *T { return &v }
 // fractional digits.
 func psTime(t time.Time) string {
 	t = t.UTC()
+	if t.IsZero() {
+		return "1601-01-01T00:00:00.0000000Z" // DateTime 0 on the wire
+	}
 	return t.Format("2006-01-02T15:04:05") + fmt.Sprintf(".%07dZ", t.Nanosecond()/100)
 }
 
@@ -493,7 +496,7 @@ func psMetaNames(md message.MetaDataLookup, p message.PublisherID, wg, w uint16)
 // prints it after decoding (names from md, if given).
 func describeUADP(nm *message.NetworkMessage, md message.MetaDataLookup) psDesc {
 	m := nm.UADPMask
-	d := psDesc{Mapping: "uadp", Version: ptr(1), Chunk: ptr(false)}
+	d := psDesc{Mapping: "uadp", Version: ptr(1), Chunk: ptr(nm.Chunk != nil)}
 	if m&ua.UADPNetworkMessageContentMaskPublisherID != 0 {
 		d.PublisherID = psPublisherIDOf(nm.PublisherID)
 	}

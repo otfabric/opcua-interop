@@ -25,10 +25,13 @@
 #   codec-cross    the codec documents of <adapter> decoded by PUBLISHER_ADAPTER,
 #                  and the reverse
 #   delta-frames   the unicast pair, one KeyFrame in 1000: fresh values can only
-#                  arrive in DeltaFrames (pubsub.dataSetMessageTypes)
+#                  arrive in DeltaFrames, and a listener sees them on the wire
+#                  (pubsub.dataSetMessageTypes)
 #   mqtt-v5        the mqtt-uadp pair over MQTT 5.0 (pubsub.mqttVersions); the broker's
 #                  log says what connected
 #   sign           the udp-secure pair with SecurityMode Sign
+#   aes128         the udp-secure pair with PubSub-Aes128-CTR
+#   chunking       the unicast pair with messages larger than MaxNetworkMessageSize
 #
 # Across stacks: PUBLISHER_ADAPTER and SUBSCRIBER_ADAPTER replace the adapter in that
 # role, CLIENT_ADAPTER the adapter whose `client` runs the checks. Unset, a scenario is
@@ -278,11 +281,21 @@ run_pair() {
         sub_args=("$@")
     fi
     log "Scenario ${label}: ${prefix}-subscriber.json ← ${prefix}-publisher.json"
+    any_version "${prefix}-subscriber.json"
     # The subscriber first: a unicast publisher resolves its destination at start.
     start_server "${subc}" pubsub-subscriber "${prefix}-subscriber.json" ${sub_args[@]+"${sub_args[@]}"} || return
     start_server "${pubc}" pubsub-publisher "${prefix}-publisher.json" ${pub_args[@]+"${pub_args[@]}"} || { stop_servers "${subc}"; return; }
     check_follow "${label}"
     stop_servers "${pubc}" "${subc}"
+    reset_derived
+}
+
+# any_version <subscriber file>: an open62541 publisher generates its
+# ConfigurationVersion (§14.10), and a reader that checks it (§14.14) would drop every
+# message. Across these two stacks the subscriber does not configure one.
+any_version() {
+    [[ "${PUBLISHER_ADAPTER:-}" == open62541 ]] || return 0
+    derive "$1" 'del(.configuration.Connections[].ReaderGroups[].DataSetReaders[].DataSetMetaData.ConfigurationVersion)'
 }
 
 scenario_codec() {
@@ -336,6 +349,7 @@ scenario_sks_push() {
     local pubc="pubsub-smoke-pub-$$" subc="pubsub-smoke-sub-$$" out key
     local sub_ep="opc.tcp://pubsub-subscriber:4840${ENDPOINT_PATH}"
     log "Scenario sks-push: sks-push-subscriber.json ← udp-secure-publisher.json + SetSecurityKeys"
+    any_version sks-push-subscriber.json
     start_server "${subc}" pubsub-subscriber sks-push-subscriber.json \
         --certificate /pki/open62541-server/cert.crt --private-key /pki/open62541-server/cert.key \
         --pki-dir /pki/open62541-server/pki || return
@@ -352,6 +366,7 @@ scenario_sks_push() {
     expect "sks-push: SetSecurityKeys (SignAndEncrypt)" '.success == true' "${out}"
     check_follow "sks-push"
     stop_servers "${pubc}" "${subc}"
+    reset_derived
 }
 
 scenario_infomodel() {
@@ -471,16 +486,83 @@ derive() {
         chmod -R a+rX "${DERIVED}"
     fi
     local tmp; tmp=$(mktemp)
-    jq "$2" "${EXAMPLES}/$1" >"${tmp}"
+    jq "$2" "${DERIVED}/$1" >"${tmp}"
     mv "${tmp}" "${DERIVED}/$1"
     chmod a+r "${DERIVED}/$1"
 }
 
-# delta-frames: fresh values only reach the subscriber in DeltaFrames.
+reset_derived() {
+    if [[ -n "${DERIVED:-}" ]]; then rm -rf "${DERIVED}"; fi
+    DERIVED=""
+}
+
+# sniff <file> <count>: what the unicast publisher of the file puts on the wire. A
+# UDP listener (Python, of the asyncua image) takes the subscriber's place; the
+# datagrams come back as lines of Base64.
+sniff() {
+    local file="$1" count="$2" snif="pubsub-smoke-sniff-$$" pubc="pubsub-smoke-pub-$$"
+    CONTAINERS+=("${snif}")
+    docker run -d --name "${snif}" --network "${NET}" --network-alias pubsub-subscriber --entrypoint python3 \
+        "$(image_of asyncua)" -c "
+import socket, base64
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(('0.0.0.0', 4841))
+for _ in range(${count}):
+    print(base64.b64encode(s.recvfrom(65535)[0]).decode(), flush=True)
+" >/dev/null
+    sleep 1
+    start_server "${pubc}" pubsub-publisher "${file}" || { stop_servers "${snif}"; return 1; }
+    local deadline=$((SECONDS + FOLLOW_TIMEOUT))
+    while (( SECONDS < deadline )) && [[ "$(docker inspect -f '{{.State.Running}}' "${snif}" 2>/dev/null)" == true ]]; do sleep 1; done
+    docker logs "${snif}" 2>/dev/null
+    stop_servers "${snif}" "${pubc}"
+}
+
+# wire_has <label> <jq filter on a decoded message>: a datagram of SNIFFED satisfies it.
+wire_has() {
+    local label="$1" filter="$2" line out
+    label+="${PAIRING}"
+    at "${label}.on-the-wire"
+    while read -r line; do
+        out=$(client codec pubsub-uadp-decode --document "${line}") || true
+        if echo "${out}" | jq -e ".results[0].networkMessage | ${filter}" >/dev/null 2>&1; then
+            ok "${label}: on the wire: ${filter}"
+            return
+        fi
+    done <<<"${SNIFFED}"
+    fail "${label}: no datagram of $(wc -l <<<"${SNIFFED}") has ${filter}"
+}
+
+# delta-frames: fresh values only reach the subscriber in DeltaFrames, and the wire
+# shows them. An open62541 subscriber discards DeltaFrames (§14.10): no such pairing.
 scenario_delta_frames() {
-    derive udp-unicast-publisher.json '.deltaFrames = true | .configuration.Connections[].WriterGroups[].DataSetWriters[].KeyFrameCount = 1000'
+    local delta='.deltaFrames = true | .configuration.Connections[].WriterGroups[].DataSetWriters[].KeyFrameCount = 1000'
+    derive udp-unicast-publisher.json "${delta}"
     run_pair delta-frames udp-unicast
-    rm -rf "${DERIVED}"; DERIVED=""
+    derive udp-unicast-publisher.json "${delta}"
+    SNIFFED=$(sniff udp-unicast-publisher.json 20)
+    reset_derived
+    wire_has delta-frames '.messages | any(.messageType == "DeltaFrame")'
+}
+
+# chunking: a MaxNetworkMessageSize below the size of a message (pubsub.chunking).
+scenario_chunking() {
+    local small='.configuration.Connections[].WriterGroups[].MaxNetworkMessageSize = 100'
+    derive udp-unicast-publisher.json "${small}"
+    run_pair chunking udp-unicast
+    derive udp-unicast-publisher.json "${small}"
+    SNIFFED=$(sniff udp-unicast-publisher.json 6)
+    reset_derived
+    wire_has chunking '.chunk == true'
+}
+
+# aes128: the udp-secure pair with PubSub-Aes128-CTR and a key of 52 bytes.
+scenario_aes128() {
+    local aes128='.securityGroups[].securityPolicyUri = "http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR"
+        | .securityGroups[].keys[].key = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyBBQkNERUZHSElKS0xNTk9QsbKztA=="'
+    derive udp-secure-publisher.json "${aes128}"
+    derive udp-secure-subscriber.json "${aes128}"
+    run_pair aes128 udp-secure
 }
 
 # mqtt-v5: Mosquitto logs every connection with its protocol version (p5).
@@ -494,7 +576,6 @@ scenario_mqtt_v5() {
     log=$(docker logs "${broker}" 2>&1 | grep -c 'p5,' || true)
     if [[ "${log}" -ge 2 ]]; then ok "mqtt-v5: the broker logged ${log} MQTT 5 connections"
     else fail "mqtt-v5: the broker logged ${log} MQTT 5 connections, want 2"; fi
-    rm -rf "${DERIVED}"; DERIVED=""
 }
 
 # sign: SecurityMode Sign (2) on both groups of the udp-secure pair.
@@ -502,7 +583,6 @@ scenario_sign() {
     derive udp-secure-publisher.json '.configuration.Connections[].WriterGroups[].SecurityMode = 2'
     derive udp-secure-subscriber.json '.configuration.Connections[].ReaderGroups[].SecurityMode = 2'
     run_pair sign udp-secure
-    rm -rf "${DERIVED}"; DERIVED=""
 }
 
 # codec-cross: the documents of one stack decoded by the other, both ways.
@@ -558,6 +638,8 @@ for sc in "${SCENARIOS[@]}"; do
         delta-frames)  scenario_delta_frames ;;
         mqtt-v5)       scenario_mqtt_v5 ;;
         sign)          scenario_sign ;;
+        aes128)        scenario_aes128 ;;
+        chunking)      scenario_chunking ;;
         *) echo "unknown scenario: ${sc}" >&2; exit 1 ;;
     esac
 done

@@ -38,17 +38,18 @@ run() {
 
 # Alone: everything the capability document declares.
 run self - codec udp-unicast udp-multicast mqtt-uadp mqtt-json mqtt-late-broker mqtt-v5 \
-    udp-secure sign delta-frames sks sks-push infomodel discovery
+    udp-secure sign aes128 chunking delta-frames sks sks-push infomodel discovery
 
-both="udp-unicast udp-multicast mqtt-uadp mqtt-json udp-secure"
+both="udp-unicast udp-multicast mqtt-uadp mqtt-json udp-secure sign aes128"
+# An open62541 subscriber discards DeltaFrames, and open62541 has no chunking (§14.10).
 # shellcheck disable=SC2086
-run from-open62541 PUBLISHER_ADAPTER=open62541 codec-cross ${both} sign delta-frames sks sks-push
+run from-open62541 PUBLISHER_ADAPTER=open62541 codec-cross ${both} delta-frames sks sks-push
 # shellcheck disable=SC2086
-run to-open62541 SUBSCRIBER_ADAPTER=open62541 ${both} sign delta-frames sks sks-push
+run to-open62541 SUBSCRIBER_ADAPTER=open62541 ${both} sks sks-push
 # shellcheck disable=SC2086
-run from-dotnet PUBLISHER_ADAPTER=dotnet codec-cross ${both} sign mqtt-v5 discovery
+run from-dotnet PUBLISHER_ADAPTER=dotnet codec-cross ${both} chunking mqtt-v5 discovery
 # shellcheck disable=SC2086
-run to-dotnet SUBSCRIBER_ADAPTER=dotnet ${both} sign mqtt-v5
+run to-dotnet SUBSCRIBER_ADAPTER=dotnet ${both} chunking mqtt-v5
 run probe-by-dotnet CLIENT_ADAPTER=dotnet discovery
 
 echo "[pubsub-own] ${passed} passed, ${failed} failed"

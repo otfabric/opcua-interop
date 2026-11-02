@@ -90,6 +90,14 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `history-events` | server | — | — | — | ✓ | — | ✓ | adapter 0.17.0: the event history fixture `s=History.Events` (§17, docs/FIXTURES.md "History (events)"): HistoryRead with ReadEventDetails of the five seeded events, SelectClauses, WhereClause and continuation points |
 | `history-events-update` | server | — | — | — | ✓ | — | — | adapter 0.17.0: HistoryUpdate of `s=History.Events` with UpdateEventDetails (insert / replace / update) and DeleteEventDetails, and the method `s=History.ResetEvents` (§17) |
 
+The image of OT Fabric's own stack is no column here. It declares `pubsub`, `push-management`,
+`gds-pull`, `codec-pubsub` and the `push-*` features among others, each exercised against
+the references by `make -f own/go-opcua/Makefile check`. What go-opcua lacks or the
+contract does not test stays undeclared, with file and line in
+`own/go-opcua/README.md` "Left out" and "What it cannot do": AMQP and Ethernet PubSub
+(no fixture, no reference), PublishedEvents, Part 14 layout discovery, MQTT 3.1, a GDS
+that pushes by itself.
+
 `transports` in `print-capabilities` lists the endpoint schemes the adapter
 dials and serves: `["opc.tcp"]`, UA-.NETStandard (adapter 0.11.0)
 `["opc.tcp", "opc.https", "opc.wss"]`. open62541 1.5.9 has no WebSocket or

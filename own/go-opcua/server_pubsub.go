@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -102,7 +103,16 @@ func pubsubOptions() []pubsub.Option {
 			}
 		}),
 		pubsub.WithDiscovery(pubsub.DiscoveryOptions{MinInterval: 500 * time.Millisecond}),
+		pubsub.WithLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: pubsubLogLevel()}))),
 	}
+}
+
+// pubsubLogLevel is Info, or Debug with OPCUA_INTEROP_PUBSUB_DEBUG set.
+func pubsubLogLevel() slog.Level {
+	if os.Getenv("OPCUA_INTEROP_PUBSUB_DEBUG") != "" {
+		return slog.LevelDebug
+	}
+	return slog.LevelInfo
 }
 
 // resolveNamespaces replaces "nsu=<uri>;" by "ns=<index>;" in every string of a JSON
@@ -304,6 +314,8 @@ func configureKeys(s *server.Server, rt *pubsub.PubSub, file *pubsubFile) error 
 			return fmt.Errorf("security group %q: %w", g.ID, err)
 		}
 		switch {
+		case len(g.Keys) > 0 && file.ServeSKS:
+			return fmt.Errorf("security group %q: keys together with serveSks", g.ID)
 		case len(g.Keys) > 0:
 			ring := security.NewKeyRing(g.ID, policy)
 			if err := ring.SetKeys(g.PolicyURI, g.Keys[0].TokenID, [][]byte{g.Keys[0].Key}, 0, 0); err != nil {

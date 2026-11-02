@@ -57,25 +57,29 @@ harness release or `manifest.json`.
 
 Run the **Own stack (go-opcua)** workflow by hand, from `main`. It finds the
 latest go-opcua release and the latest harness release, and prints them. It
-builds the image, runs the two smoke modes on both architectures, then publishes
+builds the image, runs smoke, interop and PubSub on both architectures, then publishes
 `:<go-opcua version>` and `:latest`. Run from a branch, it stops before
 publishing. Nothing runs it automatically, so after a go-opcua release the image
 stays on the old version until someone does.
 
 ```sh
-make -f own/go-opcua/Makefile image smoke interop    # from the repository root
+make -f own/go-opcua/Makefile image check    # from the repository root
 ```
+
+`check` runs `smoke`, `interop` and `pubsub`, each whatever the one before found.
 
 `smoke` is `scripts/smoke.sh otfabric`: the image against itself, unsecured and
 secured. `interop` is `scripts/interop.sh otfabric <references>`, as in the other
 interop repositories: each released reference against this image in both roles,
 for the cases of `tests/cases.tsv`, then the secured path of
-`tests/secure-cases.tsv`.
+`tests/secure-cases.tsv`, push and GDS (`dotnet-gds` is among the references for this).
+`pubsub` is `scripts/pubsub-own.sh otfabric`: `scripts/pubsub-smoke.sh` alone, then with
+open62541 and dotnet in each role.
 
 ## What it covers
 
 Every capability is declared in `print-capabilities` and exercised by
-`scripts/smoke.sh` or `scripts/interop.sh`. Anything else reads as not declared and
+`scripts/smoke.sh`, `scripts/interop.sh` or `scripts/pubsub-own.sh`. Anything else reads as not declared and
 never as a pass.
 
 | Feature | Client | Server | Exercised with |
@@ -90,6 +94,18 @@ never as a pass.
 | Reverse connect | yes | yes | open62541, async-opcua, node-opcua |
 | opc.https, opc.wss | yes | yes | dotnet |
 | `codec` JSON, verbose JSON, XML | yes | - | open62541, milo, dotnet documents |
+| Push: trust lists, CSR, UpdateCertificate, ApplyChanges, rejected list, 1.05 methods, transaction diagnostics, `--group` (Application, Https, UserToken) | yes | yes | client: open62541, dotnet, node-opcua servers. Server: every client with `push`. Self-signed, delete, update, reset: itself only |
+| GDS pull: directory, CSR, new key pair, trust list, revocation | yes | yes | `dotnet-gds` both ways; server also every client with `gds-pull` |
+| PubSub UDP unicast and multicast, UADP | yes | yes | open62541, dotnet, each role |
+| PubSub MQTT 3.1.1, UADP and JSON | yes | yes | open62541, dotnet (5.0 at dotnet), each role |
+| PubSub MQTT 5.0 | yes | yes | dotnet, each role; the broker's log says p5 |
+| PubSub message security: Sign, SignAndEncrypt, Aes128-CTR, Aes256-CTR, static keys | yes | yes | open62541, dotnet, each role |
+| SKS: serve, pull, push (`GetSecurityKeys`, `SetSecurityKeys`, `AddSecurityGroup`) | yes | yes | open62541, each role |
+| PubSub information model: AddConnection, RemoveConnection, Status Enable and Disable | yes | yes | itself |
+| PubSub DeltaFrames, UADP | yes | yes | itself, and from an open62541 publisher: its subscriber discards them. A listener sees them on the wire |
+| PubSub chunking (`MaxNetworkMessageSize`) | yes | yes | itself, dotnet each role: open62541 has none. A listener sees chunks on the wire |
+| UADP discovery in the .NET layout, `client pubsub-discover` | yes | yes | dotnet, each role |
+| `codec pubsub-*` | yes | - | open62541, dotnet, each way |
 | Security None, Basic256Sha256, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss; Anonymous, UserName | yes | yes | every reference |
 
 An image of a go-opcua version lacks what that version's adapter did not have when
@@ -98,6 +114,10 @@ it was built: read `print-capabilities`.
 Flags only this image has: `--user-certificate`, `--user-private-key` (client, an
 X.509 user token), `--ecc-dir` (server, one certificate per curve under
 `<dir>/ecc-<curve>/`). Flags of the features left out are refused with exit code 2.
+
+A fixture user with the role `DiscoveryAdmin` or `CertificateAuthorityAdmin`
+(`fixtures/gds/fixture.json`) makes the server a GDS, on top of its fixture: no flag
+turns this on. The GDS approves every request, and its store is in memory.
 
 ## Left out
 
@@ -110,7 +130,21 @@ they stay undeclared:
   `alarms-audible`, `alarms-105`: `AddCondition` takes them, and this fixture has
   no scenario that shows them.
 
-Not part of this round, to follow: certificate management, GDS, PubSub.
+- AMQP (`pubsub/transports.go:9` registers it) and Ethernet (`pubsub/transports.go:10`)
+  PubSub: the contract and `fixtures/pubsub` have no such transport and no reference
+  speaks them, so `transports` does not list them.
+- PublishedEvents (`pubsub/components.go:22`) and PubSub Actions: the contract's data
+  sets are PublishedDataItems, and it has no scenario for these.
+- Discovery in the layout of Part 14 (`pubsub/message/message.go:437`): a server answers
+  it, but `client pubsub-discover` probes in the .NET layout of the contract, so
+  `discovery.layout` says `dotnet`.
+- The other PubSub information model methods (AddWriterGroup, AddReaderGroup,
+  AddDataSetWriter, ...; RemoveSecurityGroup): no scenario calls them, so
+  `informationModelMethods` does not list them.
+- JSON DeltaFrames and KeepAlive: `dataSetMessageTypes.json` lists KeyFrame, the one the
+  JSON scenarios show.
+- MQTT over TLS, broker credentials: `fixtures/pubsub/mosquitto.conf` is one plain
+  listener.
 
 ## What it cannot do
 
@@ -127,6 +161,18 @@ Limits of the public API of go-opcua, or of this adapter:
 - The UserTokenPolicies of opc.https and opc.wss name no security policy. The dotnet
   client refuses to send a password on them: `own-token-policy-over-tls`.
 - Revocation lists in the trust directories are not read.
+- No GDS that pushes by itself: `gds.Client` (`gds/gds.go:88`) is what `client push` uses,
+  and nothing in `gds/gdsserver` calls it. The contract has no such operation either.
+- The trust list served by push is one list for the three certificate groups, the one
+  of `<pki-dir>`.
+- A connection has one address (`pubsub/config.go:670` refuses one on the writer group).
+  The adapter moves the unicast address of a DatagramWriterGroupTransport2DataType to the
+  connection. Two destinations on a connection, or one next to readers, are refused
+  (§14.14).
+- MQTT 3.1 is refused: go-opcua has 3.1.1 and 5.0 (`pubsub/builders.go:103`).
+- A reader with a configured MajorVersion drops other versions
+  (`pubsub/subscriber.go:746`), and open62541 generates its own: its publisher runs
+  with a subscriber that configures none (`any_version` in `scripts/pubsub-smoke.sh`).
 
-The other deviations of the versions under test are in
+All versions refer to go-opcua v1.29.4. The other deviations of the versions under test are in
 [docs/COMPATIBILITY.md](../../docs/COMPATIBILITY.md).

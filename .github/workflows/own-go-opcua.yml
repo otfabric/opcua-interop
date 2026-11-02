@@ -91,7 +91,8 @@ jobs:
       VERSION: ${{ needs.version.outputs.harness }}
       UPSTREAM: ${{ needs.version.outputs.upstream }}
       REVISION: ${{ needs.version.outputs.revision }}
-      REFERENCES: open62541 milo async-opcua dotnet node-opcua asyncua
+      REFERENCES: open62541 milo async-opcua dotnet node-opcua asyncua dotnet-gds
+      MOSQUITTO_IMAGE: mirror.gcr.io/library/eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c
       ADAPTER_IMAGE_otfabric: ghcr.io/otfabric/opcua-interop-otfabric:ci
     steps:
       - uses: actions/checkout@v7
@@ -126,14 +127,21 @@ jobs:
               | jq -r --arg image "${a}:${VERSION}" '"- \($image): \(.stack.name) \(.stack.version)"' | tee -a "$GITHUB_STEP_SUMMARY"
           done
 
-      - name: Smoke, cross-stack self-test against the references, document schemas
+      - name: Smoke, cross-stack self-test against the references, PubSub, document schemas
         run: |
           mkdir -p reports
-          REPORT_DIR=reports scripts/smoke.sh otfabric 2>&1 | tee reports/smoke.log
+          # Every suite runs, whatever an earlier one found.
+          status=0
+          REPORT_DIR=reports scripts/smoke.sh otfabric 2>&1 | tee reports/smoke.log || status=1
           # shellcheck disable=SC2086
-          REPORT_DIR=reports scripts/interop.sh otfabric ${REFERENCES} 2>&1 | tee reports/interop.log
-          python3 scripts/validate-documents.py reports
-          grep -hE '^\[(smoke|interop)\] [0-9]+ passed' reports/smoke.log reports/interop.log | tee -a "$GITHUB_STEP_SUMMARY" || true
+          REPORT_DIR=reports scripts/interop.sh otfabric ${REFERENCES} 2>&1 | tee reports/interop.log || status=1
+          REPORT_DIR=reports scripts/pubsub-own.sh otfabric 2>&1 | tee reports/pubsub.log || status=1
+          python3 scripts/validate-documents.py reports || status=1
+          for run in reports/pubsub/*/; do
+            python3 scripts/validate-documents.py "${run}" || status=1
+          done
+          grep -hE '^\[(smoke|interop|pubsub-own)\] [0-9]+ passed' reports/smoke.log reports/interop.log reports/pubsub.log | tee -a "$GITHUB_STEP_SUMMARY" || true
+          exit "${status}"
 
       - name: Upload documents
         if: always()
