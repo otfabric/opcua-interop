@@ -396,7 +396,7 @@ scenario_infomodel() {
     at "infomodel-getsecuritykeys-over-none-is-refused"
     expect "infomodel: GetSecurityKeys over None is refused" \
         '.results[0].statusCode.name == "BadSecurityModeInsufficient"' "${out}"
-    # An own stack's group methods need an encrypted session (go-opcua restricts them;
+    # An own stack's group methods need an encrypted session (it restricts them;
     # open62541 does not): over None they are refused, and the check below uses one.
     local add_sec=()
     if is_own "${ADAPTER}"; then

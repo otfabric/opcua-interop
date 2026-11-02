@@ -311,7 +311,7 @@ check_exit() {
 # fixtures/gds has SecurityAdmin. The trust list changes first, and on an own server what
 # they do to new channels, seen by the server's own client (the dotnet client cannot load
 # the key of the untrusted identity). Then the methods of Part 12 1.05 where the server has them:
-# an own server and dotnet (docs/CONTAINER_CONTRACT.md 15, go-opcua's INTEROP.md). On an
+# an own server and dotnet (docs/CONTAINER_CONTRACT.md 15). On an
 # own server also who may call them.
 run_push() {
     local c="$1" s="$2" name="push-${RUN_ID}" out rc cert me host url node="${MODEL}Scalar.Int32"
