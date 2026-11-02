@@ -22,6 +22,21 @@
 #   discovery      UADP discovery: `client pubsub-discover` probes the multicast
 #                  publisher for DataSetMetaData and DataSetWriterConfiguration
 #                  (adapters whose capabilities declare pubsub.discovery)
+#   codec-cross    the codec documents of <adapter> decoded by PUBLISHER_ADAPTER,
+#                  and the reverse
+#   delta-frames   the unicast pair, one KeyFrame in 1000: fresh values can only
+#                  arrive in DeltaFrames, and a listener sees them on the wire
+#                  (pubsub.dataSetMessageTypes)
+#   mqtt-v5        the mqtt-uadp pair over MQTT 5.0 (pubsub.mqttVersions); the broker's
+#                  log says what connected
+#   sign           the udp-secure pair with SecurityMode Sign
+#   aes128         the udp-secure pair with PubSub-Aes128-CTR
+#   datavalue, rawdata  the unicast pair with this field encoding
+#   chunking       the unicast pair with messages larger than MaxNetworkMessageSize
+#
+# Across stacks: PUBLISHER_ADAPTER and SUBSCRIBER_ADAPTER replace the adapter in that
+# role, CLIENT_ADAPTER the adapter whose `client` runs the checks. Unset, a scenario is
+# about the one adapter.
 #
 # Every transport scenario starts a subscriber and a publisher container (the
 # configurations in fixtures/pubsub/) on a dedicated Docker network, writes
@@ -31,7 +46,8 @@
 #
 # Exit codes: 0 all checks passed, 1 one or more failed or none passed.
 #
-# Environment: REGISTRY, VERSION (image tag, default dev), REPORT_DIR, MOSQUITTO_IMAGE.
+# Environment: REGISTRY, VERSION (image tag, default dev), REPORT_DIR, MOSQUITTO_IMAGE,
+#              PUBLISHER_ADAPTER, SUBSCRIBER_ADAPTER, CLIENT_ADAPTER.
 
 set -euo pipefail
 
@@ -53,17 +69,26 @@ FOLLOW_TIMEOUT=20
 # shellcheck source=scripts/lib.sh
 source "${SCRIPT_DIR}/lib.sh"
 IMG="$(image_of "${ADAPTER}")"
+PUB_IMG="$(image_of "${PUBLISHER_ADAPTER:-${ADAPTER}}")"
+SUB_IMG="$(image_of "${SUBSCRIBER_ADAPTER:-${ADAPTER}}")"
+CLIENT_IMG="$(image_of "${CLIENT_ADAPTER:-${ADAPTER}}")"
+# What a result is called across stacks: the same scenario runs once per pairing.
+PAIRING=""
+[[ -z "${PUBLISHER_ADAPTER:-}" ]] || PAIRING+=".from-${PUBLISHER_ADAPTER}"
+[[ -z "${SUBSCRIBER_ADAPTER:-}" ]] || PAIRING+=".to-${SUBSCRIBER_ADAPTER}"
+[[ -z "${CLIENT_ADAPTER:-}" ]] || PAIRING+=".by-${CLIENT_ADAPTER}"
 SUITE=pubsub
 require_tools
 WORK=$(mktemp -d)
-results_open "pubsub-${ADAPTER}" "${REPORT_DIR:-${WORK}}" "VERSION=${VERSION} scripts/pubsub-smoke.sh ${ADAPTER} ${SCENARIOS[*]}"
-load_caps "${ADAPTER}"
+results_open "pubsub-${ADAPTER}${PAIRING}" "${REPORT_DIR:-${WORK}}" "VERSION=${VERSION} PUBLISHER_ADAPTER=${PUBLISHER_ADAPTER:-} SUBSCRIBER_ADAPTER=${SUBSCRIBER_ADAPTER:-} CLIENT_ADAPTER=${CLIENT_ADAPTER:-} scripts/pubsub-smoke.sh ${ADAPTER} ${SCENARIOS[*]}"
+load_caps "${ADAPTER}" ${PUBLISHER_ADAPTER:+"${PUBLISHER_ADAPTER}"} ${SUBSCRIBER_ADAPTER:+"${SUBSCRIBER_ADAPTER}"} ${CLIENT_ADAPTER:+"${CLIENT_ADAPTER}"}
 load_known_bugs "${ADAPTER}"
 # A scenario here is about the one adapter, publisher and subscriber alike.
 RESULT_SUBJECT="${ADAPTER}"
 
 NET="pubsub-smoke-$$"
 TMP=""
+DERIVED=""
 CONTAINERS=()
 
 cleanup() {
@@ -71,6 +96,7 @@ cleanup() {
     for c in ${CONTAINERS[@]+"${CONTAINERS[@]}"}; do docker rm -f "${c}" &>/dev/null || true; done
     docker network rm "${NET}" &>/dev/null || true
     if [[ -n "${TMP}" ]]; then rm -rf "${TMP}"; fi
+    if [[ -n "${DERIVED:-}" ]]; then rm -rf "${DERIVED}"; fi
     results_abort
     rm -rf "${WORK}"
 }
@@ -81,7 +107,7 @@ docker network create "${NET}" >/dev/null
 # client <args...>: adapter client on the smoke network (stdout: the JSON envelope)
 client() {
     local raw rc=0
-    raw=$(docker run --rm --network "${NET}" ${TMP:+-v "${TMP}/pki:/pki"} "${IMG}" client "$@" 2>/dev/null) || rc=$?
+    raw=$(docker run --rm --network "${NET}" ${TMP:+-v "${TMP}/pki:/pki"} "${CLIENT_IMG}" client "$@" 2>/dev/null) || rc=$?
     printf '%s\n' "${raw}" | grep -m1 '^{' || printf '%s\n' "${raw}"
     return ${rc}
 }
@@ -109,14 +135,18 @@ prepare_pki() {
 
 # start_server <container> <network-alias> <config> [extra server args...]
 start_server() {
-    local name="$1" net_alias="$2" config="$3"
+    local name="$1" net_alias="$2" config="$3" img="${IMG}"
     shift 3
+    case "${net_alias}" in
+        pubsub-publisher)  img="${PUB_IMG}" ;;
+        pubsub-subscriber) img="${SUB_IMG}" ;;
+    esac
     docker rm -f "${name}" &>/dev/null || true
     CONTAINERS+=("${name}")
     docker run -d --name "${name}" --network "${NET}" --network-alias "${net_alias}" \
-        -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${EXAMPLES}:/pubsub:ro" \
+        -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${DERIVED:-${EXAMPLES}}:/pubsub:ro" \
         ${TMP:+-v "${TMP}/pki:/pki"} \
-        "${IMG}" server --fixture /fixtures/baseline/fixture.json \
+        "${img}" server --fixture /fixtures/baseline/fixture.json \
         --advertised-host "${net_alias}" --endpoint-path "${ENDPOINT_PATH}" \
         --pubsub-config "/pubsub/${config}" "$@" >/dev/null
     if ! wait_ready "${name}"; then
@@ -147,6 +177,7 @@ ensure_mosquitto() {
 check_follow() {
     local label="$1"
     shift
+    label+="${PAIRING}"
     at "${label}.follow"
     local pub="opc.tcp://pubsub-publisher:4840${ENDPOINT_PATH}"
     local sub="opc.tcp://pubsub-subscriber:4840${ENDPOINT_PATH}"
@@ -203,7 +234,8 @@ scenario_mqtt_late_broker() {
         --entrypoint sleep "${MOSQUITTO_IMAGE}" 600 >/dev/null
     start_server "${pubc}" pubsub-publisher "mqtt-json-publisher.json" || { stop_servers "${refuser}"; return; }
     at mqtt-late-broker.error-state
-    for _ in $(seq 1 20); do
+    # A stack may try a broker for a while before it calls that an Error (10 s in some).
+    for _ in $(seq 1 60); do
         publog; grep -q "is in Error" "${plog}" && break
         sleep 0.5
     done
@@ -251,11 +283,21 @@ run_pair() {
         sub_args=("$@")
     fi
     log "Scenario ${label}: ${prefix}-subscriber.json ← ${prefix}-publisher.json"
+    any_version "${prefix}-subscriber.json"
     # The subscriber first: a unicast publisher resolves its destination at start.
     start_server "${subc}" pubsub-subscriber "${prefix}-subscriber.json" ${sub_args[@]+"${sub_args[@]}"} || return
     start_server "${pubc}" pubsub-publisher "${prefix}-publisher.json" ${pub_args[@]+"${pub_args[@]}"} || { stop_servers "${subc}"; return; }
     check_follow "${label}"
     stop_servers "${pubc}" "${subc}"
+    reset_derived
+}
+
+# any_version <subscriber file>: an open62541 publisher generates its
+# ConfigurationVersion (§14.10), and a reader that checks it (§14.14) would drop every
+# message. Across these two stacks the subscriber does not configure one.
+any_version() {
+    [[ "${PUBLISHER_ADAPTER:-}" == open62541 ]] || return 0
+    derive "$1" 'del(.configuration.Connections[].ReaderGroups[].DataSetReaders[].DataSetMetaData.ConfigurationVersion)'
 }
 
 scenario_codec() {
@@ -309,6 +351,7 @@ scenario_sks_push() {
     local pubc="pubsub-smoke-pub-$$" subc="pubsub-smoke-sub-$$" out key
     local sub_ep="opc.tcp://pubsub-subscriber:4840${ENDPOINT_PATH}"
     log "Scenario sks-push: sks-push-subscriber.json ← udp-secure-publisher.json + SetSecurityKeys"
+    any_version sks-push-subscriber.json
     start_server "${subc}" pubsub-subscriber sks-push-subscriber.json \
         --certificate /pki/open62541-server/cert.crt --private-key /pki/open62541-server/cert.key \
         --pki-dir /pki/open62541-server/pki || return
@@ -325,6 +368,7 @@ scenario_sks_push() {
     expect "sks-push: SetSecurityKeys (SignAndEncrypt)" '.success == true' "${out}"
     check_follow "sks-push"
     stop_servers "${pubc}" "${subc}"
+    reset_derived
 }
 
 scenario_infomodel() {
@@ -354,7 +398,19 @@ scenario_infomodel() {
     at "infomodel-getsecuritykeys-over-none-is-refused"
     expect "infomodel: GetSecurityKeys over None is refused" \
         '.results[0].statusCode.name == "BadSecurityModeInsufficient"' "${out}"
-    out=$(client call --endpoint "${ep}" --object i=15443 --method i=15444 --input String:SmokeGroup \
+    # An own stack's group methods need an encrypted session (it restricts them;
+    # open62541 does not): over None they are refused, and the check below uses one.
+    local add_sec=()
+    if is_own "${ADAPTER}"; then
+        add_sec=("${sec[@]}")
+        out=$(client call --endpoint "${ep}" --object i=15443 --method i=15444 --input String:SmokeGroup \
+                --input Double:30000 --input 'String:http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR' \
+                --input UInt32:2 --input UInt32:1) || true
+        at "infomodel-addsecuritygroup-over-none-is-refused"
+        expect "infomodel: AddSecurityGroup over None is refused" \
+            '.results[0].statusCode.name == "BadSecurityModeInsufficient"' "${out}"
+    fi
+    out=$(client call --endpoint "${ep}" ${add_sec[@]+"${add_sec[@]}"} --object i=15443 --method i=15444 --input String:SmokeGroup \
             --input Double:30000 --input 'String:http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR' \
             --input UInt32:2 --input UInt32:1) || true
     at "infomodel-addsecuritygroup"
@@ -423,6 +479,161 @@ scenario_discovery() {
     stop_servers "${pubc}"
 }
 
+# derive <file> <jq filter>: a copy of the example files with the filter applied to
+# the named one, mounted as /pubsub instead of the originals.
+derive() {
+    if [[ -z "${DERIVED:-}" ]]; then
+        DERIVED=$(mktemp -d "${TMPDIR:-/tmp}/opcua-interop-derived.XXXXXX")
+        cp "${EXAMPLES}"/*.json "${DERIVED}/"
+        chmod -R a+rX "${DERIVED}"
+    fi
+    local tmp; tmp=$(mktemp)
+    jq "$2" "${DERIVED}/$1" >"${tmp}"
+    mv "${tmp}" "${DERIVED}/$1"
+    chmod a+r "${DERIVED}/$1"
+}
+
+reset_derived() {
+    if [[ -n "${DERIVED:-}" ]]; then rm -rf "${DERIVED}"; fi
+    DERIVED=""
+}
+
+# sniff <file> <count>: what the unicast publisher of the file puts on the wire. A
+# UDP listener (Python, of the asyncua image) takes the subscriber's place; the
+# datagrams come back as lines of Base64.
+sniff() {
+    local file="$1" count="$2" snif="pubsub-smoke-sniff-$$" pubc="pubsub-smoke-pub-$$"
+    CONTAINERS+=("${snif}")
+    docker run -d --name "${snif}" --network "${NET}" --network-alias pubsub-subscriber --entrypoint python3 \
+        "$(image_of asyncua)" -c "
+import socket, base64
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(('0.0.0.0', 4841))
+for _ in range(${count}):
+    print(base64.b64encode(s.recvfrom(65535)[0]).decode(), flush=True)
+" >/dev/null
+    sleep 1
+    start_server "${pubc}" pubsub-publisher "${file}" || { stop_servers "${snif}"; return 1; }
+    local deadline=$((SECONDS + FOLLOW_TIMEOUT))
+    while (( SECONDS < deadline )) && [[ "$(docker inspect -f '{{.State.Running}}' "${snif}" 2>/dev/null)" == true ]]; do sleep 1; done
+    docker logs "${snif}" 2>/dev/null
+    stop_servers "${snif}" "${pubc}"
+}
+
+# wire_has <label> <jq filter on a decoded message> [decode arguments]: a datagram of
+# SNIFFED satisfies it.
+wire_has() {
+    local label="$1" filter="$2" line out
+    shift 2
+    label+="${PAIRING}"
+    at "${label}.on-the-wire"
+    while read -r line; do
+        out=$(client codec pubsub-uadp-decode --document "${line}" "$@") || true
+        if echo "${out}" | jq -e ".results[0].networkMessage | ${filter}" >/dev/null 2>&1; then
+            ok "${label}: on the wire: ${filter}"
+            return
+        fi
+    done <<<"${SNIFFED}"
+    fail "${label}: no datagram of $(wc -l <<<"${SNIFFED}") has ${filter}"
+}
+
+# delta-frames: fresh values only reach the subscriber in DeltaFrames, and the wire
+# shows them. An open62541 subscriber discards DeltaFrames (§14.10): no such pairing.
+scenario_delta_frames() {
+    local delta='.deltaFrames = true | .configuration.Connections[].WriterGroups[].DataSetWriters[].KeyFrameCount = 1000'
+    derive udp-unicast-publisher.json "${delta}"
+    run_pair delta-frames udp-unicast
+    derive udp-unicast-publisher.json "${delta}"
+    SNIFFED=$(sniff udp-unicast-publisher.json 20)
+    reset_derived
+    wire_has delta-frames '.messages | any(.messageType == "DeltaFrame")'
+}
+
+# chunking: a MaxNetworkMessageSize below the size of a message (pubsub.chunking).
+scenario_chunking() {
+    local small='.configuration.Connections[].WriterGroups[].MaxNetworkMessageSize = 100'
+    derive udp-unicast-publisher.json "${small}"
+    run_pair chunking udp-unicast
+    derive udp-unicast-publisher.json "${small}"
+    SNIFFED=$(sniff udp-unicast-publisher.json 6)
+    reset_derived
+    wire_has chunking '.chunk == true'
+}
+
+# field-encoding <label> <mask> <name>: the unicast pair with this
+# DataSetFieldContentMask, and the wire shows that encoding.
+scenario_field_encoding() {
+    local mask=".configuration.Connections[].WriterGroups[].DataSetWriters[].DataSetFieldContentMask = $2"
+    local reader=".configuration.Connections[].ReaderGroups[].DataSetReaders[].DataSetFieldContentMask = $2"
+    derive udp-unicast-publisher.json "${mask}"
+    derive udp-unicast-subscriber.json "${reader}"
+    run_pair "$1" udp-unicast
+    derive udp-unicast-publisher.json "${mask}"
+    SNIFFED=$(sniff udp-unicast-publisher.json 6)
+    reset_derived
+    # RawData cannot be read without the metadata.
+    wire_has "$1" ".messages | any(.fieldEncoding == \"$3\")" \
+        --metadata "$(jq -c '.configuration.PublishedDataSets[0].DataSetMetaData' "${EXAMPLES}/udp-unicast-publisher.json")"
+}
+
+# aes128: the udp-secure pair with PubSub-Aes128-CTR and a key of 52 bytes.
+scenario_aes128() {
+    local aes128='.securityGroups[].securityPolicyUri = "http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR"
+        | .securityGroups[].keys[].key = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyBBQkNERUZHSElKS0xNTk9QsbKztA=="'
+    derive udp-secure-publisher.json "${aes128}"
+    derive udp-secure-subscriber.json "${aes128}"
+    run_pair aes128 udp-secure
+}
+
+# mqtt-v5: Mosquitto logs every connection with its protocol version (p5).
+scenario_mqtt_v5() {
+    local broker="pubsub-smoke-mosquitto-$$" log
+    derive mqtt-uadp-publisher.json '.mqtt = {"protocolVersion": "5.0"}'
+    derive mqtt-uadp-subscriber.json '.mqtt = {"protocolVersion": "5.0"}'
+    ensure_mosquitto
+    run_pair mqtt-v5 mqtt-uadp
+    at "mqtt-v5.broker-saw-p5"
+    log=$(docker logs "${broker}" 2>&1 | grep -c 'p5,' || true)
+    if [[ "${log}" -ge 2 ]]; then ok "mqtt-v5: the broker logged ${log} MQTT 5 connections"
+    else fail "mqtt-v5: the broker logged ${log} MQTT 5 connections, want 2"; fi
+}
+
+# sign: SecurityMode Sign (2) on both groups of the udp-secure pair.
+scenario_sign() {
+    derive udp-secure-publisher.json '.configuration.Connections[].WriterGroups[].SecurityMode = 2'
+    derive udp-secure-subscriber.json '.configuration.Connections[].ReaderGroups[].SecurityMode = 2'
+    run_pair sign udp-secure
+}
+
+# codec-cross: the documents of one stack decoded by the other, both ways.
+scenario_codec_cross() {
+    local peer="${PUBLISHER_ADAPTER:?codec-cross needs PUBLISHER_ADAPTER}" peer_img="${PUB_IMG}" here_img="${IMG}"
+    local md='{"Name":"ds","Fields":[{"Name":"a","BuiltInType":6,"DataType":"i=6","ValueRank":-1},{"Name":"b","BuiltInType":11,"DataType":"i=11","ValueRank":-1}]}'
+    local -a names=(uadp-variant uadp-rawdata uadp-datavalue json-datavalue)
+    local -a docs=(
+      '{"publisherId":{"type":"UInt16","value":2234},"groupHeader":{"writerGroupId":100,"sequenceNumber":7},"payloadHeader":true,"timestamp":"2026-10-23T10:00:00.1234567Z","messages":[{"dataSetWriterId":1,"messageType":"KeyFrame","fieldEncoding":"Variant","sequenceNumber":3,"fields":[{"name":"Int32","dataType":"Int32","value":-5},{"name":"String","dataType":"String","value":"hi"},{"name":"UInt64","dataType":"UInt64","value":"18446744073709551615"},{"name":"Arr","dataType":"Int32","value":[1,2,3]}]}]}'
+      '{"publisherId":{"type":"Byte","value":5},"payloadHeader":true,"messages":[{"dataSetWriterId":1,"messageType":"KeyFrame","fieldEncoding":"RawData","fields":[{"name":"a","dataType":"Int32","value":7},{"name":"b","dataType":"Double","value":1.5}]}]}'
+      '{"publisherId":{"type":"UInt32","value":70000},"groupHeader":{"writerGroupId":9},"payloadHeader":true,"messages":[{"dataSetWriterId":2,"messageType":"KeyFrame","fieldEncoding":"DataValue","fields":[{"name":"a","dataType":"Double","value":2.5,"sourceTimestamp":"2026-10-23T09:59:59.5000000Z"}]}]}'
+      '{"messageId":"m-1","publisherId":{"type":"String","value":"pub-a"},"messages":[{"dataSetWriterId":7,"messageType":"KeyFrame","fieldEncoding":"DataValue","sequenceNumber":9,"fields":[{"name":"Temp","dataType":"Double","value":21.5,"sourceTimestamp":"2026-10-23T09:59:59.5Z"}]}]}'
+    )
+    local i from enc out kind args filter enc_img enc_name dec_img dec_name
+    for i in "${!names[@]}"; do
+        kind=uadp; [[ "${names[i]}" == json-* ]] && kind=json
+        args=(); [[ "${names[i]}" == uadp-rawdata ]] && args=(--metadata "${md}")
+        for from in "${here_img}|${ADAPTER}|${peer_img}|${peer}" "${peer_img}|${peer}|${here_img}|${ADAPTER}"; do
+            IFS='|' read -r enc_img enc_name dec_img dec_name <<<"${from}"
+            enc=$(docker run --rm "${enc_img}" client codec "pubsub-${kind}-encode" --document "${docs[i]}" 2>/dev/null | grep -m1 '^{' | jq -r '.results[0].encoded // empty') || true
+            at "codec-cross.${names[i]}.${enc_name}-to-${dec_name}"
+            if [[ -z "${enc}" ]]; then fail "codec-cross ${names[i]}: ${enc_name} did not encode"; continue; fi
+            out=$(docker run --rm "${dec_img}" client codec "pubsub-${kind}-decode" --document "${enc}" ${args[@]+"${args[@]}"} 2>/dev/null | grep -m1 '^{') || true
+            # The decoder sees what was written: every field value and the writer id.
+            filter=$(jq -cn --argjson d "${docs[i]}" '$d.messages[0] | [.dataSetWriterId, (.fields | map(.value))]')
+            expect "codec-cross ${names[i]}: ${enc_name} encodes, ${dec_name} decodes" \
+                ".success == true and ([.results[0].networkMessage.messages[0] | .dataSetWriterId, (.fields | map(.value))] == ${filter})" "${out}"
+        done
+    done
+}
+
 for sc in "${SCENARIOS[@]}"; do
     case "${sc}" in
         codec)         scenario_codec ;;
@@ -443,6 +654,14 @@ for sc in "${SCENARIOS[@]}"; do
         sks-push)      scenario_sks_push ;;
         infomodel)     scenario_infomodel ;;
         discovery)     scenario_discovery ;;
+        codec-cross)   scenario_codec_cross ;;
+        delta-frames)  scenario_delta_frames ;;
+        mqtt-v5)       scenario_mqtt_v5 ;;
+        sign)          scenario_sign ;;
+        aes128)        scenario_aes128 ;;
+        datavalue)     scenario_field_encoding datavalue 7 DataValue ;;   # StatusCode, SourceTimestamp, ServerTimestamp
+        rawdata)       scenario_field_encoding rawdata 32 RawData ;;
+        chunking)      scenario_chunking ;;
         *) echo "unknown scenario: ${sc}" >&2; exit 1 ;;
     esac
 done

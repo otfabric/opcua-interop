@@ -51,8 +51,14 @@ done
 
 # in_scope <client> <server>
 in_scope() {
-    [[ -z "${FOCUS}" || " ${FOCUS} " == *" $1 "* || " ${FOCUS} " == *" $2 "* ]]
+    [[ -z "${FOCUS}" ]] && return 0
+    [[ " ${FOCUS} " == *" $1 "* || " ${FOCUS} " == *" $2 "* ]] || return 1
+    # A GDS image (dotnet-gds) serves no fixture: only run_gds_pull below is for it.
+    has_cap "$1" client read && has_cap "$2" client read
 }
+
+# with_focus <client> <server>: an own stack is one of the two.
+with_focus() { [[ " ${FOCUS} " == *" $1 "* || " ${FOCUS} " == *" $2 "* ]]; }
 
 # named <adapter>: it is among the adapters of this run.
 named() { [[ " ${ADAPTERS[*]} " == *" $1 "* ]]; }
@@ -90,6 +96,13 @@ if [[ -n "${FOCUS}" ]]; then
             in_scope "${client}" "${server}" || continue
             if has_cap "${client}" client reverse-listen && has_cap "${server}" server reverse-connect; then run_reverse "${client}" "${server}"; fi
             if has_cap "${client}" client transport-wss && has_cap "${server}" server transport-wss; then run_transports "${client}" "${server}"; fi
+            if has_cap "${client}" client push && has_cap "${server}" server push-management; then run_push "${client}" "${server}"; fi
+        done
+    done
+    for client in "${ADAPTERS[@]}"; do
+        for server in "${ADAPTERS[@]}"; do
+            with_focus "${client}" "${server}" || continue
+            if has_cap "${client}" client gds-pull && has_cap "${server}" server gds-pull; then run_gds_pull "${client}" "${server}"; fi
         done
     done
     for adapter in ${FOCUS}; do

@@ -293,3 +293,177 @@ run_codec_literals() {
     out=$(run_client "${a}" codec decode --format json --type Variant --document 'not json')
     check codec.undecodable-document-is-bad "${a}" "${a}" '.success == false and .results[0].statusCode.name == "BadDecodingError"' "${out}"
 }
+
+# gds_identity <adapter> <client|server>: dotnet-gds has the identities of dotnet.
+gds_identity() { if [[ "$1" == dotnet-gds ]]; then echo "dotnet-$2"; else identity_of "$1" "$2"; fi; }
+
+# der_b64 <pem file>: the certificate as §4 reports it. sha1_of: its thumbprint.
+der_b64() { openssl x509 -in "$1" -outform DER | base64 | tr -d '\n'; }
+sha1_of() { openssl x509 -in "$1" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g'; }
+
+# check_exit <id> <client> <server> <exit> <expect> <document> <rc>: also the exit code.
+check_exit() {
+    at "$1" "$2" "$3"
+    judge "$1" "$2" "$3" "$4" "$5" "$6" "$7"
+}
+
+# run_push <client> <server>: push certificate management (contract 15). gds-admin of
+# fixtures/gds has SecurityAdmin. The trust list changes first, and on an own server what
+# they do to new channels, seen by the server's own client (the dotnet client cannot load
+# the key of the untrusted identity). Then the methods of Part 12 1.05 where the server has them:
+# an own server and dotnet (docs/CONTAINER_CONTRACT.md 15). On an
+# own server also who may call them.
+run_push() {
+    local c="$1" s="$2" name="push-${RUN_ID}" out rc cert me host url node="${MODEL}Scalar.Int32"
+    prepare_pki
+    cert=$(identity_of "${s}" server); me=$(identity_of "${c}" client); host=$(server_host "${s}" "${name}")
+    local untrusted="${PKI_TMP}/pki/untrusted/cert.crt" extra thumb
+    extra=$(der_b64 "${untrusted}"); thumb=$(sha1_of "${untrusted}")
+    local sec=(--security-policy Basic256Sha256 --security-mode SignAndEncrypt --certificate "/pki/${me}/cert.crt"
+               --private-key "/pki/${me}/cert.key" --trust-list /pki/ca/ca.crt)
+    local admin=(--username gds-admin --password gds-admin-password)
+    local bad=(--security-policy Basic256Sha256 --security-mode SignAndEncrypt --certificate /pki/untrusted/cert.crt
+               --private-key /pki/untrusted/cert.key --trust-list /pki/ca/ca.crt)
+    log "features: ${c} client push -> ${s} server"
+    SERVER_FIXTURE=/fixtures/gds/fixture.json
+    if ! server_up "${name}" "${s}" --host "${host}" --certificate "/pki/${cert}/cert.crt" --private-key "/pki/${cert}/cert.key" --pki-dir "/pki/${cert}/pki"; then
+        SERVER_FIXTURE=/fixtures/baseline/fixture.json
+        return 0
+    fi
+    SERVER_FIXTURE=/fixtures/baseline/fixture.json
+    url=$(url_of "${host}")
+
+    # AddCertificate and RemoveCertificate take effect at once on open62541 and node-opcua,
+    # whose ApplyChanges then answers BadNothingToDo (contract 15).
+    local apply=()
+    if is_own "${s}" || [[ "${s}" == dotnet ]]; then apply=(--apply); fi
+    out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}")
+    check_known push.read-trust-list "${c}" "${s}" '.success == true and .results[0].certificateGroupId == "i=14156" and (.results[0].trustList | has("trustedCertificates"))' "${out}"
+    if is_own "${s}"; then check_known push.trust-list-is-the-pki-dir "${c}" "${s}" '.results[0].trustList.specifiedLists == 15 and (.results[0].trustList.trustedCertificates | length) > 0' "${out}"; fi
+
+    if is_own "${s}"; then
+        out=$(run_client "${s}" read --endpoint "${url}" --node "${node}" "${bad[@]}")
+        check_known push.untrusted-client-is-refused "${c}" "${s}" '.success == false' "${out}"
+        out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}")
+        check_known push.rejected-list-names-it "${c}" "${s}" ".success == true and (.results[0].rejectedCertificates | index(\"${extra}\")) != null" "${out}"
+    fi
+    out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --add-certificate /pki/untrusted/cert.crt ${apply[@]+"${apply[@]}"})
+    check_known push.add-certificate "${c}" "${s}" ".success == true and .results[0].addCertificateStatus.code == 0 and (.results[0].trustListAfter.trustedCertificates | index(\"${extra}\")) != null" "${out}"
+    if is_own "${s}"; then
+        out=$(run_client "${s}" read --endpoint "${url}" --node "${node}" "${bad[@]}")
+        check_known push.added-certificate-opens-a-channel "${c}" "${s}" "${READ_OK}" "${out}"
+    fi
+    out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --remove-certificate "${thumb}" ${apply[@]+"${apply[@]}"})
+    check_known push.remove-certificate "${c}" "${s}" ".success == true and .results[0].removeCertificateStatus.code == 0 and (.results[0].trustListAfter.trustedCertificates | index(\"${extra}\")) == null" "${out}"
+    if is_own "${s}"; then
+        out=$(run_client "${s}" read --endpoint "${url}" --node "${node}" "${bad[@]}")
+        check_known push.removed-certificate-is-refused-again "${c}" "${s}" '.success == false' "${out}"
+    fi
+    out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --csr)
+    check_known push.create-signing-request "${c}" "${s}" '.success == true and (.results[0].certificateSigningRequest | startswith("MI"))' "${out}"
+
+    if is_own "${s}" || [[ "${s}" == dotnet ]]; then
+        if has_cap "${c}" client push-certificates; then
+            out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --get-certificates)
+            check_known push.get-certificates "${c}" "${s}" '.success == true and (.results[0].certificates | length) > 0 and (.results[0].certificateTypeIds | length) == (.results[0].certificates | length)' "${out}"
+        fi
+        if has_cap "${c}" client push-groups; then
+            local group
+            for group in Https UserToken; do
+                out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --group "${group}")
+                check_known "push.group-${group}" "${c}" "${s}" '.success == true and (.results[0].certificateGroupId | IN("i=14088", "i=14122"))' "${out}"
+            done
+        fi
+        if has_cap "${c}" client push-transaction-diagnostics; then
+            out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --add-certificate /pki/untrusted/cert.crt --cancel --transaction-diagnostics)
+            check_known push.cancel-transaction-diagnostics "${c}" "${s}" ".success == true and .results[0].cancelChangesStatus.code == 0 and .results[0].transactionDiagnosticsStatus.code == 0 and (.results[0].trustListAfter.trustedCertificates | index(\"${extra}\")) == null" "${out}"
+        fi
+    fi
+
+    if is_own "${s}"; then
+        if has_cap "${c}" client push-certificates; then
+            out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --create-self-signed --subject "CN=opcua-interop push" --dns localhost)
+            check_known push.create-self-signed "${c}" "${s}" '.success == true and (.results[0].selfSignedCertificate | startswith("MI")) and .results[0].cancelChangesStatus.code == 0' "${out}"
+            out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --delete-certificate i=12560)
+            check_known push.delete-certificate-cancel "${c}" "${s}" '.success == true and .results[0].deleteCertificateStatus.code == 0 and .results[0].cancelChangesStatus.code == 0' "${out}"
+            out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --update-certificate "/pki/${cert}/cert.crt" --update-private-key "/pki/${cert}/cert.key" --issuer-certificate /pki/ca/ca.crt --apply)
+            check_known push.update-certificate-pem "${c}" "${s}" '.success == true and .results[0].updateCertificateStatus.code == 0 and .results[0].applyChangesStatus.code == 0' "${out}"
+            out=$(run_client "${c}" read --endpoint "${url}" --node "${node}" "${sec[@]}")
+            check_known push.channel-after-update-certificate "${c}" "${s}" "${READ_OK}" "${out}"
+            # A change, then back to the configured lists.
+            run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --add-certificate /pki/untrusted/cert.crt --apply >/dev/null
+            out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --reset-to-defaults --apply)
+            check_known push.reset-to-defaults "${c}" "${s}" ".success == true and .results[0].resetToServerDefaultsStatus.code == 0 and (.results[0].trustListAfter.trustedCertificates | index(\"${extra}\")) == null" "${out}"
+        fi
+        out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}"); rc=$?
+        check_exit push.anonymous-is-denied "${c}" "${s}" 4 '.success == false and (.serviceResult.name | sub("_"; "")) == "BadUserAccessDenied"' "${out}" "${rc}"
+        out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" --username test-user --password test-password); rc=$?
+        check_exit push.without-securityadmin-is-denied "${c}" "${s}" 4 '.success == false and (.serviceResult.name | sub("_"; "")) == "BadUserAccessDenied"' "${out}" "${rc}"
+        out=$(run_client "${c}" push --endpoint "${url}" --security-policy Basic256Sha256 --security-mode Sign --certificate "/pki/${me}/cert.crt" \
+                --private-key "/pki/${me}/cert.key" --trust-list /pki/ca/ca.crt "${admin[@]}"); rc=$?
+        check_exit push.sign-only-channel-is-refused "${c}" "${s}" 4 '.success == false and (.serviceResult.name | sub("_"; "")) == "BadSecurityModeInsufficient"' "${out}" "${rc}"
+    fi
+    if is_own "${c}"; then
+        out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --group Nothing); rc=$?
+        check_exit push.unknown-group-is-input "${c}" "${s}" 2 '.success == false and .error.category == "input"' "${out}" "${rc}"
+        out=$(run_client "${c}" push --endpoint "${url}" "${sec[@]}" "${admin[@]}" --remove-certificate 00); rc=$?
+        check_exit push.remove-unknown-is-service "${c}" "${s}" 4 '.success == false and .results[0].removeCertificateStatus.severity == "Bad"' "${out}" "${rc}"
+    fi
+    stop_server "${name}"
+}
+
+# run_gds_pull <client> <server>: the pull model of contract 16 against a GDS. Both kinds of
+# request, revocation and unregistering; on what it issued, an X.509 check.
+run_gds_pull() {
+    local c="$1" s="$2" name="gds-pull-${RUN_ID}" kind out rc cert me host url
+    prepare_pki
+    cert=$(gds_identity "${s}" server); me=$(gds_identity "${c}" client); host=$(server_host "${s}" "${name}")
+    local sec=(--security-policy Basic256Sha256 --security-mode SignAndEncrypt --certificate "/pki/${me}/cert.crt"
+               --private-key "/pki/${me}/cert.key" --trust-list /pki/ca/ca.crt)
+    local admin=(--username gds-admin --password gds-admin-password) uri="urn:opcua-interop:gds-pull:${c}"
+    log "features: ${c} client gds-pull -> ${s} server"
+    SERVER_FIXTURE=/fixtures/gds/fixture.json
+    if ! server_up "${name}" "${s}" --host "${host}" --certificate "/pki/${cert}/cert.crt" --private-key "/pki/${cert}/cert.key" --pki-dir "/pki/${cert}/pki"; then
+        SERVER_FIXTURE=/fixtures/baseline/fixture.json
+        return 0
+    fi
+    SERVER_FIXTURE=/fixtures/baseline/fixture.json
+    url=$(url_of "${host}")
+    for kind in csr new-key-pair; do
+        out=$(run_client "${c}" gds-pull --endpoint "${url}" "${sec[@]}" "${admin[@]}" --request-timeout 30 --app-uri "${uri}-${kind}" --request "${kind}" --revoke --unregister)
+        check_known "gds-pull.${kind}-revoke-unregister" "${c}" "${s}" \
+            '.success == true and .results[0].registered == true and (.results[0].certificate | length) > 0
+             and (.results[0].issuerCertificates | length) > 0 and .results[0].trustList.specifiedLists == 15
+             and (.results[0].certificateStatus.name | sub("_"; "")) == "BadCertificateRevoked" and .results[0].unregisterStatus.code == 0' "${out}"
+    done
+    out=$(run_client "${c}" gds-pull --endpoint "${url}" "${sec[@]}" "${admin[@]}" --request-timeout 30 --app-uri "${uri}-ecc" --certificate-type NistP256 --unregister)
+    check_known gds-pull.nistp256 "${c}" "${s}" '.success == true and (.results[0].certificate | length) > 0 and .results[0].unregisterStatus.code == 0' "${out}"
+    # What was asked for: a certificate on the curve, not any certificate.
+    at gds-pull.nistp256-is-on-the-curve "${c}" "${s}"
+    if jq -r '.results[0].certificate // empty' <<<"${out}" | base64 -d 2>/dev/null \
+        | openssl x509 -inform DER -noout -text 2>/dev/null | grep -q 'prime256v1'; then
+        ok "${c}->${s}: the certificate issued for NistP256 is on that curve"
+    else
+        fail "${c}->${s}: the certificate issued for NistP256 is not on that curve: ${out:0:300}"
+    fi
+    # A record that exists is used. The certificate chains to the issuer it came with.
+    run_client "${c}" gds-pull --endpoint "${url}" "${sec[@]}" "${admin[@]}" --request-timeout 30 --app-uri "${uri}-twice" >/dev/null
+    out=$(run_client "${c}" gds-pull --endpoint "${url}" "${sec[@]}" "${admin[@]}" --request-timeout 30 --app-uri "${uri}-twice" --unregister)
+    check_known gds-pull.existing-record "${c}" "${s}" '.success == true and .results[0].registered == false and (.results[0].findApplications | length) == 1' "${out}"
+    at gds-pull.issued-certificate-verifies "${c}" "${s}"
+    jq -r '.results[0].issuerCertificates[0] // empty' <<<"${out}" | base64 -d > "${WORK}/gds-ca.der" 2>/dev/null
+    jq -r '.results[0].certificate // empty' <<<"${out}" | base64 -d > "${WORK}/gds-leaf.der" 2>/dev/null
+    openssl x509 -inform DER -in "${WORK}/gds-ca.der" -out "${WORK}/gds-ca.pem" 2>/dev/null
+    openssl x509 -inform DER -in "${WORK}/gds-leaf.der" -out "${WORK}/gds-leaf.pem" 2>/dev/null
+    if openssl verify -CAfile "${WORK}/gds-ca.pem" "${WORK}/gds-leaf.pem" >/dev/null 2>&1 \
+        && openssl x509 -in "${WORK}/gds-leaf.pem" -noout -ext subjectAltName 2>/dev/null | grep -q "${uri}-twice"; then
+        ok "${c}->${s}: the issued certificate chains to the issuer and names the application"
+    else
+        fail "${c}->${s}: the issued certificate does not verify: ${out:0:300}"
+    fi
+    if is_own "${c}" || is_own "${s}"; then
+        out=$(run_client "${c}" gds-pull --endpoint "${url}" "${sec[@]}" --app-uri "${uri}-anonymous"); rc=$?
+        check_exit gds-pull.anonymous-registration-is-denied "${c}" "${s}" 4 '.success == false and (.results[0].registerStatus.name | sub("_"; "")) == "BadUserAccessDenied"' "${out}" "${rc}"
+    fi
+    stop_server "${name}"
+}

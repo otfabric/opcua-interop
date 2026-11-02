@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/subtle"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,13 +17,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/otfabric/go-opcua/gds/gdsserver"
 	"github.com/otfabric/go-opcua/server"
 	"github.com/otfabric/go-opcua/ua"
-	"github.com/otfabric/go-opcua/uapolicy"
 )
 
-// serverFlags are the flags of §11 this adapter has. Any other, such as
-// --pubsub-config or --lds, is refused with exit 2.
+// serverFlags are the flags of §11 this adapter has. Any other, such as --lds, is
+// refused with exit 2.
 type serverFlags struct {
 	fixture, bindAddress, advertisedHost, endpointPath string
 	readyFile, pkiDir, certificate, privateKey, eccDir string
@@ -32,6 +31,7 @@ type serverFlags struct {
 	httpsPort, wssPort                                 int
 	reverseConnect                                     repeated
 	reverseIntervalMS                                  int64
+	pubsubConfig                                       string
 }
 
 func parseServerFlags(args []string) (*serverFlags, map[string]bool, error) {
@@ -52,6 +52,7 @@ func parseServerFlags(args []string) (*serverFlags, map[string]bool, error) {
 	fs.IntVar(&f.wssPort, "wss-port", 0, "also serve opc.wss on this port")
 	fs.Var(&f.reverseConnect, "reverse-connect", "dial this client and send ReverseHello, repeatable")
 	fs.Int64Var(&f.reverseIntervalMS, "reverse-connect-interval-ms", 1000, "retry interval of --reverse-connect")
+	fs.StringVar(&f.pubsubConfig, "pubsub-config", "", "PubSub configuration (§14.1)")
 	if err := fs.Parse(args); err != nil {
 		return nil, nil, err
 	}
@@ -115,6 +116,15 @@ func startServer(ctx context.Context, f *serverFlags, fx *fixture) (*server.Serv
 	if advertisedPort == 0 {
 		advertisedPort = bindPort
 	}
+	var pubsubConfig *pubsubFile
+	if f.pubsubConfig != "" {
+		var err error
+		if pubsubConfig, err = loadPubSubFile(f.pubsubConfig); err != nil {
+			fmt.Fprintln(os.Stderr, "--pubsub-config:", err)
+			return nil, nil, 1
+		}
+	}
+	var directory *gdsserver.GDS
 	opts := []server.Option{
 		server.ListenOn(fmt.Sprintf("%s:%d", f.bindAddress, bindPort)),
 		server.EndPoint(f.advertisedHost, advertisedPort),
@@ -130,6 +140,7 @@ func startServer(ctx context.Context, f *serverFlags, fx *fixture) (*server.Serv
 			}
 			return ua.StatusBadUserAccessDenied
 		}),
+		server.WithRoleMapper(roleMapper(fx, func() *gdsserver.GDS { return directory })),
 		server.ServerName(fx.Server.ApplicationName),
 		server.ProductName("go-opcua"),
 		server.ManufacturerName("OT Fabric"),
@@ -151,6 +162,9 @@ func startServer(ctx context.Context, f *serverFlags, fx *fixture) (*server.Serv
 		return nil, nil, exitInternal
 	}
 	opts = append(append(opts, transports...), reverseOptions(f)...)
+	if pubsubConfig != nil {
+		opts = append(opts, server.WithPubSub(nil, pubsubOptions()...))
+	}
 	s, err := server.New(opts...)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
@@ -165,9 +179,28 @@ func startServer(ctx context.Context, f *serverFlags, fx *fixture) (*server.Serv
 		fmt.Fprintln(os.Stderr, "fixture:", err)
 		return nil, nil, exitFixture
 	}
+	if fx.hasGDSRole() {
+		if directory, err = attachGDS(s); err != nil {
+			fmt.Fprintln(os.Stderr, "gds:", err)
+			return nil, nil, exitInternal
+		}
+	}
+	if pubsubConfig != nil {
+		if err := configurePubSub(s, a, pubsubConfig); err != nil {
+			fmt.Fprintln(os.Stderr, "--pubsub-config:", err)
+			return nil, nil, 1
+		}
+	}
 	if err := s.Start(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
 		return nil, nil, exitInternal
+	}
+	if pubsubConfig != nil {
+		if err := startSKSClient(ctx, s.PubSub(), f, pubsubConfig); err != nil {
+			_ = s.Close()
+			fmt.Fprintln(os.Stderr, "--pubsub-config:", err)
+			return nil, nil, 1
+		}
 	}
 	err = a.startBehaviors(ctx, fx)
 	if err == nil {
@@ -178,7 +211,12 @@ func startServer(ctx context.Context, f *serverFlags, fx *fixture) (*server.Serv
 		fmt.Fprintln(os.Stderr, "fixture:", err)
 		return nil, nil, exitFixture
 	}
-	return s, func() { _ = s.Close() }, exitOK
+	return s, func() {
+		if directory != nil {
+			directory.Close()
+		}
+		_ = s.Close()
+	}, exitOK
 }
 
 // eccCurves name the certificate directory of a policy (§1).
@@ -190,8 +228,7 @@ var eccCurves = map[string]string{
 
 // securityOptions gives the secure endpoints: the profiles of the fixture that this
 // adapter declares. An ECC profile needs the certificate of its curve in --ecc-dir
-// (§11). Trust is by <pki-dir>/trusted/certs. A user certificate must chain to the
-// same store.
+// (§11). Trust is by <pki-dir>/trusted/certs, managed by push (§15).
 func securityOptions(f *serverFlags, fx *fixture) ([]server.Option, error) {
 	cert, err := readDER(f.certificate)
 	if err != nil {
@@ -230,23 +267,14 @@ func securityOptions(f *serverFlags, fx *fixture) ([]server.Option, error) {
 		}
 		opts = append(opts, server.EnableSecurity(p.Policy, ua.MessageSecurityModeFromString(p.Mode)))
 	}
-	var trusted [][]byte
-	files, err := filepath.Glob(filepath.Join(f.pkiDir, "trusted", "certs", "*"))
+	trusted, err := trustedCertificates(f.pkiDir)
 	if err != nil {
 		return nil, err
 	}
-	for _, file := range files {
-		der, err := readDER(file)
-		if err != nil {
-			return nil, err
-		}
-		trusted = append(trusted, der)
-	}
-	validator, err := userCertificateValidator(trusted)
-	if err != nil {
-		return nil, err
-	}
-	return append(opts, server.WithClientCertificateTrustList(trusted...),
+	// The DefaultUserTokenGroup validates a user certificate before this is asked: this
+	// fixture has no certificate users, so any that passed is test-user.
+	validator := server.X509UserValidator(func([]byte) error { return nil })
+	return append(opts, server.WithPushManagement(pushManagement(trusted)),
 		server.EnableAuthMode(ua.UserTokenTypeCertificate), server.WithX509UserValidator(validator)), nil
 }
 
@@ -260,32 +288,6 @@ func eccIdentity(dir string) (server.Option, error) {
 		return nil, err
 	}
 	return server.ApplicationIdentity(cert, key), nil
-}
-
-// userCertificateValidator accepts a user certificate that chains to the trust
-// store (Part 4 §7.36.5). This fixture has no certificate users: any that chains is
-// test-user.
-func userCertificateValidator(trusted [][]byte) (server.X509UserValidator, error) {
-	pool := x509.NewCertPool()
-	var anchors []*x509.Certificate
-	for _, der := range trusted {
-		cert, err := uapolicy.ParseCertificate(der)
-		if err != nil {
-			return nil, err
-		}
-		pool.AddCert(cert)
-		anchors = append(anchors, cert)
-	}
-	return func(certDER []byte) error {
-		certs, err := uapolicy.ParseCertificates(certDER)
-		if err != nil {
-			return ua.StatusBadIdentityTokenInvalid
-		}
-		if err := uapolicy.VerifyCertificate(certs, pool, anchors); err != nil {
-			return ua.StatusBadIdentityTokenRejected
-		}
-		return nil
-	}, nil
 }
 
 // transportOptions are the opc.https and opc.wss listeners (§11). TLS uses the RSA

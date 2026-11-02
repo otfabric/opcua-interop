@@ -76,6 +76,8 @@ else
         if has_cap "${ADAPTER}" client reverse-listen; then run_reverse "${ADAPTER}" "${ADAPTER}"; fi
         if has_cap "${ADAPTER}" client transport-wss; then run_transports "${ADAPTER}" "${ADAPTER}"; fi
         if has_cap "${ADAPTER}" client codec; then run_codec_literals "${ADAPTER}"; fi
+        if has_cap "${ADAPTER}" client push; then run_push "${ADAPTER}" "${ADAPTER}"; fi
+        if has_cap "${ADAPTER}" client gds-pull; then run_gds_pull "${ADAPTER}" "${ADAPTER}"; fi
     fi
 fi
 

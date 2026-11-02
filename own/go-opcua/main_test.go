@@ -12,10 +12,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/otfabric/go-opcua/gds/gdsserver"
 	"github.com/otfabric/go-opcua/ua"
 )
 
@@ -199,6 +201,67 @@ func TestInputIsRefusedWithoutANetworkRequest(t *testing.T) {
 		}
 		if doc["error"].(map[string]any)["category"] != "input" {
 			t.Errorf("%v: %v", args, doc["error"])
+		}
+	}
+}
+
+func TestPushAndGDSInputIsRefused(t *testing.T) {
+	const nowhere = "opc.tcp://127.0.0.1:1"
+	for _, args := range [][]string{
+		{"push", "--endpoint", nowhere, "--group", "Nothing"},
+		{"push", "--endpoint", nowhere, "--certificate-type-id", "not a node"},
+		{"push", "--endpoint", nowhere, "--delete-certificate", "not a node"},
+		{"push", "--endpoint", nowhere, "--lifetime-days", "70000"},
+		{"push", "--endpoint", nowhere, "--key-size", "70000"},
+		{"push", "--endpoint", nowhere, "--add-certificate", "/does/not/exist"},
+		{"push", "--endpoint", nowhere, "--update-certificate", "/does/not/exist"},
+		{"push", "--endpoint", nowhere, "--apply", "--cancel"},
+		{"push", "--endpoint", nowhere, "--private-key-format", "PEM"},
+		{"gds-pull", "--endpoint", nowhere, "--app-type", "Toaster"},
+		{"gds-pull", "--endpoint", nowhere, "--request", "pretty-please"},
+		{"gds-pull", "--endpoint", nowhere, "--certificate-type", "Rot13"},
+		{"gds-pull", "--endpoint", nowhere, "--finish-timeout-ms", "0"},
+	} {
+		code, doc := client(t, args...)
+		if code != exitInput || doc["success"] != false {
+			t.Errorf("%v: exit %d, %v", args, code, doc)
+		}
+	}
+}
+
+func TestRoles(t *testing.T) {
+	fx := &fixture{}
+	if err := json.Unmarshal([]byte(`{"users":[{"username":"admin","roles":["AuthenticatedUser","SecurityAdmin","Unknown"]},{"username":"plain"}]}`), fx); err != nil {
+		t.Fatal(err)
+	}
+	if fx.hasGDSRole() {
+		t.Error("a SecurityAdmin does not make a GDS")
+	}
+	mapper := roleMapper(fx, func() *gdsserver.GDS { return nil })
+	has := func(token ua.IdentityToken, role ua.WellKnownRole) bool {
+		return slices.ContainsFunc(mapper(token), func(n *ua.NodeID) bool { return n.String() == role.NodeID().String() })
+	}
+	if !has(&ua.UserNameIdentityToken{UserName: "admin"}, ua.RoleSecurityAdmin) {
+		t.Error("admin has no SecurityAdmin")
+	}
+	if has(&ua.UserNameIdentityToken{UserName: "plain"}, ua.RoleSecurityAdmin) || !has(&ua.UserNameIdentityToken{UserName: "plain"}, ua.RoleAuthenticatedUser) {
+		t.Errorf("plain: %v", mapper(&ua.UserNameIdentityToken{UserName: "plain"}))
+	}
+	if has(&ua.AnonymousIdentityToken{}, ua.RoleSecurityAdmin) {
+		t.Error("anonymous has SecurityAdmin")
+	}
+	fx.Users[1].Roles = []string{"DiscoveryAdmin"}
+	if !fx.hasGDSRole() {
+		t.Error("a DiscoveryAdmin makes a GDS")
+	}
+}
+
+func TestGDSAppName(t *testing.T) {
+	for uri, want := range map[string]string{
+		"urn:opcua-interop:gds-pull:app": "app", "http://x/y": "y", "urn:": "opcua-interop gds-pull app",
+	} {
+		if got := (&gdsFlags{appURI: uri}).appName(); got != want {
+			t.Errorf("%s: %s", uri, got)
 		}
 	}
 }

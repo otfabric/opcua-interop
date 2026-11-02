@@ -49,26 +49,19 @@ func capabilities() map[string]any {
 		"clientOperations": []string{
 			"endpoints", "find-servers", "read", "write", "browse", "call", "subscribe", "register-nodes",
 			"event-subscribe", "alarms", "history-read", "history-read-events", "history-update-events", "codec",
+			"push", "gds-pull", "pubsub-discover",
 		},
 		"clientFeatures": []string{
 			"channel-lifetime", "deadband", "reverse-listen", "ecc-security", "ecc-user-token", "x509-user-token",
 			"transport-https", "transport-wss", "codec-json", "codec-json-verbose", "codec-xml",
+			"push-groups", "push-certificates", "push-transaction-diagnostics", "codec-pubsub",
 		},
 		"serverFeatures": []string{
 			"deadband", "percent-deadband", "reverse-connect", "ecc-security", "ecc-user-token", "x509-user-token",
 			"transport-https", "transport-wss", "alarms", "history-events", "history-events-update",
+			"push-management", "gds-pull", "pubsub",
 		},
-		"pubsub": map[string]any{
-			"supported":        false,
-			"reason":           "not in the subset of this adapter (own/go-opcua/README.md)",
-			"transports":       []string{},
-			"encodings":        []string{},
-			"roles":            []string{},
-			"securityPolicies": []string{},
-			"sks":              map[string]bool{"server": false, "pull": false, "push": false},
-			"informationModel": false,
-			"codecOps":         []string{},
-		},
+		"pubsub": pubsubCapabilities(),
 		"serverServices": []string{
 			"GetEndpoints", "FindServers", "CreateSession", "ActivateSession", "CloseSession",
 			"Browse", "BrowseNext", "RegisterNodes", "UnregisterNodes", "Read", "Write", "Call",
@@ -77,5 +70,38 @@ func capabilities() map[string]any {
 		},
 		"securityProfiles": securityProfiles,
 		"userTokenTypes":   []string{"Anonymous", "UserName", "X509"},
+	}
+}
+
+// pubsubCapabilities is §14.11: what scripts/pubsub-smoke.sh runs for this image.
+func pubsubCapabilities() map[string]any {
+	const profile = "http://opcfoundation.org/UA-Profile/Transport/pubsub-"
+	const policy = "http://opcfoundation.org/UA/SecurityPolicy#PubSub-"
+	return map[string]any{
+		"supported":           true,
+		"serverFlag":          "--pubsub-config",
+		"roles":               []string{"publisher", "subscriber"},
+		"transports":          []string{"udp-uadp", "mqtt-uadp", "mqtt-json"},
+		"transportProfiles":   []string{profile + "udp-uadp", profile + "mqtt-uadp", profile + "mqtt-json"},
+		"udp":                 map[string]bool{"unicast": true, "multicast": true},
+		"mqttVersions":        []string{"3.1.1", "5.0"},
+		"encodings":           []string{"uadp", "json"},
+		"fieldEncodings":      []string{"Variant", "DataValue", "RawData"},
+		"dataSetMessageTypes": map[string][]string{"uadp": {"KeyFrame", "DeltaFrame", "KeepAlive"}, "json": {"KeyFrame"}},
+		"publishedDataSets":   []string{"PublishedDataItems"},
+		"subscribedDataSets":  []string{"TargetVariables"},
+		"securityPolicies":    []string{policy + "Aes128-CTR", policy + "Aes256-CTR"},
+		"securityModes":       []string{"None", "Sign", "SignAndEncrypt"},
+		"securityEncodings":   []string{"uadp"},
+		"keySources":          []string{"static", "sks-pull", "sks-push", "sks-server"},
+		"sks": map[string]any{"server": true, "pull": true, "push": true,
+			"methods": []string{"GetSecurityKeys", "SetSecurityKeys", "AddSecurityGroup"}},
+		"chunking":                true,
+		"informationModel":        true,
+		"informationModelMethods": []string{"AddConnection", "RemoveConnection"},
+		"discovery": map[string]any{"layout": "dotnet", "respond": []string{"DataSetMetaData", "DataSetWriterConfiguration"},
+			"probe": []string{"DataSetMetaData", "DataSetWriterConfiguration"}, "clientOperation": "pubsub-discover"},
+		"codecOps":      pubsubCodecOps,
+		"codecSecurity": false,
 	}
 }

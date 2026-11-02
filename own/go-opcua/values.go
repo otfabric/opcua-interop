@@ -5,6 +5,7 @@ package main
 import (
 	"crypto"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -238,8 +239,40 @@ func parseLiteral(typ, lit string) (any, error) {
 			return nil, fmt.Errorf("not a LocalizedText: %q", lit)
 		}
 		return ua.NewLocalizedTextWithLocale(text, locale), nil
+	case "ExtensionObject":
+		return parseExtensionObject(lit)
 	}
 	return nil, fmt.Errorf("unknown type %q", typ)
+}
+
+// parseExtensionObject reads <encoding NodeId>|<Base64 binary body> of `call` (§1).
+func parseExtensionObject(lit string) (*ua.ExtensionObject, error) {
+	id, encoded, ok := strings.Cut(lit, "|")
+	if !ok {
+		return nil, fmt.Errorf("not <NodeId>|<Base64>: %q", lit)
+	}
+	node, err := parseNodeRef(id)
+	if err != nil {
+		return nil, err
+	}
+	body, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, err
+	}
+	head, err := ua.NewExpandedNodeID(node.id, "", 0).Encode()
+	if err != nil {
+		return nil, err
+	}
+	wire := append(head, ua.ExtensionObjectBinary)
+	wire = binary.LittleEndian.AppendUint32(wire, uint32(len(body)))
+	object := &ua.ExtensionObject{}
+	if _, err := object.Decode(append(wire, body...)); err != nil {
+		return nil, err
+	}
+	if object.Value == nil {
+		return nil, fmt.Errorf("%s: a type this image does not know", id)
+	}
+	return object, nil
 }
 
 // parseArray makes a typed slice, so that the Variant has the right type also

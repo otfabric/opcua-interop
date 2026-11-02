@@ -1724,7 +1724,7 @@ Added in adapter **0.8.0** for open62541 and in **0.10.0** for UA-.NETStandard
 implementation, §14.12; async-opcua, node-opcua and asyncua refuse it).
 Declared in `print-capabilities` → `pubsub` (§14.11), `serverFeatures`
 `pubsub`, `clientFeatures` `codec-pubsub`. Unless a section says otherwise,
-§14.1–§14.12 describe the open62541 adapter.
+§14.1–§14.12 describe the open62541 adapter. The own image: §14.14.
 
 The open62541 image is built with `UA_ENABLE_PUBSUB`,
 `UA_ENABLE_PUBSUB_INFORMATIONMODEL` (with the configuration methods),
@@ -2439,6 +2439,31 @@ dotnet image) runs the scenarios `codec`, `udp-unicast`, `udp-multicast`,
 example files of `fixtures/pubsub/`; the SKS and information-model scenarios
 do not apply.
 
+
+### 14.14 go-opcua (own image)
+
+The image of OT Fabric's own stack (`own/go-opcua/README.md`) has `--pubsub-config` as in
+§14.1, with these differences from open62541 (§14.3, §14.6, §14.10):
+
+- The PublishSubscribe information model exists only with `--pubsub-config`.
+- A connection has one address. The `Address` of a DatagramWriterGroupTransport2DataType
+  (§14.4) becomes the address of its connection; two destinations on a connection, or one
+  next to readers, exit 1.
+- `mqtt` is honoured, as in §14.13: `"5.0"` or `"3.1.1"`, the default; `"3.1"` exits 1.
+- `deltaFrames` false sets `KeyFrameCount` of every writer to 1; true keeps the
+  configured one.
+- A reader whose `DataSetMetaData.ConfigurationVersion` has a MajorVersion drops a
+  DataSetMessage with another one. open62541 generates its versions and ignores the
+  configured one (§14.10), so `scripts/pubsub-own.sh` runs an open62541 publisher with
+  the subscriber's `ConfigurationVersion` removed.
+- `GetSecurityKeys`, `AddSecurityGroup` and `RemoveSecurityGroup` need a SignAndEncrypt
+  session (`BadSecurityModeInsufficient`), and refuse an anonymous user
+  (`BadUserAccessDenied`). `SetSecurityKeys` needs the session and takes any user.
+- A component in Error is logged as `pubsub: <name> is in Error: <reason>`, and as
+  `pubsub: <name> re-enabled (Operational)` when go-opcua recovers it.
+- `pubsub-discover` as in §14.13. The publisher answers a probe in the layout it came in.
+- `OPCUA_INTEROP_PUBSUB_DEBUG=1` logs the state changes of the runtime.
+
 ## 15. Push certificate management (OPC UA Part 12 §7)
 
 Added in adapter **0.13.0**. The adapter servers that declare
@@ -2878,7 +2903,7 @@ recorded with `RecordEvent`), except where noted:
 | `insert` of a new EventId and of `hist-evt-0` | `GoodEntryInserted`, `BadEntryExists` |
 | `replace` of `hist-evt-0` and of an unknown EventId | `GoodEntryReplaced`, `BadNoEntryExists` |
 | `update` of an unknown EventId and of `hist-evt-0` | `GoodEntryInserted`, `GoodEntryReplaced` |
-| `delete` of `hist-evt-1` and of an unknown EventId | `Good`, `BadNoEntryExists` (go-opcua: `Good`, `BadNoData`, the node status Part 11 §6.9.7.2 gives when no event matches) |
+| `delete` of `hist-evt-1` and of an unknown EventId | `Good`, `BadNoEntryExists` |
 
 ### 17.2 UA-.NETStandard 2.0.1 (dotnet)
 

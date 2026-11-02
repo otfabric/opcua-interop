@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type codecFlags struct {
 	action, format, decodeShort, typ, value, dims, document, input, jsonMode string
 	status, sourceTS, serverTS                                               string
 	sourcePico, serverPico                                                   uint
+	metadata, metadataFile                                                   string
 	nodes                                                                    repeated
 }
 
@@ -41,6 +43,8 @@ func (f *codecFlags) define(fs *flag.FlagSet) {
 	fs.StringVar(&f.serverTS, "server-timestamp", "", "ServerTimestamp of the DataValue")
 	fs.UintVar(&f.sourcePico, "source-picoseconds", 0, "SourcePicoseconds of the DataValue")
 	fs.UintVar(&f.serverPico, "server-picoseconds", 0, "ServerPicoseconds of the DataValue")
+	fs.StringVar(&f.metadata, "metadata", "", "DataSetMetaDataType of pubsub-* (§14.9)")
+	fs.StringVar(&f.metadataFile, "metadata-file", "", "file with the DataSetMetaDataType of pubsub-*")
 	fs.Var(&f.nodes, "node", "NodeId, repeatable")
 }
 
@@ -59,7 +63,7 @@ func codecCommand(fs *flag.FlagSet, g *globals) command {
 			default:
 				return errors.New("--json-mode: " + f.jsonMode)
 			}
-			if len(f.nodes) > 0 {
+			if len(f.nodes) > 0 || slices.Contains(pubsubCodecOps, f.action) {
 				return nil
 			}
 			if f.format != "json" && f.format != "xml" {
@@ -71,6 +75,9 @@ func codecCommand(fs *flag.FlagSet, g *globals) command {
 			return nil
 		},
 		local: func() outcome {
+			if slices.Contains(pubsubCodecOps, f.action) {
+				return f.pubsubCodec()
+			}
 			if f.action == "decode" {
 				return f.decodeDocument()
 			}
@@ -84,7 +91,7 @@ func codecCommand(fs *flag.FlagSet, g *globals) command {
 		},
 	}
 	g.positional = func(word string) bool {
-		if word != "encode" && word != "decode" {
+		if word != "encode" && word != "decode" && !slices.Contains(pubsubCodecOps, word) {
 			return false
 		}
 		f.action = word
@@ -388,6 +395,8 @@ func decodeTarget(typ string) any {
 		return &ua.Variant{}
 	case "DataValue":
 		return &ua.DataValue{}
+	case "ExtensionObject":
+		return &ua.ExtensionObject{}
 	}
 	zero := map[string]any{
 		"Boolean": false, "SByte": int8(0), "Byte": uint8(0), "Int16": int16(0), "UInt16": uint16(0),
