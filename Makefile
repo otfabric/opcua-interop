@@ -58,36 +58,36 @@ image-open62541: ## Build open62541 image (host arch, loaded into Docker)
 	@echo "Building open62541 image (host arch)..."
 	docker build \
 		--tag $(IMAGE_OPEN62541):$(VERSION) \
-		--file open62541/Dockerfile \
-		open62541/
+		--file adapters/open62541/Dockerfile \
+		.
 
 image-milo: ## Build Milo image (host arch, loaded into Docker)
 	@echo "Building Milo image (host arch)..."
 	docker build \
 		--tag $(IMAGE_MILO):$(VERSION) \
-		--file milo/Dockerfile \
-		milo/
+		--file adapters/milo/Dockerfile \
+		.
 
 image-async-opcua: ## Build async-opcua (Rust) image (host arch, loaded into Docker)
 	@echo "Building async-opcua image (host arch)..."
 	docker build \
 		--tag $(IMAGE_ASYNC_OPCUA):$(VERSION) \
-		--file async-opcua/Dockerfile \
-		async-opcua/
+		--file adapters/async-opcua/Dockerfile \
+		.
 
 image-dotnet: ## Build UA-.NETStandard image (host arch, loaded into Docker)
 	@echo "Building UA-.NETStandard (dotnet) image (host arch)..."
 	docker build \
 		--tag $(IMAGE_DOTNET):$(VERSION) \
-		--file dotnet/Dockerfile \
-		dotnet/
+		--file adapters/dotnet/Dockerfile \
+		.
 
 image-node-opcua: ## Build node-opcua (TypeScript) image (host arch, loaded into Docker)
 	@echo "Building node-opcua image (host arch)..."
 	docker build \
 		--tag $(IMAGE_NODE_OPCUA):$(VERSION) \
-		--file node-opcua/Dockerfile \
-		node-opcua/
+		--file adapters/node-opcua/Dockerfile \
+		.
 
 # ── Multi-arch buildx (pushes to registry; requires --push or --output) ───────
 
@@ -99,8 +99,8 @@ buildx-open62541: ## Build and push open62541 image (multi-arch)
 		--platform $(PLATFORMS) \
 		--push \
 		--tag $(IMAGE_OPEN62541):$(VERSION) \
-		--file open62541/Dockerfile \
-		open62541/
+		--file adapters/open62541/Dockerfile \
+		.
 
 buildx-milo: ## Build and push Milo image (multi-arch)
 	@echo "Building Milo image (multi-arch, push)..."
@@ -108,8 +108,8 @@ buildx-milo: ## Build and push Milo image (multi-arch)
 		--platform $(PLATFORMS) \
 		--push \
 		--tag $(IMAGE_MILO):$(VERSION) \
-		--file milo/Dockerfile \
-		milo/
+		--file adapters/milo/Dockerfile \
+		.
 
 buildx-async-opcua: ## Build and push async-opcua image (multi-arch)
 	@echo "Building async-opcua image (multi-arch, push)..."
@@ -117,8 +117,8 @@ buildx-async-opcua: ## Build and push async-opcua image (multi-arch)
 		--platform $(PLATFORMS) \
 		--push \
 		--tag $(IMAGE_ASYNC_OPCUA):$(VERSION) \
-		--file async-opcua/Dockerfile \
-		async-opcua/
+		--file adapters/async-opcua/Dockerfile \
+		.
 
 buildx-dotnet: ## Build and push UA-.NETStandard image (multi-arch)
 	@echo "Building UA-.NETStandard (dotnet) image (multi-arch, push)..."
@@ -126,8 +126,8 @@ buildx-dotnet: ## Build and push UA-.NETStandard image (multi-arch)
 		--platform $(PLATFORMS) \
 		--push \
 		--tag $(IMAGE_DOTNET):$(VERSION) \
-		--file dotnet/Dockerfile \
-		dotnet/
+		--file adapters/dotnet/Dockerfile \
+		.
 
 buildx-node-opcua: ## Build and push node-opcua image (multi-arch)
 	@echo "Building node-opcua image (multi-arch, push)..."
@@ -135,8 +135,8 @@ buildx-node-opcua: ## Build and push node-opcua image (multi-arch)
 		--platform $(PLATFORMS) \
 		--push \
 		--tag $(IMAGE_NODE_OPCUA):$(VERSION) \
-		--file node-opcua/Dockerfile \
-		node-opcua/
+		--file adapters/node-opcua/Dockerfile \
+		.
 
 # ── Validation ───────────────────────────────────────────────────────────────
 
@@ -353,8 +353,8 @@ image-asyncua: ## Build opcua-asyncio (asyncua) image (host arch, loaded into Do
 	@echo "Building asyncua image (host arch)..."
 	docker build \
 		--tag $(IMAGE_ASYNCUA):$(VERSION) \
-		--file asyncua/Dockerfile \
-		asyncua/
+		--file adapters/asyncua/Dockerfile \
+		.
 
 buildx-asyncua: ## Build and push asyncua image (multi-arch)
 	@echo "Building asyncua image (multi-arch, push)..."
@@ -362,8 +362,8 @@ buildx-asyncua: ## Build and push asyncua image (multi-arch)
 		--platform $(PLATFORMS) \
 		--push \
 		--tag $(IMAGE_ASYNCUA):$(VERSION) \
-		--file asyncua/Dockerfile \
-		asyncua/
+		--file adapters/asyncua/Dockerfile \
+		.
 
 test-asyncua: image-asyncua ## Build asyncua image and run its `test` command on the fixtures
 	@echo "Running asyncua unit tests..."
@@ -423,8 +423,8 @@ image-dotnet-gds: ## Build UA-.NETStandard GDS (dotnet-gds) image (host arch, lo
 	@echo "Building UA-.NETStandard GDS (dotnet-gds) image (host arch)..."
 	docker build \
 		--tag $(IMAGE_DOTNET_GDS):$(VERSION) \
-		--file dotnet-gds/Dockerfile \
-		dotnet-gds/
+		--file adapters/dotnet-gds/Dockerfile \
+		.
 
 buildx-dotnet-gds: ## Build and push dotnet-gds image (multi-arch)
 	@echo "Building UA-.NETStandard GDS (dotnet-gds) image (multi-arch, push)..."
@@ -432,8 +432,8 @@ buildx-dotnet-gds: ## Build and push dotnet-gds image (multi-arch)
 		--platform $(PLATFORMS) \
 		--push \
 		--tag $(IMAGE_DOTNET_GDS):$(VERSION) \
-		--file dotnet-gds/Dockerfile \
-		dotnet-gds/
+		--file adapters/dotnet-gds/Dockerfile \
+		.
 
 test-dotnet-gds: image-dotnet-gds ## Build dotnet-gds image and run its `test` command
 	@echo "Running dotnet-gds self-test..."
@@ -467,7 +467,7 @@ run-dotnet-gds: ## Start the dotnet-gds Global Discovery Server on port $(DOTNET
 
 clean-dotnet-gds:
 	docker rmi $(IMAGE_DOTNET_GDS):$(VERSION) 2>/dev/null || true
-	rm -rf dotnet-gds/src/bin/ dotnet-gds/src/obj/
+	rm -rf adapters/dotnet-gds/src/bin/ adapters/dotnet-gds/src/obj/
 
 # ── Upstream candidates ──────────────────────────────────────────────────────
 #
@@ -548,7 +548,7 @@ publish: ## Manual fallback: build and push multi-arch images under emulation as
 		docker buildx build --platform $(PLATFORMS) --push \
 			--tag $$img:$(VERSION) --tag $$img:$$minor --tag $$img:$$major \
 			--label org.opencontainers.image.version=$(VERSION) \
-			--file $$a/Dockerfile $$a/ || exit 1; \
+			--file adapters/$$a/Dockerfile . || exit 1; \
 	done
 	@echo "Published $(VERSION); create the GitHub release with: make release-notes VERSION=$(VERSION)"
 
@@ -562,4 +562,4 @@ clean: ## Remove containers and local build artifacts
 	docker rmi $(IMAGE_ASYNC_OPCUA):$(VERSION) 2>/dev/null || true
 	docker rmi $(IMAGE_DOTNET):$(VERSION) 2>/dev/null || true
 	docker rmi $(IMAGE_NODE_OPCUA):$(VERSION) 2>/dev/null || true
-	rm -rf open62541/build/ milo/target/ async-opcua/target/ dotnet/src/bin/ dotnet/src/obj/ node-opcua/dist/ node-opcua/node_modules/
+	rm -rf adapters/open62541/build/ adapters/milo/target/ adapters/async-opcua/target/ adapters/dotnet/src/bin/ adapters/dotnet/src/obj/ adapters/node-opcua/dist/ adapters/node-opcua/node_modules/

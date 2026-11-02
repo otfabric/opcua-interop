@@ -21,7 +21,7 @@ implementations:
     roles: [server, client, pubsub]
     published: true
     pinned_in:
-      - open62541/Dockerfile
+      - adapters/open62541/Dockerfile
   milo:
     upstream: "Eclipse Milo"
     repository: "https://github.com/eclipse-milo/milo"
@@ -30,7 +30,7 @@ implementations:
     roles: [server, client]
     published: true
     pinned_in:
-      - milo/pom.xml
+      - adapters/milo/pom.xml
   async-opcua:
     upstream: "async-opcua"
     repository: "https://github.com/FreeOpcUa/async-opcua"
@@ -39,7 +39,7 @@ implementations:
     roles: [server, client]
     published: true
     pinned_in:
-      - async-opcua/Cargo.toml
+      - adapters/async-opcua/Cargo.toml
   dotnet:
     upstream: "OPC Foundation UA-.NETStandard"
     repository: "https://github.com/OPCFoundation/UA-.NETStandard"
@@ -48,7 +48,7 @@ implementations:
     roles: [server, client, pubsub]
     published: true
     pinned_in:
-      - dotnet/Dockerfile
+      - adapters/dotnet/Dockerfile
   dotnet-gds:
     upstream: "OPC Foundation UA-.NETStandard GDS"
     repository: "https://github.com/OPCFoundation/UA-.NETStandard"
@@ -57,7 +57,7 @@ implementations:
     roles: [gds-server, gds-client]
     published: true
     pinned_in:
-      - dotnet-gds/Dockerfile
+      - adapters/dotnet-gds/Dockerfile
   node-opcua:
     upstream: "node-opcua"
     repository: "https://github.com/node-opcua/node-opcua"
@@ -66,7 +66,7 @@ implementations:
     roles: [server, client]
     published: true
     pinned_in:
-      - node-opcua/package.json
+      - adapters/node-opcua/package.json
   asyncua:
     upstream: "opcua-asyncio (PyPI asyncua)"
     repository: "https://github.com/FreeOpcUa/opcua-asyncio"
@@ -75,7 +75,7 @@ implementations:
     roles: [server, client]
     published: true
     pinned_in:
-      - asyncua/requirements.in
+      - adapters/asyncua/requirements.in
 
 base_images:
   debian: "docker.io/library/debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"

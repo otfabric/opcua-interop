@@ -1795,7 +1795,7 @@ alarm fixture only because the image enables
 `UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS` (experimental in 1.5.9, full
 namespace zero); the adapter patches v1.5.9's `checkConditionRefreshArguments`
 to accept the UInt32 SubscriptionId the Call service converts to IntegerId
-(`open62541/amalgam/fix_condition_refresh_args.py`; unpatched ConditionRefresh
+(`adapters/open62541/amalgam/fix_condition_refresh_args.py`; unpatched ConditionRefresh
 returns `BadInvalidArgument`). Eclipse Milo 1.1.8 has no condition state
 machine (the Acknowledge / Confirm / AddComment / Enable / Disable methods of
 `opc-ua-sdk/sdk-server/.../model/objects/AcknowledgeableConditionType` /
@@ -1835,7 +1835,7 @@ adapter has no `codec` operation (exit 2, not listed in `clientOperations`). Tru
 trusts the certificates in `<pki-dir>/trusted/certs` (a client certificate
 that is only signed by a listed CA is rejected); the client validates the
 server certificate against `--trust-list` itself (exact match or issued by a
-listed certificate). See `async-opcua/README.md` for the stack deviations the
+listed certificate). See `adapters/async-opcua/README.md` for the stack deviations the
 go-opcua suite found.
 
 OPC Foundation UA-.NETStandard 2.0.1 (adapter name `dotnet`, added in adapter
@@ -1866,7 +1866,7 @@ address space) that the adapter does not run, so `--lds`, `--mdns-name` and
 has an OPC UA 1.05 JSON encoder (`node-opcua-json`) but no Part 6 XML
 encoding of Variants, and the JSON half is not wired into the adapter. Trust is by the
 CA of `<pki-dir>/trusted/certs` with its CRL, as for open62541 and Milo. See
-`node-opcua/README.md` for the stack deviations the go-opcua suite found.
+`adapters/node-opcua/README.md` for the stack deviations the go-opcua suite found.
 
 opcua-asyncio (PyPI `asyncua` 2.1.0, adapter name `asyncua`, added in adapter
 0.9.0) declares `channel-lifetime`, `deadband`, `application-uri`,
@@ -1884,7 +1884,7 @@ accepts a percent deadband (also without EURange) without applying it. Trust:
 `<pki-dir>/trusted/certs` are the anchors, `issuers/certs` only completes a
 chain, CRLs of `trusted/crl` and `issuers/crl` are honoured; the client checks
 the server certificate against `--trust-list` with the stack's
-`CertificateValidator`. See `asyncua/README.md` for the stack deviations the
+`CertificateValidator`. See `adapters/asyncua/README.md` for the stack deviations the
 go-opcua suite found.
 
 ---
@@ -1903,7 +1903,7 @@ The open62541 image is built with `UA_ENABLE_PUBSUB`,
 `UA_ENABLE_PUBSUB_SKS`, `UA_ENABLE_PUBSUB_FILE_CONFIG`, `UA_ENABLE_MQTT` and
 the JSON encoding, still as the single-file amalgamation. Three adapter-side
 additions make that work and are the only places where the adapter goes beyond
-stock v1.5.9 (all in `open62541/`):
+stock v1.5.9 (all in `adapters/open62541/`):
 
 | What | Why |
 |------|-----|
@@ -2676,7 +2676,7 @@ TransactionDiagnostics themselves where the stack has no codec for them.
 ## 16. GDS pull model (OPC UA Part 12 §6, §7.9)
 
 Added in adapter **0.14.0** as a separate adapter, `dotnet-gds` (image
-`ghcr.io/otfabric/opcua-interop-dotnet-gds`, project `dotnet-gds/`): a Global
+`ghcr.io/otfabric/opcua-interop-dotnet-gds`, project `adapters/dotnet-gds/`): a Global
 Discovery Server and a GDS pull-model client on OPC Foundation
 UA-.NETStandard. Since adapter **0.15.0** it runs on UA-.NETStandard
 **2.0.1** (every `OPCFoundation.NetStandard.Opc.Ua.*` package pinned to
@@ -2992,7 +2992,7 @@ exit 3, bad input exit 2 (§5).
   | UA-.NETStandard (dotnet, dotnet-gds), Eclipse Milo 1.1.8, go-opcua | connects | connects | parse the leaf and keep the rest as intermediates |
   | asyncua (opcua-asyncio 2.1.0) | connects since adapter 0.16.0 | connects | the stack takes chains (`asyncua/client/client.py:56` `_first_cert_from_chain`, used at `:292` and `:790`; `crypto/uacrypto.py:60` `x509_from_der`), but adapter 0.15.0 passed the endpoint's ServerCertificate to `Client.set_security(server_certificate=…)`, which loads it as one certificate (`crypto/uacrypto.py:57`, cryptography `ParseError { kind: ExtraData }`). Adapter 0.16.0 passes the leaf. |
   | open62541 v1.5.9 | `BadCertificateInvalid` after CreateSession | connects | the channel keeps the leaf of the endpoint's certificate (`src/client/ua_client_connect.c:1899-1902`, `getLeafCertificate`), then CreateSession compares the response's ServerCertificate with it byte for byte (`ua_client_connect.c:1694`): chain ≠ leaf. A stack limitation; no client option skips the comparison. |
-  | async-opcua 0.19.0 | `BadCertificateInvalid` (X509Error) | `BadCertificateInvalid` (X509Error) | `X509::from_der` parses exactly one certificate and rejects trailing data (`async-opcua-crypto/src/x509.rs:423-427`); it parses the endpoint's ServerCertificate (`async-opcua-client/src/transport/channel.rs:342`), the OpenSecureChannel SenderCertificate (`async-opcua-core/src/comms/secure_channel.rs:794`, 1848 bytes also with `--no-certificate-chain`) and the CreateSession ServerCertificate, which must also equal the endpoint's byte for byte (`async-opcua-client/src/session/services/session.rs:208-213`). A stack limitation with no hook; it fails against every UA-.NETStandard 2.0.1 server whose certificate has an issuer in its stores (async-opcua/README.md, deviation 10). |
+  | async-opcua 0.19.0 | `BadCertificateInvalid` (X509Error) | `BadCertificateInvalid` (X509Error) | `X509::from_der` parses exactly one certificate and rejects trailing data (`async-opcua-crypto/src/x509.rs:423-427`); it parses the endpoint's ServerCertificate (`async-opcua-client/src/transport/channel.rs:342`), the OpenSecureChannel SenderCertificate (`async-opcua-core/src/comms/secure_channel.rs:794`, 1848 bytes also with `--no-certificate-chain`) and the CreateSession ServerCertificate, which must also equal the endpoint's byte for byte (`async-opcua-client/src/session/services/session.rs:208-213`). A stack limitation with no hook; it fails against every UA-.NETStandard 2.0.1 server whose certificate has an issuer in its stores (adapters/async-opcua/README.md, deviation 10). |
 
   The default stays the chain. `scripts/smoke.sh dotnet-gds` runs `gds-pull`
   against both kinds of server; `scripts/smoke.sh cross-dotnet` reads with the

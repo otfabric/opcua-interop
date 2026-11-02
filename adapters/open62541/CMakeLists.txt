@@ -98,5 +98,5 @@ if(BUILD_TESTS)
     target_compile_options(fixture_test PRIVATE ${CJSON_CFLAGS_OTHER})
     enable_testing()
     add_test(NAME fixture_test COMMAND fixture_test
-        "${CMAKE_SOURCE_DIR}/../fixtures/baseline/fixture.json")
+        "${CMAKE_SOURCE_DIR}/../../fixtures/baseline/fixture.json")
 endif()

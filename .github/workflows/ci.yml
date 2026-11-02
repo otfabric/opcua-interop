@@ -65,8 +65,8 @@ jobs:
       # (its date may still say "unreleased"; the Release workflow requires one).
       - name: Release notes for the adapter version
         run: |
-          version=$(sed -nE 's/.*"adapter\\": \{\\"name\\": \\"open62541\\", \\"version\\": \\"([0-9.]+)\\".*/\1/p' open62541/src/main.c | head -1)
-          [ -n "${version}" ] || { echo "::error::cannot read adapter.version from open62541/src/main.c"; exit 1; }
+          version=$(sed -nE 's/.*"adapter\\": \{\\"name\\": \\"open62541\\", \\"version\\": \\"([0-9.]+)\\".*/\1/p' adapters/open62541/src/main.c | head -1)
+          [ -n "${version}" ] || { echo "::error::cannot read adapter.version from adapters/open62541/src/main.c"; exit 1; }
           scripts/release-notes.sh "v${version}" > /dev/null \
             || { echo "::error::RELEASE.md has no section \"## v${version}\""; exit 1; }
           echo "RELEASE.md has notes for v${version}"
@@ -89,8 +89,8 @@ jobs:
       - name: Build ${{ matrix.adapter }} (linux/amd64)
         uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.adapter }}
-          file: ${{ matrix.adapter }}/Dockerfile
+          context: .
+          file: adapters/${{ matrix.adapter }}/Dockerfile
           platforms: linux/amd64
           push: false
           load: true
@@ -277,8 +277,8 @@ jobs:
       - name: Build ${{ matrix.adapter }} (linux/arm64)
         uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.adapter }}
-          file: ${{ matrix.adapter }}/Dockerfile
+          context: .
+          file: adapters/${{ matrix.adapter }}/Dockerfile
           platforms: linux/arm64
           push: false
           cache-from: type=gha,scope=${{ matrix.adapter }}-arm64

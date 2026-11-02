@@ -1,12 +1,16 @@
 # open62541 C adapter — multi-stage build.
-# Build from the open62541/ directory:
-#   docker build -f open62541/Dockerfile -t opcua-interop-open62541:local open62541/
+# Build from the repository root:
+#   docker build -f adapters/open62541/Dockerfile -t opcua-interop-open62541:local .
 
 # ---------------------------------------------------------------------------
 # Stage 1 — build open62541 amalgam from source
 # ---------------------------------------------------------------------------
+# Where the base images come from. They are pinned by digest, so a mirror of
+# Docker Hub serves exactly the same images; CI uses one to stay clear of
+# Docker Hub's pull rate limit (see the Makefile).
+ARG BASE_REGISTRY=docker.io/library
 ARG DEBIAN_DIGEST=sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
-FROM debian:bookworm-slim@${DEBIAN_DIGEST} AS open62541-build
+FROM ${BASE_REGISTRY}/debian:bookworm-slim@${DEBIAN_DIGEST} AS open62541-build
 
 ARG OPEN62541_COMMIT=v1.5.9
 ARG OPEN62541_REPO=https://github.com/open62541/open62541
@@ -44,9 +48,9 @@ RUN git clone --depth 1 --branch "${OPEN62541_COMMIT}" "${OPEN62541_REPO}" open6
 #  * fix_condition_refresh_args.py — with PubSub's generated IntegerId type
 #    the v1.5.9 A&C ConditionRefresh(2) callbacks reject every SubscriptionId
 #    (Bad_InvalidArgument); accept IntegerId (an alias of UInt32) as well.
-COPY amalgam/inline_mqtt.py amalgam/backport_json_reader.py \
-     amalgam/backport_mqtt_teardown.py amalgam/fix_condition_refresh_args.py \
-     amalgam/fix_gds_amalgamation.py /src/prepare/
+COPY adapters/open62541/amalgam/inline_mqtt.py adapters/open62541/amalgam/backport_json_reader.py \
+     adapters/open62541/amalgam/backport_mqtt_teardown.py adapters/open62541/amalgam/fix_condition_refresh_args.py \
+     adapters/open62541/amalgam/fix_gds_amalgamation.py /src/prepare/
 RUN python3 /src/prepare/inline_mqtt.py /src/open62541 \
     && python3 /src/prepare/backport_json_reader.py /src/open62541 \
     && python3 /src/prepare/backport_mqtt_teardown.py /src/open62541 \
@@ -95,7 +99,7 @@ RUN cmake .. \
 # ---------------------------------------------------------------------------
 # Stage 2 — compile the adapter
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim@${DEBIAN_DIGEST} AS adapter-build
+FROM ${BASE_REGISTRY}/debian:bookworm-slim@${DEBIAN_DIGEST} AS adapter-build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
@@ -111,7 +115,7 @@ COPY --from=open62541-build /src/open62541/build/open62541.c /opt/open62541/src/
 
 # Compile the amalgamation once into a static library. This layer is cached
 # until the open62541 pin / build options (or amalgam/CMakeLists.txt) change.
-COPY amalgam/ /src/amalgam/
+COPY adapters/open62541/amalgam/ /src/amalgam/
 WORKDIR /src/amalgam/build
 RUN cmake .. \
       -DCMAKE_BUILD_TYPE=Release \
@@ -121,7 +125,7 @@ RUN cmake .. \
     && cmake --install . --prefix /opt/open62541
 
 # Copy adapter source
-COPY . /src/adapter
+COPY adapters/open62541/ /src/adapter/
 
 WORKDIR /src/adapter/build
 RUN cmake .. \
@@ -134,7 +138,7 @@ RUN cmake .. \
 # ---------------------------------------------------------------------------
 # Stage 3 — minimal runtime image
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim@${DEBIAN_DIGEST} AS runtime
+FROM ${BASE_REGISTRY}/debian:bookworm-slim@${DEBIAN_DIGEST} AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bash \

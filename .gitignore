@@ -1,9 +1,9 @@
 # Build artifacts
-open62541/build/
-milo/target/
-async-opcua/target/
-dotnet/src/bin/
-dotnet/src/obj/
+adapters/open62541/build/
+adapters/milo/target/
+adapters/async-opcua/target/
+adapters/dotnet/src/bin/
+adapters/dotnet/src/obj/
 
 # Generated test PKI (regenerate with make certs)
 certs/test-pki/
@@ -24,7 +24,7 @@ scripts/__pycache__/
 __pycache__/
 *.pyc
 .mypy_cache/
-milo/org/
+adapters/milo/org/
 
 # Claude Code worktrees and session files
 .claude/

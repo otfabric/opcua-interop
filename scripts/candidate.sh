@@ -51,7 +51,7 @@ edit() {
 
 build() {
     log "Building ${IMAGE}..."
-    docker build --tag "${IMAGE}" --file "${ADAPTER}/Dockerfile" "$@" "${ADAPTER}/"
+    docker build --tag "${IMAGE}" --file "adapters/${ADAPTER}/Dockerfile" "$@" .
 }
 
 self_test() {
@@ -71,12 +71,12 @@ case "${ADAPTER}" in
         ;;
     async-opcua)
         # The pin is exact (=X.Y.Z) and the build is --locked.
-        edit async-opcua/Cargo.toml async-opcua/Cargo.lock async-opcua/src/common.rs
-        sed -i.orig -E "s/^async-opcua = \{ version = \"=[0-9.]+\"/async-opcua = { version = \"=${VERSION}\"/" async-opcua/Cargo.toml
-        sed -i.orig -E "s/^pub const STACK_VERSION: &str = \"[0-9.]+\";/pub const STACK_VERSION: \&str = \"${VERSION}\";/" async-opcua/src/common.rs
-        rm -f async-opcua/Cargo.toml.orig async-opcua/src/common.rs.orig
-        cargo update --manifest-path async-opcua/Cargo.toml -p async-opcua
-        git diff --stat -- async-opcua
+        edit adapters/async-opcua/Cargo.toml adapters/async-opcua/Cargo.lock adapters/async-opcua/src/common.rs
+        sed -i.orig -E "s/^async-opcua = \{ version = \"=[0-9.]+\"/async-opcua = { version = \"=${VERSION}\"/" adapters/async-opcua/Cargo.toml
+        sed -i.orig -E "s/^pub const STACK_VERSION: &str = \"[0-9.]+\";/pub const STACK_VERSION: \&str = \"${VERSION}\";/" adapters/async-opcua/src/common.rs
+        rm -f adapters/async-opcua/Cargo.toml.orig adapters/async-opcua/src/common.rs.orig
+        cargo update --manifest-path adapters/async-opcua/Cargo.toml -p async-opcua
+        git diff --stat -- adapters/async-opcua
         build
         scripts/smoke.sh async-opcua "${IMAGE}"
         ;;
@@ -91,27 +91,27 @@ case "${ADAPTER}" in
         # (node-opcua-types) or else to the same release
         # (node-opcua-server-configuration). A package left behind puts a
         # second node-opcua-server in the tree and the build fails.
-        edit node-opcua/package.json node-opcua/package-lock.json
+        edit adapters/node-opcua/package.json adapters/node-opcua/package-lock.json
         packages=("node-opcua@${VERSION}")
-        for pkg in $(jq -r '.dependencies | keys[] | select(startswith("node-opcua-"))' node-opcua/package.json); do
+        for pkg in $(jq -r '.dependencies | keys[] | select(startswith("node-opcua-"))' adapters/node-opcua/package.json); do
             version=$(npm view "node-opcua@${VERSION}" "dependencies.${pkg}")
             packages+=("${pkg}@${version:-${VERSION}}")
         done
-        log "Pointing node-opcua/package.json at: ${packages[*]}"
-        (cd node-opcua && npm install --package-lock-only --save-exact --no-audit --no-fund "${packages[@]}")
-        git diff --stat -- node-opcua
+        log "Pointing adapters/node-opcua/package.json at: ${packages[*]}"
+        (cd adapters/node-opcua && npm install --package-lock-only --save-exact --no-audit --no-fund "${packages[@]}")
+        git diff --stat -- adapters/node-opcua
         build
         scripts/smoke.sh node-opcua "${IMAGE}"
         ;;
     asyncua)
         # The pin is exact (asyncua==X.Y.Z) and the lock carries hashes. The
         # image build runs the unit tests.
-        edit asyncua/requirements.in asyncua/requirements.txt
-        sed -i.orig -E "s/^asyncua==[0-9.]+$/asyncua==${VERSION}/" asyncua/requirements.in
-        rm -f asyncua/requirements.in.orig
+        edit adapters/asyncua/requirements.in adapters/asyncua/requirements.txt
+        sed -i.orig -E "s/^asyncua==[0-9.]+$/asyncua==${VERSION}/" adapters/asyncua/requirements.in
+        rm -f adapters/asyncua/requirements.in.orig
         command -v uv >/dev/null 2>&1 || pip install --quiet uv
-        (cd asyncua && uv pip compile requirements.in --universal --python-version 3.14 --generate-hashes -o requirements.txt)
-        git diff --stat -- asyncua
+        (cd adapters/asyncua && uv pip compile requirements.in --universal --python-version 3.14 --generate-hashes -o requirements.txt)
+        git diff --stat -- adapters/asyncua
         build
         self_test
         scripts/smoke.sh asyncua "${IMAGE}"

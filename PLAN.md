@@ -28,10 +28,10 @@ Deliverables:
 ## Phase 2 — open62541 adapter foundation ✓
 
 Deliverables:
-- `open62541/Dockerfile` (multi-stage, pinned release)
-- `open62541/CMakeLists.txt`
+- `adapters/open62541/Dockerfile` (multi-stage, pinned release)
+- `adapters/open62541/CMakeLists.txt`
 - `open62541/src/` — fixture parser, server, client, readiness, signal handling, output
-- `open62541/tests/` — fixture parser unit tests
+- `adapters/open62541/tests/` — fixture parser unit tests
 
 Client commands at foundation: endpoints, read, write, browse, call, subscribe
 (later extended — see Phase 14 / v0.4.0).
@@ -41,10 +41,10 @@ Client commands at foundation: endpoints, read, write, browse, call, subscribe
 ## Phase 3 — Eclipse Milo adapter foundation ✓
 
 Deliverables:
-- `milo/Dockerfile` (multi-stage, JDK 25 + Maven 3.9)
-- `milo/pom.xml`
-- `milo/src/main/java/` — fixture loader, namespace, server, client, shutdown, readiness
-- `milo/src/test/java/` — fixture loading unit tests (8 tests, all pass)
+- `adapters/milo/Dockerfile` (multi-stage, JDK 25 + Maven 3.9)
+- `adapters/milo/pom.xml`
+- `adapters/milo/src/main/java/` — fixture loader, namespace, server, client, shutdown, readiness
+- `adapters/milo/src/test/java/` — fixture loading unit tests (8 tests, all pass)
 
 Client commands at foundation: endpoints, read, write, browse, call, subscribe
 (later extended — see Phase 14 / v0.4.0).

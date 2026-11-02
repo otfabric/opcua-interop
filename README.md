@@ -153,13 +153,13 @@ opcua-interop/
 ├── certs/              # Test PKI generation script and generated tree
 │   ├── generate.sh     # Generates test-pki/ from scratch (requires openssl >= 1.1)
 │   └── test-pki/       # Generated certificates (git-ignored; `make certs`)
-├── open62541/          # C adapter (Dockerfile, CMakeLists, source)
-├── milo/               # Java adapter (Dockerfile, pom.xml, source)
-├── async-opcua/        # Rust adapter (Dockerfile, Cargo.toml, source)
-├── dotnet/             # C# adapter on UA-.NETStandard (Dockerfile, csproj, source)
-├── node-opcua/         # TypeScript adapter (Dockerfile, package.json, source)
-├── asyncua/            # Python adapter on opcua-asyncio (Dockerfile, hashed requirements, source)
-├── dotnet-gds/         # C# GDS adapter on UA-.NETStandard 2.0.1 (Global Discovery Server, client gds-pull)
+├── adapters/open62541/          # C adapter (Dockerfile, CMakeLists, source)
+├── adapters/milo/               # Java adapter (Dockerfile, pom.xml, source)
+├── adapters/async-opcua/        # Rust adapter (Dockerfile, Cargo.toml, source)
+├── adapters/dotnet/             # C# adapter on UA-.NETStandard (Dockerfile, csproj, source)
+├── adapters/node-opcua/         # TypeScript adapter (Dockerfile, package.json, source)
+├── adapters/asyncua/            # Python adapter on opcua-asyncio (Dockerfile, hashed requirements, source)
+├── adapters/dotnet-gds/         # C# GDS adapter on UA-.NETStandard 2.0.1 (Global Discovery Server, client gds-pull)
 ├── schemas/            # JSON Schemas for client results and print-capabilities
 ├── docs/               # Client command contract (CLIENT_CONTRACT.md)
 ├── pubsub/examples/    # PubSub configurations (--pubsub-config) used by the PubSub smoke
@@ -334,7 +334,7 @@ against `--trust-list` (`print-capabilities` → `clientFeatures`: `transport-ws
 `transport-https`).
 
 The asyncua (opcua-asyncio) client speaks the RSA policies only and has no `codec`
-(no `--reverse-listen`, no ECC; see [`asyncua/README.md`](asyncua/README.md)). Since v0.15.0
+(no `--reverse-listen`, no ECC; see [`adapters/asyncua/README.md`](adapters/asyncua/README.md)). Since v0.15.0
 it has `push` (all the flags above) and `gds-pull` (§16.2), built on plain Calls.
 
 Every client command also accepts `--channel-lifetime-ms <n>` to request a short
@@ -646,10 +646,10 @@ it: see [own/go-opcua/README.md](own/go-opcua/README.md).
 |---|---|---|---|
 | open62541 | C | open62541 v1.5.9 (OpenSSL crypto backend, mDNS via mdnsd, PubSub with MQTT and SKS) | Native/embedded diversity, OPC UA Binary, certified example-server history |
 | Eclipse Milo | Java | Eclipse Milo v1.1.8 (+ `milo-encoding-json`, `milo-encoding-xml`) | JVM/enterprise diversity, independent serialization and security code paths |
-| async-opcua | Rust | async-opcua 0.19.0 (crates.io, RustCrypto) | Memory-safe Rust stack, independent encoder/decoder and crypto (no OpenSSL); see [`async-opcua/README.md`](async-opcua/README.md) |
+| async-opcua | Rust | async-opcua 0.19.0 (crates.io, RustCrypto) | Memory-safe Rust stack, independent encoder/decoder and crypto (no OpenSSL); see [`adapters/async-opcua/README.md`](adapters/async-opcua/README.md) |
 | UA-.NETStandard (`dotnet`) | C# | OPC Foundation UA-.NETStandard 2.0.1 (NuGet `OPCFoundation.NetStandard.Opc.Ua.*`) on .NET 10 | The OPC Foundation reference implementation, the stack most commercial servers and clients build on |
-| node-opcua | TypeScript | node-opcua 2.187.12 (npm, Node.js 24 / OpenSSL) | JavaScript ecosystem stack, independent encoder/decoder and session/subscription engine; see [`node-opcua/README.md`](node-opcua/README.md) |
-| opcua-asyncio (`asyncua`) | Python | opcua-asyncio 2.1.0 (PyPI `asyncua`, `cryptography`) on CPython 3.14 | The most used Python stack, independent encoder/decoder and security code; see [`asyncua/README.md`](asyncua/README.md) |
+| node-opcua | TypeScript | node-opcua 2.187.12 (npm, Node.js 24 / OpenSSL) | JavaScript ecosystem stack, independent encoder/decoder and session/subscription engine; see [`adapters/node-opcua/README.md`](adapters/node-opcua/README.md) |
+| opcua-asyncio (`asyncua`) | Python | opcua-asyncio 2.1.0 (PyPI `asyncua`, `cryptography`) on CPython 3.14 | The most used Python stack, independent encoder/decoder and security code; see [`adapters/asyncua/README.md`](adapters/asyncua/README.md) |
 | UA-.NETStandard GDS (`dotnet-gds`) | C# | OPC Foundation UA-.NETStandard 2.0.1 with `Opc.Ua.Gds.Server` / `Opc.Ua.Gds.Client` on .NET 10 | The reference Global Discovery Server and GDS client (Part 12 pull model, §16); a separate image (the GDS packages had no 2.0.x release until v0.14.0) |
 
 Feature support differs per stack and is declared by `print-capabilities`:

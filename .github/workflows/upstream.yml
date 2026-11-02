@@ -67,7 +67,7 @@ jobs:
           pinned: ${{ steps.resolve.outputs.pin }}
           latest: ${{ steps.resolve.outputs.latest }}
           result-pattern: '^\[smoke\] Results: [0-9]+ passed'
-          cache-paths: "{name} scripts Makefile"
+          cache-paths: "adapters/{name} scripts Makefile"
           command: scripts/candidate.sh "${{ matrix.adapter }}" "${{ steps.resolve.outputs.latest }}"
 
       - name: Table row
@@ -99,16 +99,16 @@ jobs:
           notes: |
             ### To update
 
-            - **open62541:** `ARG OPEN62541_COMMIT` in `open62541/Dockerfile` (a release tag).
-            - **Milo:** `<milo.version>` in `milo/pom.xml`.
-            - **async-opcua:** `async-opcua = "=X.Y.Z"` in `async-opcua/Cargo.toml`, `Cargo.lock`
-              (`cargo update -p async-opcua`) and `STACK_VERSION` in `async-opcua/src/common.rs`.
-            - **dotnet / dotnet-gds:** `ARG OPCUA_VERSION` in `dotnet/Dockerfile` /
-              `dotnet-gds/Dockerfile` and the default in the adapter's `.csproj`.
+            - **open62541:** `ARG OPEN62541_COMMIT` in `adapters/open62541/Dockerfile` (a release tag).
+            - **Milo:** `<milo.version>` in `adapters/milo/pom.xml`.
+            - **async-opcua:** `async-opcua = "=X.Y.Z"` in `adapters/async-opcua/Cargo.toml`, `Cargo.lock`
+              (`cargo update -p async-opcua`) and `STACK_VERSION` in `adapters/async-opcua/src/common.rs`.
+            - **dotnet / dotnet-gds:** `ARG OPCUA_VERSION` in `adapters/dotnet/Dockerfile` /
+              `adapters/dotnet-gds/Dockerfile` and the default in the adapter's `.csproj`.
             - **node-opcua:** `node-opcua`, `node-opcua-server-configuration` and the matching
-              `node-opcua-types` (exact) in `node-opcua/package.json`, then `package-lock.json`.
-            - **asyncua:** `asyncua==X.Y.Z` in `asyncua/requirements.in`, then re-lock the hashed
-              `asyncua/requirements.txt`.
+              `node-opcua-types` (exact) in `adapters/node-opcua/package.json`, then `package-lock.json`.
+            - **asyncua:** `asyncua==X.Y.Z` in `adapters/asyncua/requirements.in`, then re-lock the hashed
+              `adapters/asyncua/requirements.txt`.
             - **Base image:** replace the digest in every file that pins it.
             - Reproduce a candidate with `make candidate ADAPTER=<adapter> CANDIDATE_VERSION=<version>`;
               a `failure` needs the log of the run first. Record a bump in `RELEASE.md`.

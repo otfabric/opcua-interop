@@ -128,8 +128,8 @@ jobs:
       - name: Build open62541 (linux/${{ matrix.arch }})
         uses: docker/build-push-action@v7
         with:
-          context: open62541
-          file: open62541/Dockerfile
+          context: .
+          file: adapters/open62541/Dockerfile
           platforms: linux/${{ matrix.arch }}
           load: true
           push: false
@@ -144,8 +144,8 @@ jobs:
       - name: Build Milo (linux/${{ matrix.arch }})
         uses: docker/build-push-action@v7
         with:
-          context: milo
-          file: milo/Dockerfile
+          context: .
+          file: adapters/milo/Dockerfile
           platforms: linux/${{ matrix.arch }}
           load: true
           push: false
@@ -160,8 +160,8 @@ jobs:
       - name: Build async-opcua (linux/${{ matrix.arch }})
         uses: docker/build-push-action@v7
         with:
-          context: async-opcua
-          file: async-opcua/Dockerfile
+          context: .
+          file: adapters/async-opcua/Dockerfile
           platforms: linux/${{ matrix.arch }}
           load: true
           push: false
@@ -176,8 +176,8 @@ jobs:
       - name: Build UA-.NETStandard (linux/${{ matrix.arch }})
         uses: docker/build-push-action@v7
         with:
-          context: dotnet
-          file: dotnet/Dockerfile
+          context: .
+          file: adapters/dotnet/Dockerfile
           platforms: linux/${{ matrix.arch }}
           load: true
           push: false
@@ -192,8 +192,8 @@ jobs:
       - name: Build node-opcua (linux/${{ matrix.arch }})
         uses: docker/build-push-action@v7
         with:
-          context: node-opcua
-          file: node-opcua/Dockerfile
+          context: .
+          file: adapters/node-opcua/Dockerfile
           platforms: linux/${{ matrix.arch }}
           load: true
           push: false
@@ -208,8 +208,8 @@ jobs:
       - name: Build opcua-asyncio (linux/${{ matrix.arch }})
         uses: docker/build-push-action@v7
         with:
-          context: asyncua
-          file: asyncua/Dockerfile
+          context: .
+          file: adapters/asyncua/Dockerfile
           platforms: linux/${{ matrix.arch }}
           load: true
           push: false
@@ -224,8 +224,8 @@ jobs:
       - name: Build UA-.NETStandard GDS (linux/${{ matrix.arch }})
         uses: docker/build-push-action@v7
         with:
-          context: dotnet-gds
-          file: dotnet-gds/Dockerfile
+          context: .
+          file: adapters/dotnet-gds/Dockerfile
           platforms: linux/${{ matrix.arch }}
           load: true
           push: false
@@ -332,13 +332,13 @@ jobs:
           DOTNET_GDS_DIGEST: ${{ steps.digests.outputs['dotnet-gds'] }}
         run: |
           set -euo pipefail
-          open62541_pin=$(sed -nE 's/^ARG OPEN62541_COMMIT=(.*)$/\1/p' open62541/Dockerfile | head -1)
-          milo_pin=$(sed -nE 's|.*<milo.version>(.*)</milo.version>.*|\1|p' milo/pom.xml | head -1)
-          async_opcua_pin=$(sed -nE 's/^async-opcua = \{ version = "=([0-9.]+)".*/\1/p' async-opcua/Cargo.toml | head -1)
-          dotnet_pin=$(sed -nE 's/^ARG OPCUA_VERSION=(.*)$/\1/p' dotnet/Dockerfile | head -1)
-          dotnet_gds_pin=$(sed -nE 's/^ARG OPCUA_VERSION=(.*)$/\1/p' dotnet-gds/Dockerfile | head -1)
-          node_opcua_pin=$(jq -r '.dependencies["node-opcua"]' node-opcua/package.json)
-          asyncua_pin=$(sed -nE 's/^asyncua==([0-9.]+)$/\1/p' asyncua/requirements.in | head -1)
+          open62541_pin=$(sed -nE 's/^ARG OPEN62541_COMMIT=(.*)$/\1/p' adapters/open62541/Dockerfile | head -1)
+          milo_pin=$(sed -nE 's|.*<milo.version>(.*)</milo.version>.*|\1|p' adapters/milo/pom.xml | head -1)
+          async_opcua_pin=$(sed -nE 's/^async-opcua = \{ version = "=([0-9.]+)".*/\1/p' adapters/async-opcua/Cargo.toml | head -1)
+          dotnet_pin=$(sed -nE 's/^ARG OPCUA_VERSION=(.*)$/\1/p' adapters/dotnet/Dockerfile | head -1)
+          dotnet_gds_pin=$(sed -nE 's/^ARG OPCUA_VERSION=(.*)$/\1/p' adapters/dotnet-gds/Dockerfile | head -1)
+          node_opcua_pin=$(jq -r '.dependencies["node-opcua"]' adapters/node-opcua/package.json)
+          asyncua_pin=$(sed -nE 's/^asyncua==([0-9.]+)$/\1/p' adapters/asyncua/requirements.in | head -1)
           mosquitto_pin=$(sed -nE 's/^MOSQUITTO_IMAGE \?= (.*)$/\1/p' Makefile | head -1)
           jq -n \
             --arg version "${VERSION}" \

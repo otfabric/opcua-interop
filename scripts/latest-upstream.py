@@ -14,14 +14,14 @@ Prints key=value lines (the format of $GITHUB_OUTPUT):
 
 Pin locations and lookups:
 
-    open62541    open62541/Dockerfile ARG OPEN62541_COMMIT   latest GitHub release
-    milo         milo/pom.xml <milo.version>                 latest GitHub release
-    async-opcua  async-opcua/Cargo.toml (=X.Y.Z)             crates.io max_stable_version
-    dotnet       dotnet/Dockerfile ARG OPCUA_VERSION         newest stable NuGet release of Opc.Ua.Server
-    dotnet-gds   dotnet-gds/Dockerfile ARG OPCUA_VERSION     newest stable NuGet release with both
+    open62541    adapters/open62541/Dockerfile ARG OPEN62541_COMMIT   latest GitHub release
+    milo         adapters/milo/pom.xml <milo.version>                 latest GitHub release
+    async-opcua  adapters/async-opcua/Cargo.toml (=X.Y.Z)             crates.io max_stable_version
+    dotnet       adapters/dotnet/Dockerfile ARG OPCUA_VERSION         newest stable NuGet release of Opc.Ua.Server
+    dotnet-gds   adapters/dotnet-gds/Dockerfile ARG OPCUA_VERSION     newest stable NuGet release with both
                                                              Gds.Server and Gds.Client
-    node-opcua   node-opcua/package.json (exact)             npm dist-tag latest
-    asyncua      asyncua/requirements.in (asyncua==X.Y.Z)    PyPI (latest non-pre-release)
+    node-opcua   adapters/node-opcua/package.json (exact)             npm dist-tag latest
+    asyncua      adapters/asyncua/requirements.in (asyncua==X.Y.Z)    PyPI (latest non-pre-release)
 
 Nothing is modified. GITHUB_TOKEN, when set, authenticates the GitHub API calls.
 """
@@ -71,23 +71,23 @@ def newest(versions, what):
 
 
 def open62541():
-    pin = pinned("open62541/Dockerfile", r"^ARG OPEN62541_COMMIT=(.+)$")
+    pin = pinned("adapters/open62541/Dockerfile", r"^ARG OPEN62541_COMMIT=(.+)$")
     return pin, github_latest("open62541/open62541"), "GitHub release of open62541/open62541"
 
 
 def milo():
-    pin = pinned("milo/pom.xml", r"<milo\.version>([^<]+)</milo\.version>")
+    pin = pinned("adapters/milo/pom.xml", r"<milo\.version>([^<]+)</milo\.version>")
     return pin, github_latest("eclipse/milo").removeprefix("v"), "GitHub release of eclipse/milo"
 
 
 def async_opcua():
-    pin = pinned("async-opcua/Cargo.toml", r'^async-opcua = \{ version = "=([0-9.]+)"')
+    pin = pinned("adapters/async-opcua/Cargo.toml", r'^async-opcua = \{ version = "=([0-9.]+)"')
     latest = fetch("https://crates.io/api/v1/crates/async-opcua")["crate"]["max_stable_version"]
     return pin, latest, "crates.io"
 
 
 def dotnet():
-    pin = pinned("dotnet/Dockerfile", r"^ARG OPCUA_VERSION=(.+)$")
+    pin = pinned("adapters/dotnet/Dockerfile", r"^ARG OPCUA_VERSION=(.+)$")
     latest = newest(nuget_stable("opcfoundation.netstandard.opc.ua.server"), "OPCFoundation.NetStandard.Opc.Ua.Server")
     return pin, latest, "nuget.org (Opc.Ua.Server)"
 
@@ -95,19 +95,19 @@ def dotnet():
 def dotnet_gds():
     # The GDS adapter follows the newest UA-.NETStandard release that has both GDS
     # packages (Gds.Server and Gds.Client; 1.5.x named them Gds.*.Common).
-    pin = pinned("dotnet-gds/Dockerfile", r"^ARG OPCUA_VERSION=(.+)$")
+    pin = pinned("adapters/dotnet-gds/Dockerfile", r"^ARG OPCUA_VERSION=(.+)$")
     both = nuget_stable("opcfoundation.netstandard.opc.ua.gds.server") & \
         nuget_stable("opcfoundation.netstandard.opc.ua.gds.client")
     return pin, newest(both, "UA-.NETStandard GDS"), "nuget.org (Gds.Server + Gds.Client)"
 
 
 def node_opcua():
-    pin = json.loads((ROOT / "node-opcua/package.json").read_text())["dependencies"]["node-opcua"]
+    pin = json.loads((ROOT / "adapters/node-opcua/package.json").read_text())["dependencies"]["node-opcua"]
     return pin, fetch("https://registry.npmjs.org/node-opcua/latest")["version"], "npm"
 
 
 def asyncua():
-    pin = pinned("asyncua/requirements.in", r"^asyncua==([0-9.]+)$")
+    pin = pinned("adapters/asyncua/requirements.in", r"^asyncua==([0-9.]+)$")
     # info.version is the latest release that is not a pre-release.
     return pin, fetch("https://pypi.org/pypi/asyncua/json")["info"]["version"], "PyPI"
 
