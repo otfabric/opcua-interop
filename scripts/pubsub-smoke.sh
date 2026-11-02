@@ -234,7 +234,8 @@ scenario_mqtt_late_broker() {
         --entrypoint sleep "${MOSQUITTO_IMAGE}" 600 >/dev/null
     start_server "${pubc}" pubsub-publisher "mqtt-json-publisher.json" || { stop_servers "${refuser}"; return; }
     at mqtt-late-broker.error-state
-    for _ in $(seq 1 20); do
+    # A stack may try a broker for a while before it calls that an Error (10 s in some).
+    for _ in $(seq 1 60); do
         publog; grep -q "is in Error" "${plog}" && break
         sleep 0.5
     done
