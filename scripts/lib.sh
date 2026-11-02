@@ -123,6 +123,7 @@ supported() {
             server:*)   has_cap "$2" server "${need#server:}" || return 1 ;;
             server=*)   [[ "$2" == "${need#server=}" ]] || return 1 ;;
             own)        ;;
+            own-server) is_own "$2" || return 1 ;;
             *)          log "bad needs in a case: ${need}"; return 1 ;;
         esac
     done

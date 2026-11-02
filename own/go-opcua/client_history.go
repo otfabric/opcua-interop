@@ -194,8 +194,10 @@ func historyReadCommand(fs *flag.FlagSet) command {
 			if details.EndTime, err = historyTime(*end); err != nil {
 				return fmt.Errorf("--end: %w", err)
 			}
-			if cp, err = base64.StdEncoding.DecodeString(*continuation); err != nil {
-				return fmt.Errorf("--continuation-point: %w", err)
+			if *continuation != "" { // none is null on the wire, not empty: node-opcua tells them apart
+				if cp, err = base64.StdEncoding.DecodeString(*continuation); err != nil {
+					return fmt.Errorf("--continuation-point: %w", err)
+				}
 			}
 			ref, err = parseNodeRef(*node)
 			return err
@@ -277,8 +279,10 @@ func historyReadEventsCommand(fs *flag.FlagSet) command {
 			if details.EndTime, err = historyTime(*end); err != nil {
 				return fmt.Errorf("--end: %w", err)
 			}
-			if cp, err = base64.StdEncoding.DecodeString(*continuation); err != nil {
-				return fmt.Errorf("--continuation-point: %w", err)
+			if *continuation != "" { // none is null on the wire, not empty: node-opcua tells them apart
+				if cp, err = base64.StdEncoding.DecodeString(*continuation); err != nil {
+					return fmt.Errorf("--continuation-point: %w", err)
+				}
 			}
 			if *release && len(cp) == 0 {
 				return errors.New("--release-continuation-point needs --continuation-point")

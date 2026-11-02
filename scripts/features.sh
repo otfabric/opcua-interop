@@ -209,6 +209,23 @@ run_reverse() {
     prepare_pki
     cert=$(identity_of "${s}" server); me=$(identity_of "${c}" client); host=$(server_host "${s}" "${name}")
     log "features: ${c} listens, the ${s} server dials it"
+    # The own server compares the host of a Hello with its endpoint, and the open62541
+    # client says Hello with --endpoint instead of the URL of the ReverseHello. The same
+    # proof: nothing listens on this port of the server.
+    if is_own "${s}"; then nowhere="opc.tcp://${host}:4899${ENDPOINT_PATH}"; fi
+    # async-opcua resolves the client's name once, when it starts, and exits if that fails:
+    # the client has to be there first, so only one command runs.
+    if [[ "${s}" == async-opcua ]]; then
+        CLIENT_NAME="${rclient}" run_client "${c}" read --endpoint "${nowhere}" --node "${node}" "${listen[@]}" >"${WORK}/reverse-read" &
+        local waiting=$!
+        sleep 2
+        server_up "${name}" "${s}" --host "${host}" --certificate "/pki/${cert}/cert.crt" --private-key "/pki/${cert}/cert.key" \
+            --pki-dir "/pki/${cert}/pki" --reverse-connect "opc.tcp://${rclient}:4855" --reverse-connect-interval-ms 500 || { wait "${waiting}"; return 0; }
+        wait "${waiting}"
+        check reverse.read "${c}" "${s}" "${READ_OK}" "$(cat "${WORK}/reverse-read")"
+        stop_server "${name}"
+        return 0
+    fi
     server_up "${name}" "${s}" --host "${host}" --certificate "/pki/${cert}/cert.crt" --private-key "/pki/${cert}/cert.key" \
         --pki-dir "/pki/${cert}/pki" --reverse-connect "opc.tcp://${rclient}:4855" --reverse-connect-interval-ms 500 || return 0
 
