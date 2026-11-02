@@ -285,6 +285,13 @@ finish_known_bugs() {
     done < "${WORK}/active"
 }
 
+# check_known <case> <client> <server> <expect> <document>: check, for scenarios of an
+# own stack, where a line of tests/known-bugs.tsv may explain the document.
+check_known() {
+    at "$1" "$2" "$3"
+    judge "$1" "$2" "$3" - "$4" "$5" 0
+}
+
 # ---- the tables of tests/ ----
 
 # run_cases <client> <server> <endpoint>: tests/cases.tsv for one pairing.

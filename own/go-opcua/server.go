@@ -150,7 +150,7 @@ func startServer(ctx context.Context, f *serverFlags, fx *fixture) (*server.Serv
 		fmt.Fprintln(os.Stderr, "transport:", err)
 		return nil, nil, exitInternal
 	}
-	opts = append(append(opts, transports...), reverseOptions(f, advertisedPort, fx)...)
+	opts = append(append(opts, transports...), reverseOptions(f)...)
 	s, err := server.New(opts...)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
@@ -307,17 +307,14 @@ func transportOptions(f *serverFlags) ([]server.Option, error) {
 	return opts, nil
 }
 
-// reverseOptions dial --reverse-connect clients with the advertised URL (§11).
-func reverseOptions(f *serverFlags, port int, fx *fixture) []server.Option {
-	path := f.endpointPath
-	if path == "" {
-		path = fx.Endpoint.Path
-	}
-	url := fmt.Sprintf("opc.tcp://%s:%d%s", f.advertisedHost, port, path)
+// reverseOptions dial --reverse-connect clients. The ReverseHello names the first
+// endpoint: what GetEndpoints answers, without --endpoint-path, because a client says
+// Hello with the URL it selected and the server compares it (open62541 does).
+func reverseOptions(f *serverFlags) []server.Option {
 	interval := time.Duration(f.reverseIntervalMS) * time.Millisecond
 	opts := make([]server.Option, len(f.reverseConnect))
 	for i, client := range f.reverseConnect {
-		opts[i] = server.WithReverseConnect(client, server.ReverseConnectEndpointURL(url), server.ReverseConnectRetryInterval(interval, interval))
+		opts[i] = server.WithReverseConnect(client, server.ReverseConnectRetryInterval(interval, interval))
 	}
 	return opts
 }

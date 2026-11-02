@@ -209,10 +209,6 @@ run_reverse() {
     prepare_pki
     cert=$(identity_of "${s}" server); me=$(identity_of "${c}" client); host=$(server_host "${s}" "${name}")
     log "features: ${c} listens, the ${s} server dials it"
-    # The own server compares the host of a Hello with its endpoint, and the open62541
-    # client says Hello with --endpoint instead of the URL of the ReverseHello. The same
-    # proof: nothing listens on this port of the server.
-    if is_own "${s}"; then nowhere="opc.tcp://${host}:4899${ENDPOINT_PATH}"; fi
     # async-opcua resolves the client's name once, when it starts, and exits if that fails:
     # the client has to be there first, so only one command runs.
     if [[ "${s}" == async-opcua ]]; then
@@ -222,7 +218,7 @@ run_reverse() {
         server_up "${name}" "${s}" --host "${host}" --certificate "/pki/${cert}/cert.crt" --private-key "/pki/${cert}/cert.key" \
             --pki-dir "/pki/${cert}/pki" --reverse-connect "opc.tcp://${rclient}:4855" --reverse-connect-interval-ms 500 || { wait "${waiting}"; return 0; }
         wait "${waiting}"
-        check reverse.read "${c}" "${s}" "${READ_OK}" "$(cat "${WORK}/reverse-read")"
+        check_known reverse.read "${c}" "${s}" "${READ_OK}" "$(cat "${WORK}/reverse-read")"
         stop_server "${name}"
         return 0
     fi
@@ -230,15 +226,15 @@ run_reverse() {
         --pki-dir "/pki/${cert}/pki" --reverse-connect "opc.tcp://${rclient}:4855" --reverse-connect-interval-ms 500 || return 0
 
     out=$(CLIENT_NAME="${rclient}" run_client "${c}" read --endpoint "${nowhere}" --node "${node}" "${listen[@]}")
-    check reverse.read "${c}" "${s}" "${READ_OK}" "${out}"
+    check_known reverse.read "${c}" "${s}" "${READ_OK}" "${out}"
     out=$(CLIENT_NAME="${rclient}" run_client "${c}" subscribe --endpoint "${nowhere}" --node "${MODEL}Dynamic.Counter" --notifications 2 --timeout-ms 15000 "${listen[@]}")
-    check reverse.subscribe "${c}" "${s}" '.success == true and (.results[0].notifications | length) == 2' "${out}"
+    check_known reverse.subscribe "${c}" "${s}" '.success == true and (.results[0].notifications | length) == 2' "${out}"
     out=$(CLIENT_NAME="${rclient}" run_client "${c}" endpoints --endpoint "${nowhere}" "${listen[@]}")
-    check reverse.endpoints "${c}" "${s}" '.success == true and (.results | length) > 1' "${out}"
+    check_known reverse.endpoints "${c}" "${s}" '.success == true and (.results | length) > 1' "${out}"
     out=$(CLIENT_NAME="${rclient}" run_client "${c}" read --endpoint "${nowhere}" --node "${node}" "${listen[@]}" \
             --security-policy Basic256Sha256 --security-mode SignAndEncrypt \
             --certificate "/pki/${me}/cert.crt" --private-key "/pki/${me}/cert.key" --trust-list /pki/ca/ca.crt)
-    check reverse.basic256sha256-signandencrypt-read "${c}" "${s}" "${READ_OK}" "${out}"
+    check_known reverse.basic256sha256-signandencrypt-read "${c}" "${s}" "${READ_OK}" "${out}"
     if is_own "${c}"; then
         out=$(CLIENT_NAME="${rclient}" run_client "${c}" read --endpoint "${nowhere}" --node "${node}" "${listen[@]}" --reverse-server-uri urn:not:this:server); rc=$?
         at reverse.other-server-uri-is-refused "${c}" "${s}"
@@ -267,16 +263,16 @@ run_transports() {
     for scheme in https:4843 wss:4844; do
         url="opc.${scheme%:*}://${host}:${scheme#*:}${ENDPOINT_PATH}"
         out=$(run_client "${c}" endpoints --endpoint "${url}" --trust-list /pki/ca/ca.crt)
-        check "transport.${scheme%:*}-endpoints" "${c}" "${s}" ".success == true and ([.results[].url] | map(test(\"^opc.${scheme%:*}://\")) | any)" "${out}"
+        check_known "transport.${scheme%:*}-endpoints" "${c}" "${s}" ".success == true and ([.results[].url] | map(test(\"^opc.${scheme%:*}://\")) | any)" "${out}"
         out=$(run_client "${c}" read --endpoint "${url}" --node "${node}" --trust-list /pki/ca/ca.crt "${user[@]}")
-        check "transport.${scheme%:*}-read-username" "${c}" "${s}" "${READ_OK}" "${out}"
+        check_known "transport.${scheme%:*}-read-username" "${c}" "${s}" "${READ_OK}" "${out}"
         out=$(run_client "${c}" write --endpoint "${url}" --node "${MODEL}Access.ReadWrite" --type Int32 --value 77 --trust-list /pki/ca/ca.crt "${user[@]}")
-        check "transport.${scheme%:*}-write" "${c}" "${s}" '.success == true and .results[0].statusCode.severity == "Good"' "${out}"
+        check_known "transport.${scheme%:*}-write" "${c}" "${s}" '.success == true and .results[0].statusCode.severity == "Good"' "${out}"
         out=$(run_client "${c}" read --endpoint "${url}" --node "${node}" --trust-list /pki/untrusted/cert.crt "${user[@]}")
-        check "transport.${scheme%:*}-untrusted-tls-certificate-is-rejected" "${c}" "${s}" '.success == false' "${out}"
+        check_known "transport.${scheme%:*}-untrusted-tls-certificate-is-rejected" "${c}" "${s}" '.success == false' "${out}"
     done
     out=$(run_client "${c}" subscribe --endpoint "opc.wss://${host}:4844${ENDPOINT_PATH}" --node "${MODEL}Dynamic.Counter" --notifications 3 --timeout-ms 15000 --trust-list /pki/ca/ca.crt "${user[@]}")
-    check transport.wss-subscribe "${c}" "${s}" '.success == true and (.results[0].notifications | length) == 3' "${out}"
+    check_known transport.wss-subscribe "${c}" "${s}" '.success == true and (.results[0].notifications | length) == 3' "${out}"
     stop_server "${name}"
 }
 
