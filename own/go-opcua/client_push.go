@@ -45,6 +45,7 @@ type pushFlags struct {
 	lifetimeDays, keySize                                                                 uint
 
 	groupRef          pushGroup
+	typeRef, delRef   *nodeRef
 	certType, deleted *ua.NodeID
 	add, update, key  []byte
 	issuers           [][]byte
@@ -84,14 +85,18 @@ func (f *pushFlags) validate() error {
 	f.groupRef, f.certType = group, group.defaultType
 	var err error
 	if f.typeID != "" {
-		if f.certType, err = ua.ParseNodeID(f.typeID); err != nil {
-			return errors.New("--certificate-type-id: " + f.typeID)
+		ref, err := parseNodeRef(f.typeID)
+		if err != nil {
+			return fmt.Errorf("--certificate-type-id: %w", err)
 		}
+		f.typeRef = &ref
 	}
 	if f.deleteType != "" {
-		if f.deleted, err = ua.ParseNodeID(f.deleteType); err != nil {
-			return errors.New("--delete-certificate: " + f.deleteType)
+		ref, err := parseNodeRef(f.deleteType)
+		if err != nil {
+			return fmt.Errorf("--delete-certificate: %w", err)
 		}
+		f.delRef = &ref
 	}
 	if f.lifetimeDays > 65535 || f.keySize > 65535 {
 		return errors.New("--lifetime-days and --key-size are UInt16")
@@ -134,7 +139,7 @@ func (f *pushFlags) validate() error {
 		return errors.New("--private-key-format: " + f.keyFormat)
 	}
 	// §1: what they create or delete is not installed without --apply.
-	if (f.selfSigned || f.deleted != nil) && !f.apply {
+	if (f.selfSigned || f.delRef != nil) && !f.apply {
 		f.cancel = true
 	}
 	return nil
@@ -249,6 +254,20 @@ func diagnosticsJSON(d *gds.TransactionDiagnostics) map[string]any {
 
 // run is the order of §1 "push flags".
 func (f *pushFlags) run(ctx context.Context, c *opcua.Client) outcome {
+	if f.typeRef != nil {
+		id, res := resolve(ctx, c, *f.typeRef)
+		if res != nil {
+			return *res
+		}
+		f.certType = id
+	}
+	if f.delRef != nil {
+		id, res := resolve(ctx, c, *f.delRef)
+		if res != nil {
+			return *res
+		}
+		f.deleted = id
+	}
 	g := gds.New(c).WithTrustList(f.groupRef.trustList)
 	r := &stepResult{out: map[string]any{"certificateGroupId": nodeIDString(f.groupRef.id)}}
 	tl, err := g.ReadTrustList(ctx, ua.TrustListMasksAll)
