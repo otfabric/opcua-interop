@@ -162,8 +162,6 @@ opcua-interop/
 ├── adapters/dotnet-gds/         # C# GDS adapter on UA-.NETStandard 2.0.1 (Global Discovery Server, client gds-pull)
 ├── schemas/            # JSON Schemas for client results and print-capabilities
 ├── docs/               # Client command contract (CLIENT_CONTRACT.md)
-├── pubsub/examples/    # PubSub configurations (--pubsub-config) used by the PubSub smoke
-├── mqtt/               # Eclipse Mosquitto configuration for the MQTT PubSub tests
 ├── scripts/            # Readiness, smoke (incl. pubsub-smoke.sh), validation and upstream-check helpers
 ├── compose.yaml        # Docker Compose service definitions
 └── .github/            # CI, Release and daily Upstream workflows; Dependabot config
@@ -391,17 +389,17 @@ open62541 v1.5.9 limits and the UA-.NETStandard 2.0.1 differences — is
 `configuration` is a `PubSubConfigurationDataType` in the OPC UA 1.05 JSON
 encoding (ExtensionObjects as `{"UaTypeId": "i=15510", "UaBody": {...}}`,
 NodeIds may use `nsu=`). Worked examples for every scenario are in
-[`pubsub/examples/`](pubsub/examples/) (UDP unicast / multicast, MQTT UADP /
+[`fixtures/pubsub/`](fixtures/pubsub/) (UDP unicast / multicast, MQTT UADP /
 JSON, SignAndEncrypt with a static key, SKS pull):
 
 ```sh
 docker network create pubsub
 docker run -d --name pubsub-subscriber --network pubsub \
-  -v "$PWD/fixtures:/fixtures:ro" -v "$PWD/pubsub/examples:/pubsub:ro" \
+  -v "$PWD/fixtures:/fixtures:ro" -v "$PWD/fixtures/pubsub:/pubsub:ro" \
   ghcr.io/otfabric/opcua-interop-open62541:v0.8.0 server \
   --fixture /fixtures/baseline/fixture.json --pubsub-config /pubsub/udp-unicast-subscriber.json
 docker run -d --name pubsub-publisher --network pubsub \
-  -v "$PWD/fixtures:/fixtures:ro" -v "$PWD/pubsub/examples:/pubsub:ro" \
+  -v "$PWD/fixtures:/fixtures:ro" -v "$PWD/fixtures/pubsub:/pubsub:ro" \
   ghcr.io/otfabric/opcua-interop-open62541:v0.8.0 server \
   --fixture /fixtures/baseline/fixture.json --pubsub-config /pubsub/udp-unicast-publisher.json
 # write on the publisher, read the subscriber's TargetVariable
@@ -442,7 +440,7 @@ The MQTT tests use Eclipse Mosquitto, pinned by its multi-arch index digest:
 eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c
 ```
 
-with [`mqtt/mosquitto.conf`](mqtt/mosquitto.conf) (`listener 1883 0.0.0.0`,
+with [`fixtures/pubsub/mosquitto.conf`](fixtures/pubsub/mosquitto.conf) (`listener 1883 0.0.0.0`,
 `allow_anonymous true`, `persistence false`, logging to stdout):
 
 ```sh

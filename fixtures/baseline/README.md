@@ -109,7 +109,7 @@ reader). Both adapters load them; only the open62541 adapter does PubSub.
 
 Access: CurrentRead + CurrentWrite. `Dynamic.Counter` (Int64, +1 every
 250 ms) is a continuously changing source for publishers. The configurations
-in `pubsub/examples/` use these nodes (docs/CLIENT_CONTRACT.md §14).
+in `fixtures/pubsub/` use these nodes (docs/CLIENT_CONTRACT.md §14).
 
 ## Methods
 

@@ -170,7 +170,7 @@ the PubSub flags with exit 2).
 - **Fixture**: baseline `PubSub` folder (writable Boolean, Int32, Int64,
   UInt64, Double, String, DateTime, ByteString, Int32[], Double[] variables)
 - **MQTT broker**: `eclipse-mosquitto:2.0.22` pinned by digest,
-  `mqtt/mosquitto.conf`, compose service, `make run-mosquitto`
+  `fixtures/pubsub/mosquitto.conf`, compose service, `make run-mosquitto`
 - **Networking contract** for UDP between the host and containers (documented
   addresses, verified on macOS / Docker Desktop); multicast container ↔
   container only

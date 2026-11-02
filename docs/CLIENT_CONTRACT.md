@@ -2085,7 +2085,7 @@ The MQTT-C send and receive buffers are **1024 bytes**: a NetworkMessage
 message of the example data set (10 fields) is ~690 bytes. `MetaDataQueueName`
 is not used (no metadata publishing). The broker for the tests:
 `eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c`
-with `mqtt/mosquitto.conf` (README "MQTT broker").
+with `fixtures/pubsub/mosquitto.conf` (README "MQTT broker").
 
 ### 14.5 Message security and keys
 
@@ -2154,8 +2154,8 @@ TargetVariables on a subscriber: `PubSub.Boolean`, `PubSub.Int32`,
 
 ### 14.8 Worked examples
 
-`pubsub/examples/` holds the configurations `scripts/pubsub-smoke.sh` runs
-(regenerate with `python3 pubsub/examples/generate.py pubsub/examples`). They
+`fixtures/pubsub/` holds the configurations `scripts/pubsub-smoke.sh` runs
+(regenerate with `python3 fixtures/pubsub/generate.py fixtures/pubsub`). They
 use the network aliases `pubsub-publisher`, `pubsub-subscriber` and
 `mosquitto`; replace them with your addresses. All publish the same data set
 (`InteropDataSet`: `PubSub.Boolean`, `PubSub.Int32`, `Dynamic.Counter` as
@@ -2608,7 +2608,7 @@ layout to answer it.
 dotnet image) runs the scenarios `codec`, `udp-unicast`, `udp-multicast`,
 `mqtt-uadp`, `mqtt-json`, `udp-secure` and `discovery` (a
 `pubsub-discover` of both types against the multicast publisher) on the
-example files of `pubsub/examples/`; the SKS and information-model scenarios
+example files of `fixtures/pubsub/`; the SKS and information-model scenarios
 do not apply.
 
 ## 15. Push certificate management (OPC UA Part 12 §7)

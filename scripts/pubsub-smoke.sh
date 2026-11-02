@@ -24,7 +24,7 @@
 #                  (adapters whose capabilities declare pubsub.discovery)
 #
 # Every transport scenario starts a subscriber and a publisher container (the
-# configurations in pubsub/examples/) on a dedicated Docker network, writes
+# configurations in fixtures/pubsub/) on a dedicated Docker network, writes
 # fresh values into the publisher's PubSub.* variables with `client write` and
 # checks with `client read` that the subscriber's TargetVariables follow
 # (Dynamic.Counter is published into the subscriber's PubSub.Int64).
@@ -35,7 +35,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-EXAMPLES="${REPO_ROOT}/pubsub/examples"
+EXAMPLES="${REPO_ROOT}/fixtures/pubsub"
 IMG="${1:?Usage: pubsub-smoke.sh <adapter-image> [scenario ...]}"
 shift
 SCENARIOS=("$@")

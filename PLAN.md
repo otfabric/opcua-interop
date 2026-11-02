@@ -350,7 +350,7 @@ Adapter release **v0.8.0** (supports the go-opcua PubSub work); `adapter.version
 3. **Codec** — `codec pubsub-{uadp,json}-{encode,decode}` with a canonical
    NetworkMessage description (`src/pubsub_codec.c`).
 4. **Fixture** — baseline `PubSub` folder (10 writable variables).
-5. **MQTT broker** — `eclipse-mosquitto:2.0.22` by digest, `mqtt/mosquitto.conf`.
+5. **MQTT broker** — `eclipse-mosquitto:2.0.22` by digest, `fixtures/pubsub/mosquitto.conf`.
 6. **Networking contract** — host ↔ container UDP unicast verified on
    macOS / Docker Desktop; multicast container ↔ container.
 7. **Capabilities** — `pubsub` section (Milo: `supported: false`),
