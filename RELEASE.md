@@ -8,14 +8,14 @@
    the same gate on every push and pull request.
 2. Set the version everywhere it is reported — `make check-release
    VERSION=vX.Y.Z` lists what does not match:
-   - `open62541/src/main.c` (`adapter.version`)
-   - `milo/src/main/java/io/otfabric/opcuainterop/CapabilitiesCommand.java`
+   - `adapters/open62541/src/main.c` (`adapter.version`)
+   - `adapters/milo/src/main/java/io/otfabric/opcuainterop/CapabilitiesCommand.java`
      (`adapter.version`)
-   - `milo/src/main/java/io/otfabric/opcuainterop/ServerCommand.java`
+   - `adapters/milo/src/main/java/io/otfabric/opcuainterop/ServerCommand.java`
      (`BuildInfo` software version)
-   - `async-opcua/src/common.rs` (`ADAPTER_VERSION`) and
-     `async-opcua/Cargo.toml` (crate `version`)
-   - `dotnet/src/Capabilities.cs` (`AdapterVersion`, also the server's
+   - `adapters/async-opcua/src/common.rs` (`ADAPTER_VERSION`) and
+     `adapters/async-opcua/Cargo.toml` (crate `version`)
+   - `adapters/dotnet/src/Capabilities.cs` (`AdapterVersion`, also the server's
      `BuildInfo` software version)
 3. Set `interop_version` in versions.yaml and write the section `## vX.Y.Z` below, with its **Date**; `make release-notes
    VERSION=vX.Y.Z` prints what the GitHub release will say. Commit and push
@@ -77,11 +77,34 @@ Tags are immutable. A fix is a new version; a published tag is never moved
 | Upstream pin, base image or bug fix with unchanged contract | patch |
 
 Upstream pins: `open62541/Dockerfile` (`ARG OPEN62541_COMMIT`),
-`milo/pom.xml` (`milo.version`), `async-opcua/Cargo.toml` (`async-opcua =
+`milo/pom.xml` (`milo.version`), `adapters/async-opcua/Cargo.toml` (`async-opcua =
 "=X.Y.Z"`, with `Cargo.lock`), `dotnet/Dockerfile` (`ARG OPCUA_VERSION`, the
 `OPCFoundation.NetStandard.Opc.Ua.*` NuGet version; `ARG DOTNET_SDK_VERSION` /
 `DOTNET_RUNTIME_VERSION` for .NET), the MQTT broker `eclipse-mosquitto:2.0.22` by
 digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
+
+---
+
+## v0.19.0
+
+**Date:** 2026-11-02
+**Previous release:** v0.18.2
+
+### Changed
+
+- The repository has the structure of the other OT Fabric interop harnesses: the adapters are in `adapters/<name>/`, the PubSub fixtures in `fixtures/pubsub/`, the case tables in `tests/` (`cases.tsv`, `secure-cases.tsv`, `codec-cases.tsv`, `known-bugs.tsv`), the scripts in `scripts/`, and the contract in `docs/CONTAINER_CONTRACT.md`, `docs/CAPABILITIES.md`, `docs/COMPATIBILITY.md` and `docs/FIXTURES.md`. Image names, `certs/` and the container contract (1.0) are unchanged.
+- `schemas/client-result.schema.json` accepts what the released images send: `anyOf` for the result kinds, `securityLevel` and `userIdentityTokens` of an endpoint, `serverTimestamp` of a value, a read item without a value, the `continue` scenario of history-read, and the adapter name `otfabric`.
+- The Policy job skips Dependabot pull requests, which get no secrets; it runs on `main` after the merge. The upstream check uses otfabric/.github v3.2.0.
+
+### Added
+
+- `access.read-write-only` and `access.write-read-only`: reading `Access.WriteOnly` must answer `BadNotReadable`, writing `Access.ReadOnly` `BadNotWritable` (Part 4). open62541 1.5.9, Milo 1.1.8 and async-opcua 0.19.0 answer `BadUserAccessDenied` to both, asyncua 2.1.0 to the write; each is a known deviation in `tests/known-bugs.tsv` and `docs/COMPATIBILITY.md`.
+- Cases and fixtures for what the own go-opcua adapter now covers, run across every pair that declares the capability: history, alarms and events, ECC, X.509 user tokens, reverse connect, opc.https and opc.wss, codec, certificate push and trust lists, GDS pull, and PubSub (UDP, MQTT 3.1.1 and 5, UADP and JSON, security, SKS, delta frames).
+- `make documents` runs every adapter (`-k`) instead of stopping at the first that fails.
+
+### Evidence
+
+CI on `main` at 0a83599, amd64 and arm64. The own image (not part of these releases) on go-opcua v1.29.5 against these references: smoke 120 passed, 0 failed; interop 802 passed, 0 failed, 13 known deviations, 152 skipped where a capability is not declared; PubSub 117 passed, 0 failed.
 
 ---
 
