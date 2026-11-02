@@ -14,7 +14,7 @@ import (
 )
 
 func readResult(nodeID string, dv *ua.DataValue) map[string]any {
-	r := map[string]any{"nodeId": nodeID, "statusCode": statusOf(dv.Status)}
+	r := map[string]any{"nodeId": nodeID, "statusCode": statusOf(dv.Status), "dataType": "Null", "builtInType": 0}
 	if dv.Value != nil && dv.Value.Value() != nil {
 		r["dataType"] = typeName(uint32(dv.Value.Type()))
 		r["builtInType"] = int(dv.Value.Type())

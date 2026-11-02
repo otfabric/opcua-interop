@@ -21,7 +21,7 @@ func (g *globals) endpoints(ctx context.Context) outcome {
 	}
 	results := make([]any, len(eps))
 	for i, ep := range eps {
-		results[i] = map[string]any{"url": ep.EndpointURL, "securityPolicy": ep.SecurityPolicyURI, "securityMode": modeName(ep.SecurityMode), "transportProfile": ep.TransportProfileURI}
+		results[i] = map[string]any{"url": ep.EndpointURL, "securityPolicy": ep.SecurityPolicyURI, "securityMode": modeName(ep.SecurityMode)}
 	}
 	return outcome{status: ua.StatusOK, results: results}
 }

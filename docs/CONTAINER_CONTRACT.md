@@ -749,7 +749,9 @@ Error categories:
 
 `nodeId` is the canonical compact string form (see §6).
 `dataType` is the OPC UA built-in type name.
-`builtInType` is the built-in type integer (1=Boolean … 25=DiagnosticInfo).
+`builtInType` is the built-in type integer (1=Boolean … 25=DiagnosticInfo). An item
+with no value, such as one with a Bad `statusCode`, has `dataType` `Null`, `builtInType`
+0 and `value` null.
 `sourceTimestamp` is RFC 3339 UTC; omitted when zero/null.
 
 ### `write`

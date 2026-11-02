@@ -112,6 +112,11 @@ func (h *historyReader) continueScenario(ctx context.Context, maxPages int) (map
 		"nodeId": nodeIDString(h.nodeID), "statusCode": statusOf(status), "continuationPoint": continuationJSON(cp),
 		h.itemsKey: all, "scenario": "continue", "pages": pages, "releaseStatusCode": nil, "reuseAfterReleaseStatusCode": nil,
 	}
+	if h.itemsKey == "values" { // raw: the pages are the result (§ history-read flags)
+		delete(result, "statusCode")
+		delete(result, "continuationPoint")
+		delete(result, h.itemsKey)
+	}
 	if len(last) == 0 {
 		return result, status, nil
 	}
