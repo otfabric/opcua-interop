@@ -38,9 +38,9 @@ run() {
 
 # Alone: everything the capability document declares.
 run self - codec udp-unicast udp-multicast mqtt-uadp mqtt-json mqtt-late-broker mqtt-v5 \
-    udp-secure sign aes128 chunking delta-frames sks sks-push infomodel discovery
+    udp-secure sign aes128 datavalue rawdata chunking delta-frames sks sks-push infomodel discovery
 
-both="udp-unicast udp-multicast mqtt-uadp mqtt-json udp-secure sign aes128"
+both="udp-unicast udp-multicast mqtt-uadp mqtt-json udp-secure sign aes128 datavalue rawdata"
 # An open62541 subscriber discards DeltaFrames, and open62541 has no chunking (§14.10).
 # shellcheck disable=SC2086
 run from-open62541 PUBLISHER_ADAPTER=open62541 codec-cross ${both} delta-frames sks sks-push

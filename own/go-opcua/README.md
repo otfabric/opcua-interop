@@ -96,7 +96,7 @@ never as a pass.
 | `codec` JSON, verbose JSON, XML | yes | - | open62541, milo, dotnet documents |
 | Push: trust lists, CSR, UpdateCertificate, ApplyChanges, rejected list, 1.05 methods, transaction diagnostics, `--group` (Application, Https, UserToken) | yes | yes | client: open62541, dotnet, node-opcua servers. Server: every client with `push`. Self-signed, delete, update, reset: itself only |
 | GDS pull: directory, CSR, new key pair, trust list, revocation | yes | yes | `dotnet-gds` both ways; server also every client with `gds-pull` |
-| PubSub UDP unicast and multicast, UADP | yes | yes | open62541, dotnet, each role |
+| PubSub UDP unicast and multicast, UADP, field encodings Variant, DataValue, RawData | yes | yes | open62541, dotnet, each role |
 | PubSub MQTT 3.1.1, UADP and JSON | yes | yes | open62541, dotnet (5.0 at dotnet), each role |
 | PubSub MQTT 5.0 | yes | yes | dotnet, each role; the broker's log says p5 |
 | PubSub message security: Sign, SignAndEncrypt, Aes128-CTR, Aes256-CTR, static keys | yes | yes | open62541, dotnet, each role |
@@ -169,6 +169,11 @@ Limits of the public API of go-opcua, or of this adapter:
   The adapter moves the unicast address of a DatagramWriterGroupTransport2DataType to the
   connection. Two destinations on a connection, or one next to readers, are refused
   (§14.14).
+- A value a client wrote has no timestamps: `Write` stores the DataValue as it came
+  (`server/attribute_service.go`), and the publisher leaves out a selected timestamp that
+  is zero (`pubsub/publisher.go:490`). `datavalue` follows the value and its status.
+- `codec pubsub-uadp-decode` has no fields for a DataSetMessage that is not valid
+  (`pubsub/uadp/decode.go:295`), so `reencoded` has none either.
 - MQTT 3.1 is refused: go-opcua has 3.1.1 and 5.0 (`pubsub/builders.go:103`).
 - A reader with a configured MajorVersion drops other versions
   (`pubsub/subscriber.go:746`), and open62541 generates its own: its publisher runs

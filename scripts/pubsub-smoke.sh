@@ -31,6 +31,7 @@
 #                  log says what connected
 #   sign           the udp-secure pair with SecurityMode Sign
 #   aes128         the udp-secure pair with PubSub-Aes128-CTR
+#   datavalue, rawdata  the unicast pair with this field encoding
 #   chunking       the unicast pair with messages larger than MaxNetworkMessageSize
 #
 # Across stacks: PUBLISHER_ADAPTER and SUBSCRIBER_ADAPTER replace the adapter in that
@@ -556,6 +557,15 @@ scenario_chunking() {
     wire_has chunking '.chunk == true'
 }
 
+# field-encoding <label> <mask>: the unicast pair with this DataSetFieldContentMask.
+scenario_field_encoding() {
+    local mask=".configuration.Connections[].WriterGroups[].DataSetWriters[].DataSetFieldContentMask = $2"
+    local reader=".configuration.Connections[].ReaderGroups[].DataSetReaders[].DataSetFieldContentMask = $2"
+    derive udp-unicast-publisher.json "${mask}"
+    derive udp-unicast-subscriber.json "${reader}"
+    run_pair "$1" udp-unicast
+}
+
 # aes128: the udp-secure pair with PubSub-Aes128-CTR and a key of 52 bytes.
 scenario_aes128() {
     local aes128='.securityGroups[].securityPolicyUri = "http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes128-CTR"
@@ -639,6 +649,8 @@ for sc in "${SCENARIOS[@]}"; do
         mqtt-v5)       scenario_mqtt_v5 ;;
         sign)          scenario_sign ;;
         aes128)        scenario_aes128 ;;
+        datavalue)     scenario_field_encoding datavalue 7 ;;   # StatusCode, SourceTimestamp, ServerTimestamp
+        rawdata)       scenario_field_encoding rawdata 32 ;;
         chunking)      scenario_chunking ;;
         *) echo "unknown scenario: ${sc}" >&2; exit 1 ;;
     esac
