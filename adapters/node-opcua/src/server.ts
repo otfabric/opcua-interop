@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // `server` command: an OPCUAServer exposing the fixture address space
-// (docs/CLIENT_CONTRACT.md §10, §11).
+// (docs/CONTAINER_CONTRACT.md §10, §11).
 
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";

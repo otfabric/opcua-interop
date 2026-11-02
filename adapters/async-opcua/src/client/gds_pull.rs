@@ -1,4 +1,4 @@
-//! `client gds-pull` (CLIENT_CONTRACT §16.2): the GDS pull model of Part 12
+//! `client gds-pull` (CONTAINER_CONTRACT §16.2): the GDS pull model of Part 12
 //! §6.6 / §7.9 against the Directory object of a Global Discovery Server.
 //! async-opcua 0.19 has no GDS client: the Directory methods are plain Calls
 //! on the standard NodeIds of the GDS namespace, ApplicationRecordDataType

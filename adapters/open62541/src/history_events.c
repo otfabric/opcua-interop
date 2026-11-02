@@ -1,5 +1,5 @@
 /*
- * client history-read-events / history-update-events (docs/CLIENT_CONTRACT.md):
+ * client history-read-events / history-update-events (docs/CONTAINER_CONTRACT.md):
  * HistoryRead with ReadEventDetails (Part 11 §6.5.2) and HistoryUpdate with
  * UpdateEventDetails (§6.9.4) / DeleteEventDetails (§6.9.7), sent with the raw
  * UA_Client_Service_historyRead / _historyUpdate. UA_Client_HistoryRead_events

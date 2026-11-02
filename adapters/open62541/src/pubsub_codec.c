@@ -17,7 +17,7 @@
  * decoded as plain header fields, but nothing is signed, encrypted, verified
  * or decrypted (signed/encrypted traffic is covered by the live
  * publish/subscribe path only). The description format is defined in
- * docs/CLIENT_CONTRACT.md §14.
+ * docs/CONTAINER_CONTRACT.md §14.
  */
 
 #define _GNU_SOURCE

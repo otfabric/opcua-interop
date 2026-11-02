@@ -1,5 +1,5 @@
 """print-capabilities declares what the adapter does, and what it does not do
-is refused with exit 2 (docs/CLIENT_CONTRACT.md §5, §13), never faked."""
+is refused with exit 2 (docs/CONTAINER_CONTRACT.md §5, §13), never faked."""
 
 import asyncio
 import contextlib

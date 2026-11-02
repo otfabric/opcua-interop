@@ -182,7 +182,7 @@ namespace OpcUaInterop
             // endpoints and of CreateSession is the leaf only (SecurityConfiguration.
             // SendCertificateChain = false). The default sends the certificate followed by its
             // issuers (Part 6 §6.2.3), which some client stacks do not accept
-            // (CLIENT_CONTRACT.md §16.3). Same flag as dotnet-gds.
+            // (CONTAINER_CONTRACT.md §16.3). Same flag as dotnet-gds.
             bool sendChain = !a.Has("--no-certificate-chain");
             string registerWith = a.Get("--register-with");
             int registerIntervalMs = Math.Max(500, a.GetInt("--register-interval-ms", 30000));

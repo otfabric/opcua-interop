@@ -17,7 +17,7 @@
  *                                 configuration through the open62541 API and
  *                                 enable it. Runs after UA_Server_run_startup.
  *
- * The file format is documented in docs/CLIENT_CONTRACT.md §14 and README.md.
+ * The file format is documented in docs/CONTAINER_CONTRACT.md §14 and README.md.
  */
 
 typedef struct {

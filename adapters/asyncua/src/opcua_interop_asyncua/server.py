@@ -1,5 +1,5 @@
 """`server` subcommand: an asyncua (opcua-asyncio) server exposing a fixture's
-address space (docs/CLIENT_CONTRACT.md §10, §11)."""
+address space (docs/CONTAINER_CONTRACT.md §10, §11)."""
 
 from __future__ import annotations
 

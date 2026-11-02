@@ -261,7 +261,7 @@ namespace OpcUaInterop
 
         // ── PubSub codec ────────────────────────────────────────────────────
 
-        // The UADP example of docs/CLIENT_CONTRACT.md §14.9 and its description.
+        // The UADP example of docs/CONTAINER_CONTRACT.md §14.9 and its description.
         private const string UadpExample = "8SG6CAlkAAcAAU30hyYcRNVi3QEJAwAEAAb7////DAIAAABoaQn//////////4YDAAAAAQAAAAIAAAADAAAA";
 
         private const string UadpExampleDescription =

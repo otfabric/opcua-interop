@@ -32,7 +32,7 @@ import java.util.UUID;
 /**
  * Literal values for all 25 OPC UA built-in types, 1-D arrays ({@code Type[]})
  * and matrices ({@code Type[]} plus dimensions). The literal grammar is the
- * one of docs/CLIENT_CONTRACT.md §12 and is shared with the open62541 adapter.
+ * one of docs/CONTAINER_CONTRACT.md §12 and is shared with the open62541 adapter.
  */
 final class ValueParser {
 

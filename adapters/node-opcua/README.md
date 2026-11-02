@@ -5,7 +5,7 @@ opcua-interop adapter for [node-opcua](https://github.com/node-opcua/node-opcua)
 `package-lock.json`, with `node-opcua-types` `2.187.9`, the version
 node-opcua itself depends on), the OPC UA client and server SDK for Node.js
 by Sterfive. Added in opcua-interop **0.9.0**; it implements
-`docs/CLIENT_CONTRACT.md` like the open62541, Milo and async-opcua adapters.
+`docs/CONTAINER_CONTRACT.md` like the open62541, Milo and async-opcua adapters.
 
 Image: `ghcr.io/otfabric/opcua-interop-node-opcua:<version>`. Adapter name in
 the result envelope, ready file and `print-capabilities`: `node-opcua`.
@@ -172,7 +172,7 @@ The go-opcua tests and the cross-stack smoke skip or log these with the reason; 
 | 3 | A Write with a SourceTimestamp in the DataValue is accepted (`Good`) instead of `BadWriteNotSupported` (as Milo and async-opcua) | server write | `TestNodeOpcuaServer_WriteEncodingMask` (logged) |
 | 4 | UserName is offered on the None endpoint only with an encrypted password (a token policy with a SecurityPolicy URI); `allowUnsecurePassword` is not honoured. The adapter adds the Basic256Sha256 and Aes128 token policies to the None endpoint so the fixture user can log on over None | server endpoints | username tests over None |
 | 5 | The server's `RegisterServerManager` registers only over an LDS endpoint that carries a server certificate (it picks the most secure endpoint); against an LDS with a None-only endpoint it never registers. A failed registration is not reported: errors are only logged when the state changed meanwhile, and the manager goes to `REGISTERED` | `node-opcua-server/dist/register_server_manager.js` | `TestGoLDS_NodeOpcuaServerRegisters` (secured LDS variant) |
-| 6 | After a SecureChannel renewal the server keeps securing each response with the token of its request (`ServerSecureChannelLayer` `send_response`), so a Publish request sent before the renewal is answered under the old token after the client has switched to the new one; Part 6 §6.7.4 has the server switch once it receives a message with the new token. The open62541 1.5.9 client drops such a response once the old token's lifetime has passed (`SecurityToken timed out`) and its subscription stalls; the go-opcua, Milo, async-opcua and node-opcua clients continue | `node-opcua-secure-channel/dist/source/server/server_secure_channel_layer.js` | `scripts/smoke.sh cross` (`check_o62541_node_renewal_deviation`) |
+| 6 | After a SecureChannel renewal the server keeps securing each response with the token of its request (`ServerSecureChannelLayer` `send_response`), so a Publish request sent before the renewal is answered under the old token after the client has switched to the new one; Part 6 §6.7.4 has the server switch once it receives a message with the new token. The open62541 1.5.9 client drops such a response once the old token's lifetime has passed (`SecurityToken timed out`) and its subscription stalls; the go-opcua, Milo, async-opcua and node-opcua clients continue | `node-opcua-secure-channel/dist/source/server/server_secure_channel_layer.js` | `tests/known-bugs.tsv` |
 | 7 | Confirm sets Retain to false also while the alarm is still Active (Part 9 §5.5.2: an active Condition stays of interest); the adapter keeps Retain true while ActiveState is true | `node-opcua-address-space/dist/impl/alarms_and_conditions/ua_acknowledgeable_condition_impl.js` (`_confirm_branch`) | fixed in the adapter |
 | 8 | Enable (after Disable) of an AlarmConditionType instance without an input to evaluate throws `Unimplemented, please override` (Call → `BadInternalError`) | `ua_condition_impl.js` (`evaluateConditionsAfterEnabled`) | fixed in the adapter |
 | 9 | The RefreshStartEvent / RefreshEndEvent of ConditionRefresh are raised on the Server object only: an event item on another notifier (e.g. `s=Alarms.Source`) gets the refreshed conditions but no bracket, so `client alarms --node` other than `i=2253` times out waiting for RefreshEnd | `ua_condition_impl.js` (`_perform_condition_refresh`) | use `--node i=2253` |
@@ -181,10 +181,9 @@ The go-opcua tests and the cross-stack smoke skip or log these with the reason; 
 ## Testing
 
 ```sh
-make test-node-opcua       # image build runs `npm test`; `test` checks the fixtures
-make smoke-node-opcua      # single-adapter smoke
-make shutdown-node-opcua   # SIGTERM → exit 0
-make smoke-cross-stack     # with open62541, Milo (and async-opcua), both directions
+make image-node-opcua  # image build runs the unit tests
+make smoke-node-opcua  # single-adapter smoke: fixtures, `test`, SIGTERM
+make interop               # with every other adapter, both directions
 ```
 
 The unit tests (`node --test`, `src/*.test.ts`, test certificates without
@@ -197,7 +196,7 @@ history), and checks that `print-capabilities` declares exactly the client
 operations the adapter dispatches.
 
 The single-adapter smoke runs every check of `scripts/smoke.sh` except the
-codec checks. `smoke.sh cross` runs the open62541 and Milo (and, when given,
+codec checks. `scripts/interop.sh` runs the open62541 and Milo (and, when given,
 async-opcua) clients against the node-opcua server and the node-opcua client
 against the other servers, plus secured channels (Basic256Sha256, Aes128 /
 Aes256, UserName, an untrusted certificate) on a Docker network.

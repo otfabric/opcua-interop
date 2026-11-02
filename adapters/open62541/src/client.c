@@ -3883,7 +3883,7 @@ static void print_sc_obj(const char *key, UA_StatusCode sc) {
 
 /* -------------------------------------------------------------------------
  * alarms subcommand (Part 9 Alarms & Conditions: ConditionRefresh,
- * Acknowledge, Confirm, AddComment; docs/CLIENT_CONTRACT.md `alarms`)
+ * Acknowledge, Confirm, AddComment; docs/CONTAINER_CONTRACT.md `alarms`)
  * ---------------------------------------------------------------------- */
 
 #define AL_NF        16

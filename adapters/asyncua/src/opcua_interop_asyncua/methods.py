@@ -1,4 +1,4 @@
-"""Fixture method behaviours (fixtures/baseline/README.md "Methods").
+"""Fixture method behaviours (docs/FIXTURES.md "Methods").
 
 asyncua's Call service hands the raw input Variants to the linked callback
 and does no argument checking of its own; the callbacks therefore check the

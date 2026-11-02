@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// print-capabilities (docs/CLIENT_CONTRACT.md §13): what this image can do,
+// print-capabilities (docs/CAPABILITIES.md): what this image can do,
 // reported honestly. Everything not listed is refused with exit 2.
 
 import * as fs from "node:fs";

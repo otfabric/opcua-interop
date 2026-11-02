@@ -12,7 +12,7 @@ using Opc.Ua.Client;
 
 namespace OpcUaInterop
 {
-    /// <summary>The client subcommands of docs/CLIENT_CONTRACT.md.</summary>
+    /// <summary>The client subcommands of docs/CONTAINER_CONTRACT.md.</summary>
     internal static partial class ClientCommand
     {
         public static readonly string[] Operations =

@@ -268,7 +268,7 @@ func TestClientAgainstServer(t *testing.T) {
 	})
 	t.Run("read write-only", func(t *testing.T) {
 		// go-opcua answers BadUserAccessDenied here, not the BadNotReadable of
-		// fixtures/baseline/README.md: README.md "What it cannot do".
+		// docs/FIXTURES.md: README.md "What it cannot do".
 		code, doc := client(t, "read", "--endpoint", ep, "--node", model+"Access.WriteOnly")
 		if code != exitService || first(t, doc)["statusCode"].(map[string]any)["severity"] != "Bad" {
 			t.Errorf("exit %d: %v", code, doc)

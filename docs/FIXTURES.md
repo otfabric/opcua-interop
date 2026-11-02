@@ -1,4 +1,34 @@
-# Baseline Fixture
+# Fixtures
+
+A fixture is a stack-neutral JSON document that describes a deterministic OPC UA
+address space: nodes, behaviours, security profiles and user credentials. It
+contains no assertions. Every server adapter constructs an equivalent namespace
+from the same file; this document says what "equivalent" is.
+
+- Format: JSON, [schema](../fixtures/schema/opcua-fixture.schema.json), `schemaVersion` `"1.0"`
+- Location: `fixtures/<name>/fixture.json`, baked into every image under `/fixtures`
+- Validation: `make validate` (schema plus `scripts/validate-fixtures.py`), and `validate-fixture` in each image
+
+| Fixture | What it is |
+|---------|------------|
+| `baseline` | Scalars, access, browse, methods, subscriptions, events, history, alarms: the fixture of the self-tests |
+| `gds` | The baseline plus the GDS administrator `gds-admin` (`dotnet-gds`) |
+| `subscriptions` | Dynamic values and subscriptions |
+| `methods` | Methods |
+| `security` | Security policies |
+| `edge-cases` | Edge cases and stress |
+
+`fixtures/pubsub/` is not an address space: it holds the [PubSub configurations](#pubsub-opc-ua-part-14)
+and the MQTT broker configuration, mounted at run time.
+
+## Adding a fixture
+
+1. Add `fixtures/<name>/fixture.json` with `"id": "<name>"`. `make validate` must pass.
+2. Say what it is in the table above.
+3. Add cases to `tests/cases.tsv` if a self-test should use it; give those cases a
+   server that serves it.
+
+## Baseline fixture
 
 The baseline fixture defines the primary interoperability address space. Both adapters (open62541 and Milo) must construct an equivalent namespace from this single file.
 
@@ -109,7 +139,7 @@ reader). Both adapters load them; only the open62541 adapter does PubSub.
 
 Access: CurrentRead + CurrentWrite. `Dynamic.Counter` (Int64, +1 every
 250 ms) is a continuously changing source for publishers. The configurations
-in `fixtures/pubsub/` use these nodes (docs/CLIENT_CONTRACT.md §14).
+in `fixtures/pubsub/` use these nodes (docs/CONTAINER_CONTRACT.md §14).
 
 ## Methods
 
@@ -194,7 +224,7 @@ default normal state: Message `Back to normal`, Severity `0`.
 
 Per-stack differences (repeated
 Acknowledge status, Message after an action, RefreshStart/End on other
-notifiers, Time): docs/CLIENT_CONTRACT.md §13 "Alarm servers"; the client side
+notifiers, Time): docs/CAPABILITIES.md "Alarm servers"; the client side
 is `client alarms` (§1 / §4).
 
 ## Alarms (1.05)
@@ -233,7 +263,7 @@ answers only the shelving request (OnShelve) and the response (OnRespond).
 The stack has no handler for TimedShelve2 / OneShotShelve2 / Unshelve2 and
 Respond2, so the fixture has none of them (a call is refused as a method the
 object does not have). Each method raises its AuditCondition*EventType; the
-server delivers audit events only with `--auditing` (CLIENT_CONTRACT §11) and
+server delivers audit events only with `--auditing` (CONTAINER_CONTRACT §11) and
 to SignAndEncrypt sessions. Call `ResetExt` first: the container is shared.
 
 ## History
@@ -250,7 +280,7 @@ Event history (OPC UA Part 11) fixture, since adapter 0.17.0. Only the
 servers that declare `"history-events"` in `print-capabilities` →
 `serverFeatures` build it: UA-.NETStandard (also `"history-events-update"`)
 and asyncua. Like the alarm fixture, the nodes are **not** in `fixture.json`;
-they are created in code (CLIENT_CONTRACT §17).
+they are created in code (CONTAINER_CONTRACT §17).
 
 ```
 Compatibility
@@ -302,3 +332,177 @@ in both modes regardless of this list (unchanged behaviour).
 ## Schema version
 
 `1.0`
+
+## PubSub (OPC UA Part 14)
+
+The open62541 server (v0.8.0) and the UA-.NETStandard server (v0.10.0, on the
+stack's Opc.Ua.PubSub runtime) publish and subscribe OPC UA PubSub when
+started with `--pubsub-config <file>`; both read the same file. Eclipse Milo
+1.1.8 has no PubSub implementation: the Milo adapter refuses the flag and
+declares `print-capabilities` → `pubsub.supported: false` (as do async-opcua,
+node-opcua and asyncua). The complete contract — file format, honoured
+fields, information-model method conventions, codec description format, the
+open62541 v1.5.9 limits and the UA-.NETStandard 2.0.1 differences — is
+[`docs/CONTAINER_CONTRACT.md` §14](CONTAINER_CONTRACT.md#14-pubsub-opc-ua-part-14).
+
+| | open62541 adapter | UA-.NETStandard adapter (§14.13) |
+|---|---|---|
+| Transports | `pubsub-udp-uadp` (unicast, multicast), `pubsub-mqtt-uadp`, `pubsub-mqtt-json` | the same; MQTT 5.0 (default), 3.1.1 or 3.1 — publishing needs 5.0 |
+| Encodings | UADP, JSON; field encodings Variant, DataValue, RawData | the same |
+| Publisher / subscriber | PublishedDataItems over any variable; DataSetReaders with TargetVariables | PublishedDataItems over the fixture variables; TargetVariables |
+| Security | UADP Sign / SignAndEncrypt with PubSub-Aes128-CTR / PubSub-Aes256-CTR; keys static, from an SKS (pull), pushed (SetSecurityKeys), or served (this server is the SKS) | UADP Sign / SignAndEncrypt, static keys only |
+| Chunking, discovery | — | chunk NetworkMessages (WriterGroup `MaxNetworkMessageSize`); UADP discovery in the .NET layout, `client pubsub-discover` |
+| Information model | `Server.PublishSubscribe` browsable; AddConnection / AddWriterGroup / AddReaderGroup / AddDataSetWriter / AddDataSetReader / AddPublishedDataItems / Remove* / Enable / Disable / GetSecurityKeys / SetSecurityKeys / AddSecurityGroup — also without `--pubsub-config` | — |
+| Codec | `client codec pubsub-uadp-encode/-decode`, `pubsub-json-encode/-decode` (no transport) | the same |
+
+### Configuration file
+
+```json
+{
+  "configuration":  { "PublishedDataSets": [...], "Connections": [...], "Enabled": true },
+  "securityGroups": [ { "securityGroupId": "InteropGroup",
+                        "securityPolicyUri": "http://opcfoundation.org/UA/SecurityPolicy#PubSub-Aes256-CTR",
+                        "keys": [ { "tokenId": 1, "key": "<Base64 signingKey|encryptingKey|keyNonce>" } ] } ],
+  "serveSks":  false,
+  "sksClient": { "endpointUrl": "opc.tcp://sks:4840/opcua-interop", "securityMode": "SignAndEncrypt",
+                 "username": "test-user", "password": "test-password" },
+  "deltaFrames": false
+}
+```
+
+`configuration` is a `PubSubConfigurationDataType` in the OPC UA 1.05 JSON
+encoding (ExtensionObjects as `{"UaTypeId": "i=15510", "UaBody": {...}}`,
+NodeIds may use `nsu=`). Worked examples for every scenario are in
+[`fixtures/pubsub/`](../fixtures/pubsub/) (UDP unicast / multicast, MQTT UADP /
+JSON, SignAndEncrypt with a static key, SKS pull):
+
+```sh
+docker network create pubsub
+docker run -d --name pubsub-subscriber --network pubsub \
+  -v "$PWD/fixtures:/fixtures:ro" -v "$PWD/fixtures/pubsub:/pubsub:ro" \
+  ghcr.io/otfabric/opcua-interop-open62541:v0.8.0 server \
+  --fixture /fixtures/baseline/fixture.json --pubsub-config /pubsub/udp-unicast-subscriber.json
+docker run -d --name pubsub-publisher --network pubsub \
+  -v "$PWD/fixtures:/fixtures:ro" -v "$PWD/fixtures/pubsub:/pubsub:ro" \
+  ghcr.io/otfabric/opcua-interop-open62541:v0.8.0 server \
+  --fixture /fixtures/baseline/fixture.json --pubsub-config /pubsub/udp-unicast-publisher.json
+# write on the publisher, read the subscriber's TargetVariable
+docker run --rm --network pubsub ghcr.io/otfabric/opcua-interop-open62541:v0.8.0 client write \
+  --endpoint opc.tcp://pubsub-publisher:4840/opcua-interop \
+  --node 'nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32' --type Int32 --value 42
+docker run --rm --network pubsub ghcr.io/otfabric/opcua-interop-open62541:v0.8.0 client read \
+  --endpoint opc.tcp://pubsub-subscriber:4840/opcua-interop \
+  --node 'nsu=urn:otfabric:opcua-interop:model;s=PubSub.Int32'
+```
+
+The fixture's `PubSub` folder (`PubSub.Boolean`, `.Int32`, `.Int64`,
+`.UInt64`, `.Double`, `.String`, `.DateTime`, `.ByteString`, `.Int32Array`,
+`.DoubleArray`) holds writable variables for published fields and
+TargetVariables; `Dynamic.Counter` is a continuously changing source.
+
+### Networking (UDP)
+
+| Direction | Address in the configuration | Docker |
+|---|---|---|
+| container → host | publisher connection `opc.udp://localhost:<p>`, WriterGroup `TransportSettings` = DatagramWriterGroupTransport2DataType `opc.udp://host.docker.internal:<host-port>` | Linux: `--add-host host.docker.internal:host-gateway` (Docker Desktop resolves it itself) |
+| host → container | subscriber connection `opc.udp://0.0.0.0:<p>` (or `opc.udp://localhost:<p>`) | `-p <p>:<p>/udp`; the host sends to `127.0.0.1:<p>` |
+| container ↔ container | as above with the peer's container name; multicast `opc.udp://224.0.0.22:<p>` on both sides | same Docker network |
+
+open62541 binds a connection's receive socket to the connection URL's host
+(so a remote unicast destination cannot be the connection URL — it goes into
+the WriterGroup's DatagramWriterGroupTransport2DataType), and resolves the
+destination host when the configuration is applied (start the subscriber
+first). Both host directions were verified on macOS / Docker Desktop.
+**Multicast does not cross the Docker Desktop VM boundary**: test multicast
+container ↔ container (or with `--network host` on Linux).
+
+### MQTT broker
+
+The MQTT tests use Eclipse Mosquitto, pinned by its multi-arch index digest:
+
+```
+eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c
+```
+
+with [`fixtures/pubsub/mosquitto.conf`](../fixtures/pubsub/mosquitto.conf) (`listener 1883 0.0.0.0`,
+`allow_anonymous true`, `persistence false`, logging to stdout):
+
+```sh
+docker run -d --name mosquitto -p 1883:1883 \
+  -v "$PWD/fixtures/pubsub/mosquitto.conf:/mosquitto-interop.conf:ro" \
+  eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c \
+  mosquitto -c /mosquitto-interop.conf
+```
+
+(also `make run-mosquitto` and the `mosquitto` service in `compose.yaml`).
+Connections use `mqtt://<broker>:1883` (rewritten to open62541's
+`opc.mqtt://`); topics are the `QueueName` of BrokerWriterGroupTransportDataType
+/ BrokerDataSetReaderTransportDataType. open62541 v1.5.9 speaks MQTT 3.1.1 with
+QoS 0, anonymously, without TLS, and its MQTT buffers limit a NetworkMessage
+to about 1000 bytes.
+
+### PubSub smoke
+
+`make pubsub` (`scripts/pubsub-smoke.sh <adapter>`) runs, on a dedicated
+Docker network: the codec round trips; publisher → subscriber over UDP
+unicast, UDP multicast, MQTT UADP and MQTT JSON; UADP SignAndEncrypt with a
+static key; SKS pull (the publisher is the SKS) and SKS push (SetSecurityKeys);
+and the information-model
+methods (GetSecurityKeys, AddSecurityGroup, AddConnection / RemoveConnection,
+Disable / Enable). About one minute. `make pubsub` also runs the
+codec, UDP, MQTT and static-key scenarios on the UA-.NETStandard adapter,
+plus a `pubsub-discover` of the multicast publisher.
+
+`make documents` also writes `reports/results.json`, the organisation's
+[interop-result-v1](../schemas/interop-result-v1.schema.json). Only `pass` counts as passing: a run with
+no pass, or with a known deviation that is gone, fails.
+
+## Test PKI
+
+The test PKI lives under `certs/test-pki/` and is regenerated by `make certs`.
+
+```
+certs/test-pki/
+├── ca/                    # Self-signed test CA (10-year validity)
+├── open62541-server/      # open62541 server identity
+├── open62541-client/      # open62541 client identity
+├── milo-server/           # Milo server identity
+├── milo-client/           # Milo client identity
+├── async-opcua-server/    # async-opcua server identity (pki/trusted/certs also lists the client certificates)
+├── async-opcua-client/    # async-opcua client identity
+├── dotnet-server/         # UA-.NETStandard server identity (v0.9.0)
+├── dotnet-client/         # UA-.NETStandard client identity (v0.9.0)
+├── node-opcua-server/     # node-opcua server identity
+├── node-opcua-client/     # node-opcua client identity
+├── asyncua-server/        # opcua-asyncio server identity (v0.9.0)
+├── asyncua-client/        # opcua-asyncio client identity (v0.9.0)
+├── consumer/              # Consumer client identity (used by go-opcua test client)
+├── go-server/             # go-opcua server identity (DNS:host.docker.internal SAN)
+└── untrusted/             # Self-signed cert for trust-rejection tests
+```
+
+Each identity directory contains:
+- `cert.crt` — PEM certificate with correct SAN URI
+- `cert.key` — PEM private key (PKCS#8)
+- `cert.pfx` — PKCS#12 bundle (debug/inspection artifact; adapters use PEM directly)
+- `pki/` — OPC UA PKI directory pre-populated with the CA trust anchor
+- `ecc-<curve>/cert.crt|cert.key` — ECC application certificates for the ECC security
+  policies (`open62541-server`, `open62541-client`, `consumer`, `go-server`; curves
+  `nistp256`, `nistp384`, `brainpoolp256r1`, `brainpoolp384r1`, `curve25519`, `curve448`),
+  same subject / SAN URI, issued by the same test CA. `untrusted/ecc-nistp256/` is the
+  self-signed ECC counterpart. `certs/generate.sh --add-ecc` adds them to an existing PKI
+  without touching the CA or the RSA files.
+
+The `dotnet-server` / `dotnet-client` identities (v0.9.0, RSA only) are trusted by the
+other server identities (async-opcua's by exact certificate) and trust the other client
+identities. `certs/generate.sh --add-dotnet` adds them to a PKI generated before v0.9.0 without
+regenerating the CA or the other certificates.
+
+The `asyncua-server` / `asyncua-client` identities (v0.9.0, RSA only) are trusted by the
+other server identities (async-opcua's by exact certificate) and trust the other client
+identities; `certs/generate.sh --add-asyncua` adds them to an existing PKI the same way.
+
+**WARNING:** These certificates are for isolated test environments only. They are not
+checked in: `certs/test-pki/` is git-ignored and generated locally with `make certs`.
+The private keys are unprotected, so never use them in production or expose them to
+untrusted networks.

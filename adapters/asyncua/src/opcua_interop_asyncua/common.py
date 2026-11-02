@@ -1,5 +1,5 @@
 """Shared helpers: result envelope, status codes, canonical NodeId / value encoding
-(docs/CLIENT_CONTRACT.md §3, §6, §7), NodeId input parsing (§8) and value
+(docs/CONTAINER_CONTRACT.md §3, §6, §7), NodeId input parsing (§8) and value
 literals (§12)."""
 
 from __future__ import annotations

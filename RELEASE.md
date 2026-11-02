@@ -499,7 +499,7 @@ gains nodes.
   multicast and MQTT connections, UADP and JSON writer groups,
   PublishedDataItems, DataSetReaders with TargetVariables, message receive
   timeouts, Sign and SignAndEncrypt. The fields honoured per structure are
-  listed in [docs/CLIENT_CONTRACT.md](docs/CLIENT_CONTRACT.md) §14.3; worked
+  listed in [docs/CONTAINER_CONTRACT.md](docs/CONTAINER_CONTRACT.md) §14.3; worked
   examples are in `pubsub/examples/`.
 - **PubSub information model** (open62541) — `PublishSubscribe` is browsable
   and configurable through its methods, also without `--pubsub-config`;

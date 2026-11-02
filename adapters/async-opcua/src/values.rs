@@ -1,4 +1,4 @@
-//! Value encoding to JSON (CLIENT_CONTRACT §7) and value literals (§12).
+//! Value encoding to JSON (CONTAINER_CONTRACT §7) and value literals (§12).
 
 use std::str::FromStr;
 

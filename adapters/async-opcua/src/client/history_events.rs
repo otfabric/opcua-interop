@@ -1,5 +1,5 @@
 //! `client history-read-events` / `client history-update-events`
-//! (CLIENT_CONTRACT §1, §4): HistoryRead with ReadEventDetails (Part 11
+//! (CONTAINER_CONTRACT §1, §4): HistoryRead with ReadEventDetails (Part 11
 //! §6.5.2) and HistoryUpdate with UpdateEventDetails / DeleteEventDetails
 //! (§6.9.4, §6.9.7), through the generic HistoryRead / HistoryUpdate builders
 //! of async-opcua 0.19.

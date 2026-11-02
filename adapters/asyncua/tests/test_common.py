@@ -1,4 +1,4 @@
-"""Canonical JSON forms (docs/CLIENT_CONTRACT.md §6, §7), NodeId input (§8)
+"""Canonical JSON forms (docs/CONTAINER_CONTRACT.md §6, §7), NodeId input (§8)
 and value literals (§12)."""
 
 import math

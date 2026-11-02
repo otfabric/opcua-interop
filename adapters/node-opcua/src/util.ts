@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Shared helpers of the node-opcua adapter: command-line parsing, the result
-// envelope (docs/CLIENT_CONTRACT.md §3), status codes, the canonical NodeId
+// envelope (docs/CONTAINER_CONTRACT.md §3), status codes, the canonical NodeId
 // form (§6), the canonical value encoding (§7) and value literals (§12).
 
 import {

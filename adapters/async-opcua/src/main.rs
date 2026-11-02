@@ -1,7 +1,7 @@
 //! opcua-interop adapter for async-opcua (https://github.com/FreeOpcUa/async-opcua).
 //!
 //! Subcommands: `server`, `client <op>`, `print-capabilities`,
-//! `validate-fixture`, `test`. See docs/CLIENT_CONTRACT.md.
+//! `validate-fixture`, `test`. See docs/CONTAINER_CONTRACT.md.
 
 mod caps;
 mod client;

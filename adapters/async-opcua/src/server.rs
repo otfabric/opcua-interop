@@ -1,5 +1,5 @@
 //! `server` mode: an async-opcua server exposing the fixture address space
-//! (CLIENT_CONTRACT §10, §11).
+//! (CONTAINER_CONTRACT §10, §11).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

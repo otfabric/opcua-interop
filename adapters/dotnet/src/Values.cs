@@ -8,7 +8,7 @@ using Opc.Ua;
 
 namespace OpcUaInterop
 {
-    /// <summary>NodeId input parsing (docs/CLIENT_CONTRACT.md §8).</summary>
+    /// <summary>NodeId input parsing (docs/CONTAINER_CONTRACT.md §8).</summary>
     internal static class NodeIds
     {
         /// <summary>Parses i=, ns=N;x= forms; nsu= is resolved through <paramref name="resolveNs"/>.</summary>
@@ -87,7 +87,7 @@ namespace OpcUaInterop
         }
     }
 
-    /// <summary>Value literals (docs/CLIENT_CONTRACT.md §12).</summary>
+    /// <summary>Value literals (docs/CONTAINER_CONTRACT.md §12).</summary>
     internal static class ValueParser
     {
         public static readonly string[] ScalarTypes =

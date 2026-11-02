@@ -1,4 +1,4 @@
-//! `client push` (CLIENT_CONTRACT §1 "push flags", §4 `push`, §15): push
+//! `client push` (CONTAINER_CONTRACT §1 "push flags", §4 `push`, §15): push
 //! certificate management (Part 12 §7) against the ServerConfiguration
 //! object of the server. async-opcua 0.19 has no push client, so every step
 //! is a plain Call on the standard NodeIds of ServerConfiguration and of the

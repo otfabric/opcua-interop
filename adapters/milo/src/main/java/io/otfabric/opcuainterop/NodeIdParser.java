@@ -9,7 +9,7 @@ import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
 import java.util.Base64;
 import java.util.UUID;
 
-/** Parses NodeId strings per CLIENT_CONTRACT §8. */
+/** Parses NodeId strings per CONTAINER_CONTRACT §8. */
 public class NodeIdParser {
 
     /** Exception thrown for invalid/unresolvable NodeId input. Exits code 2. */

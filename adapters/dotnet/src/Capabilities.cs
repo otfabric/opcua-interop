@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 
 namespace OpcUaInterop
 {
-    /// <summary>print-capabilities (docs/CLIENT_CONTRACT.md §13, schemas/capabilities.schema.json).</summary>
+    /// <summary>print-capabilities (docs/CAPABILITIES.md, schemas/capabilities.schema.json).</summary>
     internal static class Capabilities
     {
         public const string AdapterVersion = "0.18.2";
@@ -88,7 +88,7 @@ namespace OpcUaInterop
             return Json.Serialize(o);
         }
 
-        /// <summary>The PubSub block (docs/CLIENT_CONTRACT.md §14.11, .NET: §14.13).</summary>
+        /// <summary>The PubSub block (docs/CONTAINER_CONTRACT.md §14.11, .NET: §14.13).</summary>
         private static JsonObject PubSub() => new()
         {
             ["supported"] = true,

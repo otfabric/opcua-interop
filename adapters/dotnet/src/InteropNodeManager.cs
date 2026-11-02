@@ -13,7 +13,7 @@ using Opc.Ua.Server.Historian.InMemory;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// The fixture address space (fixtures/baseline/README.md) as a classic CustomNodeManager2:
+    /// The fixture address space (docs/FIXTURES.md) as a classic CustomNodeManager2:
     /// folders / objects, variables, methods, behaviours (counter / toggle / ramp / fixed-status),
     /// BaseEvent emission on Events.Source, raw history on History.Temperature and event history on
     /// History.Events (InteropNodeManager.HistoryEvents.cs).

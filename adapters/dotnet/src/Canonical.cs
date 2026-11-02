@@ -8,7 +8,7 @@ using Opc.Ua;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// Canonical result encoding of docs/CLIENT_CONTRACT.md §6 (NodeIds) and §7 (values).
+    /// Canonical result encoding of docs/CONTAINER_CONTRACT.md §6 (NodeIds) and §7 (values).
     /// </summary>
     internal static class Canonical
     {

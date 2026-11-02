@@ -97,7 +97,7 @@ class History(HistoryDict):
 
 
 def history_event(source: ua.NodeId, i: int) -> Event:
-    """Seed event i of History.Events (CLIENT_CONTRACT.md, fixtures/baseline README)."""
+    """Seed event i of History.Events (CONTAINER_CONTRACT.md, docs/FIXTURES.md)."""
     t = _HISTORY_EVENTS_BASE + timedelta(seconds=5 * i)
     ev = Event(emitting_node=source)
     ev.add_property("EventId", f"hist-evt-{i}".encode(), ua.VariantType.ByteString)
@@ -123,7 +123,7 @@ def load(path: str) -> dict:
 
 
 def validate(data: dict) -> None:
-    """Structural checks (the JSON Schema is validated by scripts/validate-fixtures.sh)."""
+    """Structural checks (the JSON Schema is validated by scripts/validate-fixtures.py)."""
     if not isinstance(data, dict):
         raise FixtureError("fixture is not a JSON object")
     if data.get("schemaVersion") != "1.0":

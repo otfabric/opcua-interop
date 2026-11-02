@@ -89,7 +89,7 @@ namespace OpcUaInterop
     }
 
     /// <summary>
-    /// client gds-pull (docs/CLIENT_CONTRACT.md §16.2): the GDS pull model of Part 12 §6 / §7.9 with the
+    /// client gds-pull (docs/CONTAINER_CONTRACT.md §16.2): the GDS pull model of Part 12 §6 / §7.9 with the
     /// stack's GlobalDiscoveryServerClient (Opc.Ua.Gds.Client 2.0.1), as in the dotnet-gds adapter.
     /// </summary>
     internal static class GdsPull

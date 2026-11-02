@@ -55,7 +55,7 @@ import java.util.UUID;
  * {@code client codec} — OPC UA JSON / XML DataEncoding of built-in values,
  * done by Milo's stack-level encoders ({@code milo-encoding-json},
  * {@code milo-encoding-xml}). Same command line and result shapes as the
- * open62541 adapter; see docs/CLIENT_CONTRACT.md.
+ * open62541 adapter; see docs/CONTAINER_CONTRACT.md.
  *
  * Milo implements the OPC UA 1.05 JSON encoding in both of its modes, so
  * {@code --json-mode compact|verbose} is honoured.

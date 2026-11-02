@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// `client <subcmd>` (docs/CLIENT_CONTRACT.md §1-§9) on node-opcua's OPCUAClient.
+// `client <subcmd>` (docs/CONTAINER_CONTRACT.md §1-§9) on node-opcua's OPCUAClient.
 // Services are sent as raw requests (performMessageTransaction) so that every
 // status code the peer returns reaches the result unchanged.
 
@@ -2033,7 +2033,7 @@ const ALARM_SELECT: [string, string[], number][] = [
 const REFRESH_START = "i=2787";
 const REFRESH_END = "i=2788";
 
-/** A ConditionEntry of the `alarms` result (docs/CLIENT_CONTRACT.md §4 `alarms`). */
+/** A ConditionEntry of the `alarms` result (docs/CONTAINER_CONTRACT.md §4 `alarms`). */
 export interface ConditionEntry {
     conditionId: string | null;
     eventId: string | null;
@@ -2304,7 +2304,7 @@ async function cmdAlarms(a: Args, r: Result): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// Push certificate management (Part 12 §7) — CLIENT_CONTRACT §15
+// Push certificate management (Part 12 §7) — CONTAINER_CONTRACT §15
 // ---------------------------------------------------------------------------
 
 function trustListJson(tl: TrustListDataType): Record<string, unknown> {
@@ -2422,7 +2422,7 @@ async function readTransactionDiagnostics(c: Conn): Promise<{ status: number; di
  * the server, plus the Part 12 1.05 methods that client has no helper for
  * (GetCertificates, CreateSelfSignedCertificate, DeleteCertificate,
  * ResetToServerDefaults, CancelChanges; plain Call requests). The steps run in
- * the order of CLIENT_CONTRACT §1 "push flags" and stop at the first Bad
+ * the order of CONTAINER_CONTRACT §1 "push flags" and stop at the first Bad
  * status; everything runs on one session (one transaction, Part 12 §7.10.2).
  */
 async function cmdPush(a: Args, r: Result): Promise<number> {
@@ -2552,7 +2552,7 @@ async function cmdPush(a: Args, r: Result): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// Query (Part 4 §5.9) — CLIENT_CONTRACT §1 "query flags"
+// Query (Part 4 §5.9) — CONTAINER_CONTRACT §1 "query flags"
 // ---------------------------------------------------------------------------
 
 /**

@@ -1,4 +1,4 @@
-"""`print-capabilities` (docs/CLIENT_CONTRACT.md §13). Lists only what the
+"""`print-capabilities` (docs/CAPABILITIES.md). Lists only what the
 adapter can do on top of asyncua; see README.md for everything left out and why."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from .client import OPERATIONS
 from .common import ADAPTER, ADAPTER_VERSION, stack_version
 
 # The profiles of the baseline fixture the server offers (with --certificate)
-# and the client was run with against the go-opcua server. asyncua also
+# and the client was run with against a consumer's server. asyncua also
 # implements the deprecated Basic128Rsa15 / Basic256 and the Aes policies in
 # Sign mode; nothing exercises them, so they are not declared.
 SECURITY_PROFILES = [

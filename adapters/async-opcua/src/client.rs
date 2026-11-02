@@ -1,4 +1,4 @@
-//! `client <subcmd>`: the client operations of CLIENT_CONTRACT §1–§9, built on
+//! `client <subcmd>`: the client operations of CONTAINER_CONTRACT §1–§9, built on
 //! the async-opcua client.
 
 use std::path::Path;
@@ -701,7 +701,7 @@ macro_rules! with_conn {
 }
 
 // Part 12 push management, the Query service set and the GDS pull model
-// (CLIENT_CONTRACT §15, §1 "query flags", §16.2); after `with_conn!`.
+// (CONTAINER_CONTRACT §15, §1 "query flags", §16.2); after `with_conn!`.
 mod gds_pull;
 mod history_events;
 mod part12;

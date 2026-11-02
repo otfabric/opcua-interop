@@ -7,7 +7,7 @@ namespace OpcUaInterop
     /// <summary>
     /// opcua-interop adapter for the OPC Foundation UA-.NETStandard stack.
     ///   server             start the fixture server
-    ///   client &lt;op&gt;        run one client operation (docs/CLIENT_CONTRACT.md)
+    ///   client &lt;op&gt;        run one client operation (docs/CONTAINER_CONTRACT.md)
     ///   validate-fixture   validate a fixture file
     ///   print-capabilities emit the capability document
     ///   test               in-process unit tests (SelfTest.cs)

@@ -7,7 +7,7 @@ namespace OpcUaInterop
     /// <summary>
     /// opcua-interop GDS adapter for the OPC Foundation UA-.NETStandard stack (2.0.1):
     ///   server             start the Global Discovery Server (Part 12 pull model)
-    ///   client &lt;op&gt;        run one client operation (endpoints, gds-pull; docs/CLIENT_CONTRACT.md §16)
+    ///   client &lt;op&gt;        run one client operation (endpoints, gds-pull; docs/CONTAINER_CONTRACT.md §16)
     ///   validate-fixture   validate a fixture file
     ///   print-capabilities emit the capability document
     ///   test               in-process checks (capabilities, the baseline fixture)
@@ -129,7 +129,7 @@ namespace OpcUaInterop
         }
     }
 
-    /// <summary>NodeIds in the canonical string form of docs/CLIENT_CONTRACT.md §6.</summary>
+    /// <summary>NodeIds in the canonical string form of docs/CONTAINER_CONTRACT.md §6.</summary>
     internal static class Canonical
     {
         public static string NodeId(Opc.Ua.NodeId n)

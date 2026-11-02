@@ -1,4 +1,4 @@
-//! `client query` (CLIENT_CONTRACT §1 "query flags", §4 `query`): the Query
+//! `client query` (CONTAINER_CONTRACT §1 "query flags", §4 `query`): the Query
 //! service set (Part 4 §5.9). async-opcua 0.19's Session has no QueryFirst /
 //! QueryNext, but both requests are in the core RequestMessage and the
 //! session's secure channel is public: the requests are sent on it with the

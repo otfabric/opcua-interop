@@ -1,5 +1,5 @@
 """`client history-read-events` / `client history-update-events`
-(docs/CLIENT_CONTRACT.md §1, §4): HistoryRead with ReadEventDetails and
+(docs/CONTAINER_CONTRACT.md §1, §4): HistoryRead with ReadEventDetails and
 HistoryUpdate with UpdateEventDetails / DeleteEventDetails (Part 11 §6.5.2,
 §6.9.4, §6.9.7), built by hand: asyncua's Node.read_event_history sends no
 StartTime / EndTime / NumValuesPerNode and follows continuation points itself."""

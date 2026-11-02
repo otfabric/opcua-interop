@@ -1,4 +1,4 @@
-//! Shared pieces of the adapter: identity, the result envelope (CLIENT_CONTRACT
+//! Shared pieces of the adapter: identity, the result envelope (CONTAINER_CONTRACT
 //! §3), status code objects and exit codes (§5).
 
 use opcua::types::StatusCode;

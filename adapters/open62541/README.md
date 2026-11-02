@@ -1,6 +1,6 @@
 # open62541 adapter (open62541 v1.5.9)
 
-The adapter contract is docs/CLIENT_CONTRACT.md; this file lists what is
+The adapter contract is docs/CONTAINER_CONTRACT.md; this file lists what is
 specific to the open62541 adapter.
 
 ## Historical events (`client history-read-events`, `client history-update-events`)

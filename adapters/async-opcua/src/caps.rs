@@ -1,4 +1,4 @@
-//! `print-capabilities` (CLIENT_CONTRACT §13).
+//! `print-capabilities` (CAPABILITIES).
 
 use serde_json::json;
 
@@ -26,7 +26,7 @@ pub fn document() -> serde_json::Value {
         "transports": ["opc.tcp"],
         "encodings": ["binary"],
         "clientOperations": crate::client::OPERATIONS.iter().chain(["find-servers-on-network"].iter()).collect::<Vec<_>>(),
-        // push-*: the `client push` flags of adapter 0.15.0 (CLIENT_CONTRACT §1 "push flags", §15).
+        // push-*: the `client push` flags of adapter 0.15.0 (CONTAINER_CONTRACT §1 "push flags", §15).
         "clientFeatures": [
             "channel-lifetime", "deadband", "reverse-listen", "application-uri", "register-server2",
             "push-groups", "push-certificates", "push-transaction-diagnostics"

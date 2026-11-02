@@ -9,7 +9,7 @@
  * `codec encode --type/--value`. Covers all 25 OPC UA built-in types, 1-D
  * arrays (`Type[]`) and matrices (`Type[]` plus dimensions).
  *
- * Literal forms (docs/CLIENT_CONTRACT.md §12):
+ * Literal forms (docs/CONTAINER_CONTRACT.md §12):
  *   Boolean          true | false | 1 | 0
  *   SByte..UInt64    decimal integer
  *   Float, Double    decimal; NaN, Infinity, -Infinity

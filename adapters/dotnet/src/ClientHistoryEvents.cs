@@ -12,7 +12,7 @@ using Opc.Ua;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// client history-read-events / history-update-events (docs/CLIENT_CONTRACT.md §1, §4): HistoryRead
+    /// client history-read-events / history-update-events (docs/CONTAINER_CONTRACT.md §1, §4): HistoryRead
     /// with ReadEventDetails and HistoryUpdate with UpdateEventDetails / DeleteEventDetails, sent as raw
     /// session services so that every status code reaches the result unchanged.
     /// </summary>

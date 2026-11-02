@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 
 namespace OpcUaInterop
 {
-    /// <summary>print-capabilities (docs/CLIENT_CONTRACT.md §13, §16; schemas/capabilities.schema.json).</summary>
+    /// <summary>print-capabilities (docs/CAPABILITIES.md, §16; schemas/capabilities.schema.json).</summary>
     internal static class Capabilities
     {
         public const string AdapterVersion = "0.18.2";

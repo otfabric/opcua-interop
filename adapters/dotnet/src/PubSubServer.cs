@@ -36,7 +36,7 @@ namespace OpcUaInterop
     }
 
     /// <summary>
-    /// server --pubsub-config (docs/CLIENT_CONTRACT.md §14, .NET specifics in §14.13): the
+    /// server --pubsub-config (docs/CONTAINER_CONTRACT.md §14, .NET specifics in §14.13): the
     /// Opc.Ua.PubSub runtime of UA-.NETStandard next to the fixture server. PublishedDataItems
     /// sample the fixture variables, TargetVariables write them. The configuration is decoded
     /// with the stack's JSON decoder and adapted where Opc.Ua.PubSub 2.0.1 differs from the

@@ -1,6 +1,10 @@
-# opcua-interop Client Command Contract
+# opcua-interop Container Contract
 
 Version: **1.0**
+
+| Version | Change |
+|---------|--------|
+| 1.0 | Current. Only moved since it was published as `docs/CLIENT_CONTRACT.md`: section 13 is now [CAPABILITIES.md](CAPABILITIES.md), the other sections keep their numbers and text. No command, flag or JSON document changed, so the version stays 1.0. |
 
 This document defines the stable external interface for the `client` subcommand of
 every opcua-interop adapter image. `go-opcua` (and any other consumer) depends on
@@ -224,7 +228,7 @@ server, peer tests may still call `EmitBaseEvent` for tighter timing.
 Alarms & Conditions (OPC UA Part 9) client baseline, all six adapters (since
 adapter 0.12.0). Generic Call services plus one event monitored item, so it
 works against any A&C server; the adapter servers with the alarm fixture
-declare `serverFeatures: "alarms"` (§13, fixtures/baseline/README.md "Alarms").
+declare `serverFeatures: "alarms"` (§13, docs/FIXTURES.md "Alarms").
 
 ```
 <image> client alarms --endpoint <url> [--node <nodeId>] [--condition-name <name>]
@@ -1707,185 +1711,7 @@ literal is sent as an empty / String Variant and the server answers);
 
 ## 13. `print-capabilities`
 
-Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
-
-| Field | Meaning |
-|-------|---------|
-| `adapter.version` | `0.8.1` |
-| `clientOperations` | the `client` subcommands the image has |
-| `clientFeatures` | optional client-side features (strings below) |
-| `serverFeatures` | optional server-side features (strings below) |
-| `securityProfiles` | `{policy, mode}` pairs usable on both the client and the server side |
-| `codec` | `{formats, jsonVersion, jsonModes, xmlEncodeUnsupported, xmlDecodeUnsupported}` |
-| `pubsub` | PubSub (Part 14) support, §14.11. Milo: `{"supported": false, …}` with empty lists |
-| `upstream` | only in an image of OT Fabric's own stack: `{name, version, revision, independentEngine}`, with `independentEngine` false. It is not a reference: `own/go-opcua/README.md`, which also says what it leaves out of this contract |
-
-| Feature string | In | open62541 | Milo | async-opcua | UA-.NETStandard | node-opcua | asyncua | Meaning |
-|----------------|----|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|---------|
-| `channel-lifetime` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `--channel-lifetime-ms` |
-| `deadband` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `subscribe --deadband-absolute/--deadband-percent/--trigger` |
-| `reverse-listen` | client | ✓ | — | ✓ | — | ✓ | — | `--reverse-listen` |
-| `ecc-security` | client, server | ✓ | — | — | — | — | — | ECC SecurityPolicies (`securityProfiles` lists them) |
-| `ecc-user-token` | client, server | ✓ | — | — | — | — | — | UserName token over an ECC endpoint (EccEncryptedSecret) |
-| `application-uri` | client | ✓ | — | ✓ | ✓ | ✓ | ✓ | `--application-uri`, ApplicationUri from the certificate |
-| `register-server2` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `register-server` can call RegisterServer2 |
-| `codec-json`, `codec-xml` | client | ✓ | ✓ | — | ✓ | — | — | `codec` formats |
-| `codec-json-verbose` | client | — | ✓ | — | ✓ | — | — | `codec --json-mode verbose` |
-| `codec-pubsub` | client | ✓ | — | — | ✓ | — | — | `codec pubsub-{uadp,json}-{encode,decode}` (§14.9) |
-| `deadband` | server | ✓ | ✓ | ✓ | ✓ | ✓ | — | DataChangeFilter absolute deadband / trigger honoured |
-| `percent-deadband` | server | ✓ | ✓ | ✓ | ✓ | ✓ | — | percent deadband on AnalogItems with EURange (`Analog.*`) |
-| `reverse-connect` | server | ✓ | — | ✓ | — | ✓ | — | `--reverse-connect` |
-| `lds` | server | ✓ | — | — | — | — | — | `--lds` |
-| `mdns` | server | ✓ | — | — | — | — | — | `--mdns-name`, FindServersOnNetwork |
-| `register-with` | server | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `--register-with` |
-| `node-management` | server | ✓ | — | ✓ | ✓ | — | — | AddNodes / DeleteNodes served |
-| `pubsub` | server | ✓ | — | — | ✓ | — | — | `--pubsub-config` (§14); open62541 also the PubSub information model and SKS, UA-.NETStandard static keys only (§14.13) |
-| `transport-wss` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.wss://…` (§9); server `--wss-port` (§11) |
-| `transport-https` | client, server | — | — | — | ✓ | — | — | `--endpoint opc.https://…` (§9); server `--https-port` (§11) |
-| `push-management` | server | ✓ | — | — | ✓ | ✓ | — | ServerConfiguration push certificate management (Part 12 §7, §15) with `--certificate` / `--private-key` / `--pki-dir`; fixture users get the well-known roles of their `roles` (SecurityAdmin) |
-| `gds-pull` | server | — | — | — | — | — | — | `dotnet-gds` only (§16): the server is a Global Discovery Server (Directory, DefaultApplicationGroup, pull certificate management) |
-| `push-groups` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `push --group`, `--certificate-type-id` (adapter 0.15.0, §1 "push flags") |
-| `push-certificates` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `push --get-certificates`, `--create-self-signed`, `--delete-certificate`, `--update-certificate` (PEM / PFX key), `--reset-to-defaults`, `--cancel` (adapter 0.15.0) |
-| `push-transaction-diagnostics` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `push --transaction-diagnostics` (adapter 0.15.0) |
-| `alarms-branches` | server | — | — | — | — | ✓ | — | the alarm fixture's `s=Alarms.Clear`: condition branches (fixtures/baseline/README.md "Alarms", adapter 0.15.0) |
-| `alarms-audible` | server | — | — | — | — | ✓ | — | InteropAlarm has AudibleEnabled / AudibleSound (AudioVariableType with ListId; adapter 0.15.0) |
-| `alarms` | server | ✓ (experimental) | — | — | ✓ | ✓ | — | the Alarms & Conditions fixture (`s=Alarms.*`, fixtures/baseline/README.md "Alarms"); Acknowledge / Confirm / AddComment / Enable / Disable / ConditionRefresh by the stack's own handlers (ConditionRefresh2 too, not exercised by `alarms`) |
-| `alarms-105` | server | — | — | — | ✓ | — | — | adapter 0.15.0: the Part 9 1.05 extension of the Alarms fixture (`s=Alarms.ExtAlarm`, `s=Alarms.Dialog`, `s=Alarms.Group`, fixtures/baseline/README.md "Alarms (1.05)"): Suppress / Silence / OutOfService / Latched / Shelving state methods, a dialog, condition branches, an alarm group and AudibleSound |
-| `auditing` | server | — | — | — | ✓ | — | — | adapter 0.15.0: `--auditing` (§11) turns the server's auditing on: audit events (AuditCondition*EventType of the alarm methods among them) reach event monitored items of SignAndEncrypt sessions |
-| `pubsub-multicast-loopback` | server | — | — | — | ✓ | — | — | adapter 0.15.0: the PubSub runtime (§14) loops its own UDP multicast back to the host (IP_MULTICAST_LOOP), so a subscriber on the same host (e.g. `--network host`) receives the publisher's multicast |
-| `history-events` | server | — | — | — | ✓ | — | ✓ | adapter 0.17.0: the event history fixture `s=History.Events` (§17, fixtures/baseline/README.md "History (events)"): HistoryRead with ReadEventDetails of the five seeded events, SelectClauses, WhereClause and continuation points |
-| `history-events-update` | server | — | — | — | ✓ | — | — | adapter 0.17.0: HistoryUpdate of `s=History.Events` with UpdateEventDetails (insert / replace / update) and DeleteEventDetails, and the method `s=History.ResetEvents` (§17) |
-
-`transports` in `print-capabilities` lists the endpoint schemes the adapter
-dials and serves: `["opc.tcp"]`, UA-.NETStandard (adapter 0.11.0)
-`["opc.tcp", "opc.https", "opc.wss"]`. open62541 1.5.9 has no WebSocket or
-HTTPS transport (the libwebsockets provider `UA_ENABLE_LWS` is on master
-only), Milo 1.1.8 has incubating, unpublished client transports only, and
-async-opcua, node-opcua and asyncua implement `opc.tcp` only.
-
-The `alarms` client operation (§1 `alarms` flags) is in `clientOperations` of
-all six adapters since adapter 0.12.0; `push`, `query`, `gds-pull`,
-`history-read-events` and `history-update-events` are in those of the
-adapters below:
-
-| Client operation | open62541 | Milo | async-opcua | UA-.NETStandard | node-opcua | asyncua |
-|------------------|:---------:|:----:|:-----------:|:---------------:|:----------:|:-------:|
-| `alarms` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `push` (adapter 0.13.0, §15; the others since 0.15.0) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `query` (adapter 0.15.0) | — | — | ✓ | — | ✓ | — |
-| `gds-pull` (§16; `dotnet-gds` since adapter 0.14.0, the others since 0.15.0) | ✓ | ✓ | ✓ | ✓ (`dotnet-gds` ✓) | — | ✓ |
-| `history-read-events` (adapter 0.17.0, §17) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `history-update-events` (adapter 0.17.0, §17) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-
-**Alarm servers** (all three give `success: true` for
-`alarms --node i=2253 --condition-name InteropAlarm --acknowledge --confirm --add-comment`
-from every adapter client, after `s=Alarms.Reset`):
-
-| | UA-.NETStandard 2.0.1 | node-opcua 2.187.12 | open62541 1.5.9 |
-|---|---|---|---|
-| Condition | AlarmConditionType `s=Alarms.InteropAlarm`, ConfirmedState | AlarmConditionType `s=Alarms.InteropAlarm`, ConfirmedState | AlarmConditionType `s=Alarms.InteropAlarm`, ConfirmedState (always added by the stack) |
-| Server → Alarms.Source | HasNotifier (root notifier) | HasEventSource (node-opcua rejects a condition source that is only a HasNotifier target) | HasNotifier |
-| RefreshStart / RefreshEnd | also on `--node s=Alarms.Source` | only on the Server object (`--node i=2253`): on `s=Alarms.Source` the condition is refreshed but no RefreshEnd arrives (exit 7) | as node-opcua |
-| Repeated Acknowledge (stale EventId) | `BadConditionBranchAlreadyAcked` | `BadEventIdUnknown` | `BadEventIdUnknown` |
-| Message after an action | unchanged (`interop-alarm`) | `The alarm was acknowledged`, … | `The alarm was acknowledged`, `The alarm was confirmed`, `A comment was added` |
-| Time | new Time on every event | Time of the condition, not updated by the methods | not updated by Acknowledge; the Confirm event has the null DateTime (`time: null`) |
-
-All three set Comment to the Acknowledge / Confirm comment. open62541 runs the
-alarm fixture only because the image enables
-`UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS` (experimental in 1.5.9, full
-namespace zero); the adapter patches v1.5.9's `checkConditionRefreshArguments`
-to accept the UInt32 SubscriptionId the Call service converts to IntegerId
-(`adapters/open62541/amalgam/fix_condition_refresh_args.py`; unpatched ConditionRefresh
-returns `BadInvalidArgument`). Eclipse Milo 1.1.8 has no condition state
-machine (the Acknowledge / Confirm / AddComment / Enable / Disable methods of
-`opc-ua-sdk/sdk-server/.../model/objects/AcknowledgeableConditionType` /
-`ConditionType` are abstract generated stubs, and
-`OpcUaNamespace$ConditionRefreshMethodImpl` only posts RefreshStart /
-RefreshEnd); asyncua 2.1.0 replays registered conditions on ConditionRefresh
-(`asyncua/server/subscription_service.py`) but has no Acknowledge / Confirm /
-AddComment / Enable / Disable handlers; an async-opcua server fixture was not
-attempted. Those three servers do not declare `alarms`. On all three alarm
-servers Disable / Enable answer Good and then `BadConditionAlreadyDisabled` /
-`BadConditionAlreadyEnabled`; a disabled condition is not refreshed
-(`conditions: []`); `s=Alarms.Reset` re-enables it.
-Milo's client spells status names with an underscore (`Bad_EventIdUnknown`), as
-in all its results; compare `code`.
-
-
-Eclipse Milo 1.1.8 has no ReverseHello in its transports
-(`opc-ua-stack/stack-core/.../channel/messages/MessageType.java` knows only
-Hello / Acknowledge / Error), no ECC `SecurityPolicy`
-(`opc-ua-stack/stack-core/.../security/SecurityPolicy.java` ends at
-`Aes256_Sha256_RsaPss`) and its server answers RegisterServer, RegisterServer2
-and FindServersOnNetwork with `Bad_ServiceUnsupported`
-(`opc-ua-sdk/sdk-server/.../servicesets/impl/DefaultDiscoveryServiceSet.java`).
-It has no PubSub implementation either (§14.12).
-
-async-opcua 0.19.0 (added in adapter 0.9.0) implements no ECC
-`SecurityPolicy` (`async-opcua-crypto/src/security_policy.rs` ends at
-`Aes256Sha256RsaPss`), its server answers FindServersOnNetwork,
-RegisterServer and RegisterServer2 with `BadServiceUnsupported`
-(`docs/compatibility.md`: "stub"), and it has no PubSub; the adapter refuses
-`--lds`, `--mdns-name` and `--pubsub-config` (exit 2) and ignores `--ecc-dir`
-with a warning. Its JSON encoding of a Variant is the 1.04 form
-(`{"Type":…,"Body":…}`), not the 1.05 encoding of `codec`, and its XML
-encoding of a Variant is the NodeSet2 value form (`<Int32>5</Int32>` directly
-inside `<Variant>`, without the Part 6 §5.3.1.17 `<Value>` element), so the
-adapter has no `codec` operation (exit 2, not listed in `clientOperations`). Trust is by exact certificate: the server
-trusts the certificates in `<pki-dir>/trusted/certs` (a client certificate
-that is only signed by a listed CA is rejected); the client validates the
-server certificate against `--trust-list` itself (exact match or issued by a
-listed certificate). See `adapters/async-opcua/README.md` for the stack deviations the
-go-opcua suite found.
-
-OPC Foundation UA-.NETStandard 2.0.1 (adapter name `dotnet`, added in adapter
-0.9.0) is the only adapter besides Milo with the Verbose JSON form: its `codec`
-encodes and decodes JSON (compact and verbose) and XML (see the codec table
-above), and its server serves AddNodes / DeleteNodes. The adapter does not wire
-the stack's ReverseConnectManager (`--reverse-listen` and `--reverse-connect`
-exit 2), and 2.0.1 does not accept the test PKI's RSA-CA-signed ECC
-certificates, so no `ecc-security` is declared and `--ecc-dir` is ignored with a
-warning. Its server runs no LDS or mDNS (`--lds`, `--mdns-name` and
-`--mdns-capability` exit 2); since adapter 0.10.0 it runs PubSub on the stack's
-Opc.Ua.PubSub runtime (§14.13). The test PKI is copied into
-the stack's directory stores (own / trusted / issuer / rejected, DER);
-SHA-1-signed certificates are rejected. See "Reference stacks" in the README for
-the stack deviations the go-opcua suite found.
-
-node-opcua 2.187.12 (added in adapter 0.9.0) implements no ECC
-`SecurityPolicy` (`node-opcua-secure-channel` ends at `Aes256_Sha256_RsaPss`;
-`--ecc-dir` is ignored with a warning, an `ECC_*` client policy is an input
-error). Its `OPCUAServer` answers AddNodes / DeleteNodes with
-`BadServiceUnsupported` (no `node-management`) and RegisterServer /
-RegisterServer2 / FindServersOnNetwork with a service fault; node-opcua ships
-the LDS as a separate server (`OPCUADiscoveryServer`, without the fixture
-address space) that the adapter does not run, so `--lds`, `--mdns-name` and
-`--mdns-capability` are refused (exit 2). It has no open-source PubSub
-(`--pubsub-config` → exit 2, `pubsub.supported: false`). The adapter has no
-`codec` operation yet (exit 2, not listed in `clientOperations`): node-opcua
-has an OPC UA 1.05 JSON encoder (`node-opcua-json`) but no Part 6 XML
-encoding of Variants, and the JSON half is not wired into the adapter. Trust is by the
-CA of `<pki-dir>/trusted/certs` with its CRL, as for open62541 and Milo. See
-`adapters/node-opcua/README.md` for the stack deviations the go-opcua suite found.
-
-opcua-asyncio (PyPI `asyncua` 2.1.0, adapter name `asyncua`, added in adapter
-0.9.0) declares `channel-lifetime`, `deadband`, `application-uri`,
-`register-server2` and (since adapter 0.15.0) `push-groups`,
-`push-certificates` and `push-transaction-diagnostics` on the client side and only `register-with` on the
-server side. It has no ECC `SecurityPolicy`, no ReverseHello, no LDS / mDNS
-server and no PubSub: the client refuses `ECC_*` policies and
-`--reverse-listen` (exit 2), the server refuses `--reverse-connect`, `--lds`,
-`--mdns-name`, `--mdns-capability` and `--pubsub-config` (exit 2), and AddNodes
-/ DeleteNodes are not served (`BadUserAccessDenied`). The adapter has no
-`codec` operation (exit 2, not listed in `clientOperations`). The server does
-not declare `deadband` / `percent-deadband`: asyncua 2.1.0 compares an absolute
-deadband with the previous sample instead of the last reported value, and
-accepts a percent deadband (also without EURange) without applying it. Trust:
-`<pki-dir>/trusted/certs` are the anchors, `issuers/certs` only completes a
-chain, CRLs of `trusted/crl` and `issuers/crl` are honoured; the client checks
-the server certificate against `--trust-list` with the stack's
-`CertificateValidator`. See `adapters/asyncua/README.md` for the stack deviations the
-go-opcua suite found.
+Moved, unchanged, to [CAPABILITIES.md](CAPABILITIES.md#13-print-capabilities).
 
 ---
 
@@ -2085,7 +1911,7 @@ The MQTT-C send and receive buffers are **1024 bytes**: a NetworkMessage
 message of the example data set (10 fields) is ~690 bytes. `MetaDataQueueName`
 is not used (no metadata publishing). The broker for the tests:
 `eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c`
-with `fixtures/pubsub/mosquitto.conf` (README "MQTT broker").
+with `fixtures/pubsub/mosquitto.conf` (docs/FIXTURES.md "MQTT broker").
 
 ### 14.5 Message security and keys
 
@@ -2149,7 +1975,7 @@ with writable variables without behaviours — published fields on a publisher,
 TargetVariables on a subscriber: `PubSub.Boolean`, `PubSub.Int32`,
 `PubSub.Int64`, `PubSub.UInt64`, `PubSub.Double`, `PubSub.String`,
 `PubSub.DateTime`, `PubSub.ByteString`, `PubSub.Int32Array` (Int32[]),
-`PubSub.DoubleArray` (Double[]) — see `fixtures/baseline/README.md`.
+`PubSub.DoubleArray` (Double[]) — see `docs/FIXTURES.md`.
 `Dynamic.Counter` (Int64, +1 every 250 ms) is a continuously changing source.
 
 ### 14.8 Worked examples
@@ -3011,7 +2837,7 @@ server fixture `s=History.Events` on the servers that declare
 ### 17.1 Server fixture `s=History.Events`
 
 Built in code (not in `fixture.json`), like the alarm fixture; servers
-without `history-events` have no such node. fixtures/baseline/README.md
+without `history-events` have no such node. docs/FIXTURES.md
 "History (events)" has the table.
 
 - Object `nsu=urn:otfabric:opcua-interop:model;s=History.Events`

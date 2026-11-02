@@ -10,7 +10,7 @@ using Opc.Ua;
 
 namespace OpcUaInterop
 {
-    /// <summary>JSON helpers and the result envelope of docs/CLIENT_CONTRACT.md §3.</summary>
+    /// <summary>JSON helpers and the result envelope of docs/CONTAINER_CONTRACT.md §3.</summary>
     internal static class Json
     {
         public static readonly JsonSerializerOptions Options = new()

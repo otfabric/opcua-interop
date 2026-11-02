@@ -11,7 +11,7 @@ import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.
 import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.ushort;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** client alarms (docs/CLIENT_CONTRACT.md §4 `alarms`): select clauses, ConditionEntry, flags. */
+/** client alarms (docs/CONTAINER_CONTRACT.md §4 `alarms`): select clauses, ConditionEntry, flags. */
 public class AlarmsTest {
 
     @Test

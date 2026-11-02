@@ -84,7 +84,7 @@ public class ResultBuilder {
         return nid.toParseableString();
     }
 
-    /** Value encoding per CLIENT_CONTRACT §7 */
+    /** Value encoding per CONTAINER_CONTRACT §7 */
     public static Object encodeVariantValue(org.eclipse.milo.opcua.stack.core.types.builtin.Variant v) {
         if (v == null || v.isNull()) return null;
         Object val = v.getValue();

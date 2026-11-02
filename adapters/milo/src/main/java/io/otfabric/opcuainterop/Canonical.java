@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Canonical result-value encoding (docs/CLIENT_CONTRACT.md §7) for every
+ * Canonical result-value encoding (docs/CONTAINER_CONTRACT.md §7) for every
  * built-in type, arrays and matrices. Used by the {@code codec} command; the
  * older commands keep {@link ResultBuilder#encodeVariantValue}.
  */

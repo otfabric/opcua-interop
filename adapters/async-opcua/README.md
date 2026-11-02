@@ -4,7 +4,7 @@ opcua-interop adapter for [async-opcua](https://github.com/FreeOpcUa/async-opcua
 (crate `async-opcua` on crates.io, pinned `=0.19.0` in `Cargo.toml` and
 `Cargo.lock`), the asynchronous Rust OPC UA client and server library of
 FreeOpcUa. Added in opcua-interop **0.9.0**; it implements
-`docs/CLIENT_CONTRACT.md` like the open62541 and Milo adapters.
+`docs/CONTAINER_CONTRACT.md` like the open62541 and Milo adapters.
 
 Image: `ghcr.io/otfabric/opcua-interop-async-opcua:<version>`. Adapter name in
 the result envelope, ready file and `print-capabilities`: `async-opcua`.
@@ -181,16 +181,15 @@ The go-opcua tests skip or log these with the reason; none is hidden.
 | 6 | A Write with a SourceTimestamp in the DataValue is accepted (`Good`) instead of `BadWriteNotSupported` (same as Milo) | server write | `TestAsyncOpcuaServer_WriteEncodingMask` (qualification, logged) |
 | 7 | A percent deadband on a variable without EURange is rejected with `BadDeadbandFilterInvalid` (Part 4 names `BadMonitoredItemFilterUnsupported`; the suite accepts both) | `ParsedDataChangeFilter::parse` | `TestAsyncOpcuaServer_DataChangeFilter` |
 | 8 | Certificates are trusted by exact match only (no CA chains) | `async-opcua-crypto/src/certificate_store.rs` | PKI layout above |
-| 9 | Over SecurityPolicy None the ActivateSession response carries a null ServerNonce (`SecurityPolicy::random_nonce` returns null for None; Part 4 §5.6.3.2 asks for at least 32 bytes). The open62541 1.5.9 client rejects the session (`BadSecurityChecksFailed`); over a secured channel the nonce is 32 bytes and open62541 interoperates | `activate_session`, `async-opcua-server/src/session/manager.rs` | `scripts/smoke.sh cross` (`check_o62541_none_deviation`, `run_async_opcua_secure_cross`) |
-| 10 | The client takes no certificate chain: `X509::from_der` rejects a DER certificate followed by more certificates ("trailing data"), which Part 6 §6.2.3 allows in a ServerCertificate / SenderCertificate. It parses the endpoint's ServerCertificate, the OpenSecureChannel SenderCertificate and the CreateSession ServerCertificate (and compares the last with the endpoint's byte for byte), so it cannot connect over Sign / SignAndEncrypt to a UA-.NETStandard 2.0.1 server (`dotnet`, `dotnet-gds`) whose certificate is CA-signed: that server sends the chain in the OpenSecureChannel response even with `--no-certificate-chain`. The adapter's own `--trust-list` check (`src/pki.rs` `validate_against`) validates the chain's first certificate since adapter 0.16.0 (0.15.0 logged `server certificate not trusted: … trailing data`); the stack still rejects the chain | `async-opcua-crypto/src/x509.rs:423-427`; `async-opcua-client/src/transport/channel.rs:342`, `async-opcua-core/src/comms/secure_channel.rs:794`, `async-opcua-client/src/session/services/session.rs:208-213` | CLIENT_CONTRACT.md §16.3 (not in the smoke) |
+| 9 | Over SecurityPolicy None the ActivateSession response carries a null ServerNonce (`SecurityPolicy::random_nonce` returns null for None; Part 4 §5.6.3.2 asks for at least 32 bytes). The open62541 1.5.9 client rejects the session (`BadSecurityChecksFailed`); over a secured channel the nonce is 32 bytes and open62541 interoperates | `activate_session`, `async-opcua-server/src/session/manager.rs` | `tests/known-bugs.tsv`, `tests/secure-cases.tsv` |
+| 10 | The client takes no certificate chain: `X509::from_der` rejects a DER certificate followed by more certificates ("trailing data"), which Part 6 §6.2.3 allows in a ServerCertificate / SenderCertificate. It parses the endpoint's ServerCertificate, the OpenSecureChannel SenderCertificate and the CreateSession ServerCertificate (and compares the last with the endpoint's byte for byte), so it cannot connect over Sign / SignAndEncrypt to a UA-.NETStandard 2.0.1 server (`dotnet`, `dotnet-gds`) whose certificate is CA-signed: that server sends the chain in the OpenSecureChannel response even with `--no-certificate-chain`. The adapter's own `--trust-list` check (`src/pki.rs` `validate_against`) validates the chain's first certificate since adapter 0.16.0 (0.15.0 logged `server certificate not trusted: … trailing data`); the stack still rejects the chain | `async-opcua-crypto/src/x509.rs:423-427`; `async-opcua-client/src/transport/channel.rs:342`, `async-opcua-core/src/comms/secure_channel.rs:794`, `async-opcua-client/src/session/services/session.rs:208-213` | CONTAINER_CONTRACT.md §16.3 (not in the smoke) |
 
 ## Testing
 
 ```sh
-make test-async-opcua       # image build runs `cargo test`; `test` checks the fixtures
-make smoke-async-opcua      # single-adapter smoke
-make shutdown-async-opcua   # SIGTERM → exit 0
-make smoke-cross-stack      # with open62541 and Milo, both directions
+make image-async-opcua  # image build runs the unit tests
+make smoke-async-opcua  # single-adapter smoke: fixtures, `test`, SIGTERM
+make interop               # with every other adapter, both directions
 ```
 
 The unit tests (`cargo test`, in `src/*.rs`, test certificates in
@@ -203,7 +202,7 @@ behaviours, behaviour targets, security profiles), and that
 dispatches.
 
 The single-adapter smoke runs every check of `scripts/smoke.sh` except the
-codec checks. `smoke.sh cross` runs the open62541 and Milo clients against the
+codec checks. `scripts/interop.sh` runs the open62541 and Milo clients against the
 async-opcua server and the async-opcua client against all three servers, plus
 secured channels (Basic256Sha256, Aes128 / Aes256, UserName, an untrusted
 certificate) on a Docker network. `go-opcua/interop` runs the adapter in both

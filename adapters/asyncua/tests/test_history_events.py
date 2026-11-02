@@ -1,5 +1,5 @@
 """`client history-read-events` / `history-update-events`: select paths,
-WhereClause, --event values and flag validation (docs/CLIENT_CONTRACT.md)."""
+WhereClause, --event values and flag validation (docs/CONTAINER_CONTRACT.md)."""
 
 import base64
 import datetime

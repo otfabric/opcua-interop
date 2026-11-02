@@ -19,7 +19,7 @@ import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.
 import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.ushort;
 
 /**
- * client history-read-events / history-update-events (docs/CLIENT_CONTRACT.md):
+ * client history-read-events / history-update-events (docs/CONTAINER_CONTRACT.md):
  * HistoryRead with ReadEventDetails, HistoryUpdate with UpdateEventDetails /
  * DeleteEventDetails, sent as generic services (Milo 1.1.8 has no event
  * history helpers on its client).

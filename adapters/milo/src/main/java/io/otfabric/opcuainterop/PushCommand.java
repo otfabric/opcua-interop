@@ -39,7 +39,7 @@ import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.
 import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.ushort;
 
 /**
- * {@code client push} (docs/CLIENT_CONTRACT.md §1 "push flags", §4 {@code push}, §15) and
+ * {@code client push} (docs/CONTAINER_CONTRACT.md §1 "push flags", §4 {@code push}, §15) and
  * {@code client gds-pull} (§16.2).
  *
  * <p>Eclipse Milo 1.1.8 has neither a push certificate management client nor a GDS client, so

@@ -11,7 +11,7 @@ using Opc.Ua;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// Bridges the test PKI (PEM files, docs/CLIENT_CONTRACT.md §11 layout) and the stack's
+    /// Bridges the test PKI (PEM files, docs/CONTAINER_CONTRACT.md §11 layout) and the stack's
     /// directory certificate stores (own / trusted / issuer / rejected with DER certificates).
     /// </summary>
     internal static class Pki

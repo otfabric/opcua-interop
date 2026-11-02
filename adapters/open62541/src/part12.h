@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * Helpers shared by `client push` (Part 12 §7, CLIENT_CONTRACT §15) and
+ * Helpers shared by `client push` (Part 12 §7, CONTAINER_CONTRACT §15) and
  * `client gds-pull` (Part 12 §6 / §7.9, §16.2). open62541 v1.5.9 has neither
  * a push nor a GDS client API, so both commands are plain method calls
  * (UA_Client_call) built on these helpers: a JSON builder for the result

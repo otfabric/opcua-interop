@@ -23,7 +23,7 @@ import java.util.Map;
 import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.uint;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** client push / gds-pull (docs/CLIENT_CONTRACT.md §1 "push flags", §16.2): flags and encodings. */
+/** client push / gds-pull (docs/CONTAINER_CONTRACT.md §1 "push flags", §16.2): flags and encodings. */
 public class PushTest {
 
     private static final EncodingContext CTX = DefaultEncodingContext.INSTANCE;

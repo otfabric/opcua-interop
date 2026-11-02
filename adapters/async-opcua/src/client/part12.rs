@@ -204,7 +204,7 @@ fn b64_list(l: &Option<Vec<ByteString>>) -> Value {
     )
 }
 
-/// The JSON of a TrustListDataType (CLIENT_CONTRACT §4 `push`, §16.2).
+/// The JSON of a TrustListDataType (CONTAINER_CONTRACT §4 `push`, §16.2).
 pub fn trust_list_json(tl: &TrustListDataType) -> Value {
     json!({
         "specifiedLists": tl.specified_lists,

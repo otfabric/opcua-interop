@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Command opcua-interop is the opcua-interop-otfabric image: go-opcua behind the
-// client command contract (docs/CLIENT_CONTRACT.md).
+// client command contract (docs/CONTAINER_CONTRACT.md).
 //
 // It is OT Fabric's own stack, not an independent implementation: results
 // against it are never independent evidence for go-opcua (README.md). It covers a
@@ -24,7 +24,7 @@ var (
 	upstreamRevision = "dev"
 )
 
-// Exit codes (docs/CLIENT_CONTRACT.md §5).
+// Exit codes (docs/CONTAINER_CONTRACT.md §5).
 const (
 	exitOK       = 0
 	exitInput    = 2
@@ -85,7 +85,7 @@ var securityProfiles = []securityProfile{
 	{"Aes256_Sha256_RsaPss", "SignAndEncrypt"},
 }
 
-// capabilities is the document of docs/CLIENT_CONTRACT.md §13. It lists what this
+// capabilities is the document of docs/CAPABILITIES.md. It lists what this
 // adapter does, not what go-opcua can do. Anything else counts as not declared and
 // is refused with exit 2.
 func capabilities() map[string]any {

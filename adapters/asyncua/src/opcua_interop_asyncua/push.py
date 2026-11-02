@@ -1,4 +1,4 @@
-"""`client push` (docs/CLIENT_CONTRACT.md §1 "push flags", §4 `push`, §15) and
+"""`client push` (docs/CONTAINER_CONTRACT.md §1 "push flags", §4 `push`, §15) and
 `client gds-pull` (§16.2) on the asyncua client.
 
 opcua-asyncio 2.1.0 has neither a push certificate management client nor a

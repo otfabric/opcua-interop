@@ -1,6 +1,6 @@
 """`client push` (§1 "push flags", §15) and `client gds-pull` (§16.2): flag
 parsing and input errors (exit 2 before connecting), the hand-made encodings
-and the CSR. The commands themselves run against go-opcua in its interop
+and the CSR. The commands themselves run against a consumer in its interop
 suite (no asyncua server implements push management or a GDS)."""
 
 import base64

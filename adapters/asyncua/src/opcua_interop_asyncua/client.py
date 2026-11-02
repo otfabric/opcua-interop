@@ -1,5 +1,5 @@
 """`client` subcommands on the asyncua (opcua-asyncio) client
-(docs/CLIENT_CONTRACT.md §1–§9)."""
+(docs/CONTAINER_CONTRACT.md §1–§9)."""
 
 from __future__ import annotations
 

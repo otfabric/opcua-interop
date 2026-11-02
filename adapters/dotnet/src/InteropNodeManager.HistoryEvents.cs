@@ -11,7 +11,7 @@ using Opc.Ua.Server.Historian.InMemory;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// The event history fixture (fixtures/baseline/README.md "History (events)", serverFeatures
+    /// The event history fixture (docs/FIXTURES.md "History (events)", serverFeatures
     /// "history-events" and "history-events-update"): the notifier s=History.Events, EventNotifier
     /// SubscribeToEvents | HistoryRead | HistoryWrite, seeded with five events, and the method
     /// s=History.ResetEvents. HistoryRead (ReadEventDetails) and HistoryUpdate (UpdateEventDetails,

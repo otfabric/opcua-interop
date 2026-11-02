@@ -117,7 +117,7 @@ namespace OpcUaInterop
             // --no-certificate-chain (opt-in): the ServerCertificate of the endpoints and of
             // CreateSession is the leaf only (SecurityConfiguration.SendCertificateChain =
             // false). The default sends the certificate followed by its issuers (Part 6
-            // §6.2.3), which some client stacks do not accept (CLIENT_CONTRACT.md §16.3).
+            // §6.2.3), which some client stacks do not accept (CONTAINER_CONTRACT.md §16.3).
             bool sendChain = !a.Has("--no-certificate-chain");
 
             string advertised = "opc.tcp://" + advertisedHost + ":" + advertisedPort.ToString(Inv.C) + path;

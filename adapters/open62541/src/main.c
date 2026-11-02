@@ -54,7 +54,7 @@
  * print-capabilities
  * ---------------------------------------------------------------------- */
 
-/* PubSub (Part 14). See docs/CLIENT_CONTRACT.md §14 for what each entry
+/* PubSub (Part 14). See docs/CONTAINER_CONTRACT.md §14 for what each entry
  * means and the open62541 v1.5.9 limits behind the lists. */
 static void print_pubsub_capabilities(void) {
     printf("  \"pubsub\": {\n");
@@ -142,7 +142,7 @@ static int cmd_print_capabilities(void) {
     printf("    \"codec-json\",\n");
     printf("    \"codec-xml\",\n");
     printf("    \"codec-pubsub\",\n");
-    /* The `client push` flags of adapter 0.15.0 (CLIENT_CONTRACT §1 "push flags") */
+    /* The `client push` flags of adapter 0.15.0 (CONTAINER_CONTRACT §1 "push flags") */
     printf("    \"push-groups\",\n");
     printf("    \"push-certificates\",\n");
     printf("    \"push-transaction-diagnostics\"\n");

@@ -23,7 +23,7 @@ using UaJsonDecoder = Opc.Ua.JsonDecoder;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// codec pubsub-uadp-encode | -decode | pubsub-json-encode | -decode (docs/CLIENT_CONTRACT.md
+    /// codec pubsub-uadp-encode | -decode | pubsub-json-encode | -decode (docs/CONTAINER_CONTRACT.md
     /// §14.9): Opc.Ua.PubSub's UadpEncoder / UadpDecoder / JsonEncoder / JsonDecoder on the
     /// NetworkMessage description. .NET specifics in §14.13.
     /// </summary>

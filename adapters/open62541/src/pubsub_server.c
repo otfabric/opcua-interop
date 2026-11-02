@@ -24,7 +24,7 @@
  * SecurityGroupId, ReaderGroup and DataSetReader TransportSettings — i.e. the
  * MQTT QueueName of a subscriber —, the DataSetWriter TransportSettings) and
  * ignores errors of nested components. Which fields are honoured is
- * documented in docs/CLIENT_CONTRACT.md §14.
+ * documented in docs/CONTAINER_CONTRACT.md §14.
  */
 
 #define _GNU_SOURCE

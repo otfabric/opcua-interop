@@ -6,7 +6,7 @@ using Opc.Ua;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// The Part 9 1.05 extension of the alarm fixture (fixtures/baseline/README.md "Alarms (1.05)",
+    /// The Part 9 1.05 extension of the alarm fixture (docs/FIXTURES.md "Alarms (1.05)",
     /// serverFeatures "alarms-105"), next to InteropAlarm under s=Alarms.Source:
     /// <list type="bullet">
     /// <item>s=Alarms.ExtAlarm: an AlarmConditionType with SuppressedState, OutOfServiceState,

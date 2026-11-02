@@ -18,7 +18,7 @@ using ApplicationRecordDataType = Opc.Ua.Gds.ApplicationRecordDataType;
 
 namespace OpcUaInterop
 {
-    /// <summary>The client subcommands: endpoints and gds-pull (docs/CLIENT_CONTRACT.md §16).</summary>
+    /// <summary>The client subcommands: endpoints and gds-pull (docs/CONTAINER_CONTRACT.md §16).</summary>
     internal static class GdsClientCommand
     {
         public static readonly string[] Operations = ["endpoints", "gds-pull"];

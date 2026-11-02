@@ -1,4 +1,4 @@
-//! NodeId canonical string form (CLIENT_CONTRACT §6) and input parsing (§8).
+//! NodeId canonical string form (CONTAINER_CONTRACT §6) and input parsing (§8).
 
 use base64::Engine;
 use opcua::types::{ByteString, ExpandedNodeId, Guid, Identifier, NodeId, UAString};

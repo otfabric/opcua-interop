@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// The Alarms & Conditions fixture (serverFeatures "alarms", fixtures/baseline/README.md):
+// The Alarms & Conditions fixture (serverFeatures "alarms", docs/FIXTURES.md):
 // an AlarmConditionType instance `s=Alarms.InteropAlarm` (with the optional
 // ConfirmedState / Confirm) on the notifier `s=Alarms.Source`, and the method
 // `s=Alarms.Reset` that re-arms it. Since adapter 0.15.0 the alarm has the

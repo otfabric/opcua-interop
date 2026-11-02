@@ -21,7 +21,7 @@ using Opc.Ua.PubSub.Udp;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// client pubsub-discover (docs/CLIENT_CONTRACT.md §14.13): a UADP discovery probe of
+    /// client pubsub-discover (docs/CONTAINER_CONTRACT.md §14.13): a UADP discovery probe of
     /// Opc.Ua.PubSub (IPubSubApplication.RequestDiscoveryAsync) on a datagram connection, and the
     /// announcements that answered it.
     /// </summary>

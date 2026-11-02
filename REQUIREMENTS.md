@@ -1,10 +1,119 @@
 # Requirements
 
+What this repository must do and must not do. [PLAN.md](PLAN.md) says in
+which order; [docs/CONTAINER_CONTRACT.md](docs/CONTAINER_CONTRACT.md) and
+[docs/FIXTURES.md](docs/FIXTURES.md) are the specifications that follow from
+it.
+
 ## Purpose
+
+Independent, reproducible interoperability validation for OPC UA libraries:
+established third-party implementations, packaged as containers that all behave
+the same way, so that a library can be tested against real implementation
+diversity without owning any of it. Consumer repositories use these containers to
+make defensible interoperability claims about their own implementations.
+
+It is not another OPC UA implementation and not a general protocol-testing
+framework.
+
+## R1 - Repository isolation
+
+- R1.1 This repository does not import, build, link against or depend on any
+  library under test, and contains no test logic or expectation specific to
+  one. The one exception is `own/` with its workflow: images of OT Fabric's own stacks, published for others to test against (`own/go-opcua/README.md`). The rest of the repository does not know them, and they are not part of a release.
+- R1.2 A consumer depends on published images, the documented contract and the
+  test PKI script `certs/generate.sh`.
+- R1.3 No third-party code from here is copied into a consumer, and the
+  contract does not shape a consumer's public API.
+
+| Responsibility | Here | Consumer |
+|----------------|:----:|:--------:|
+| Third-party implementations, adapters, Dockerfiles | yes | no |
+| Fixtures, fixture schema and validation | yes | no |
+| Container contract, capability declarations | yes | no |
+| Image builds and publishing, licence compliance | yes | no |
+| Self-tests of the reference stacks | yes | no |
+| Scenarios and assertions about a library | no | yes |
+| Compatibility claims and release qualification of a library | no | yes |
+
+## R2 - Reference implementations
+
+- R2.1 These are in scope, in this order of priority:
+
+  | Priority | Implementation | Language | Independent engine |
+  |----------|----------------|----------|:------------------:|
+  | P0 | open62541 | C | yes |
+  | P0 | Eclipse Milo | Java | yes |
+  | P0 | OPC Foundation UA-.NETStandard | C# | yes |
+  | P1 | async-opcua | Rust | yes |
+  | P1 | node-opcua | TypeScript | yes |
+  | P1 | opcua-asyncio | Python | yes |
+  | P1 | UA-.NETStandard GDS | C# | no: the engine of UA-.NETStandard, a separate image for the Part 12 pull model |
+
+- R2.2 Each is its own image. No image contains two implementations.
+- R2.3 An adapter on another adapter's protocol engine says so and does not count
+  as an additional independent implementation.
+- R2.4 An adapter is published only when it builds from pinned sources and
+  passes the smoke test and the cross-stack self-test for what it declares.
+
+## R3 - Container contract
+
+- R3.1 Every image has the same entry points: `server`, `client`, `test`,
+  `validate-fixture`, `print-capabilities`, with the same flags and semantics.
+- R3.2 Servers signal readiness when they actually accept OPC UA connections, by
+  a file. Nothing relies on delays.
+- R3.3 Machine-readable output is JSON on stdout with stable field names;
+  diagnostics go to stderr; exit codes have fixed meanings.
+- R3.4 Every operation is bounded by a configurable timeout.
+- R3.5 Servers stop cleanly on SIGTERM and exit non-zero when they cannot start.
+- R3.6 Capabilities are machine-readable and declared only for behaviour that is
+  exercised.
+
+## R4 - Fixtures
+
+- R4.1 Fixtures describe the address space and its observable behaviour,
+  independent of any implementation.
+- R4.2 Fixtures contain no assertions and no names from any library under test.
+- R4.3 Dynamic behaviour is deterministic.
+- R4.4 Fixtures are validated against a schema, in CI and by each adapter.
+
+## R5 - Reproducibility
+
+- R5.1 Every upstream is pinned to an exact version, every base image to a
+  digest. `versions.yaml` records all of them and is checked against the build
+  files.
+- R5.2 Releases are immutable tags; images are published with their digests.
+- R5.3 Images are published for linux/amd64 and linux/arm64.
+
+## R6 - Self-tests
+
+- R6.1 The reference stacks are tested against each other in every supported
+  direction, with an expectation on each result document, not just on success.
+- R6.2 These results are about the references and are never presented as
+  results for a consumer.
+- R6.3 Malformed messages, invalid sequence numbers and timer-boundary cases are
+  out of scope: reference implementations are not misused as fault injectors.
+
+## R7 - Licensing and safety
+
+- R7.1 Licence notices of all bundled software are preserved in the images.
+- R7.2 Test services are exposed on loopback or private networks by default.
+
+## R8 - Scope discipline
+
+- R8.1 Adapters are small and explicit. No generic interoperability framework.
+- R8.2 Structure is added when an implementation requires it, not before.
+
+---
+
+The detailed requirements of each release follow. They are the history of how the
+contract grew; the two stacks of the early goals are now the ones above.
+
+## Original purpose
 
 `opcua-interop` provides containerized OPC UA reference implementations and a shared fixture format for interoperability testing. Consumer repositories use these containers to make defensible interoperability claims about their own OPC UA implementations.
 
-## Goals
+## Original goals
 
 - Provide two containerized OPC UA reference implementations from independent implementation families
 - Define a stack-neutral, versioned fixture format that describes deterministic OPC UA address spaces
@@ -14,7 +123,7 @@
 - Provide documented, stable Make targets and Docker commands that consumer repositories can invoke
 - Enable cross-stack self-verification between the two reference implementations
 
-## Reference stacks
+## Original reference stacks
 
 | Adapter | Language | Implementation family |
 |---|---|---|

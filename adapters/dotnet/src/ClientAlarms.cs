@@ -11,7 +11,7 @@ using Opc.Ua;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// client alarms (docs/CLIENT_CONTRACT.md "alarms"): ConditionRefresh on an event monitored
+    /// client alarms (docs/CONTAINER_CONTRACT.md "alarms"): ConditionRefresh on an event monitored
     /// item, then Acknowledge / Confirm / AddComment on the refreshed condition (Part 9).
     /// </summary>
     internal static partial class ClientCommand

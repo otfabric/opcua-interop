@@ -11,7 +11,7 @@ using Opc.Ua.Client;
 
 namespace OpcUaInterop
 {
-    /// <summary>The flags of client push (docs/CLIENT_CONTRACT.md §1 "push flags"), validated before connecting.</summary>
+    /// <summary>The flags of client push (docs/CONTAINER_CONTRACT.md §1 "push flags"), validated before connecting.</summary>
     internal sealed class PushOptions
     {
         /// <summary>--group: the CertificateGroup (Part 12 §7.8.4) and its default CertificateType.</summary>
@@ -181,7 +181,7 @@ namespace OpcUaInterop
     }
 
     /// <summary>
-    /// client push (docs/CLIENT_CONTRACT.md §1 "push flags", §4 push, §15): push certificate
+    /// client push (docs/CONTAINER_CONTRACT.md §1 "push flags", §4 push, §15): push certificate
     /// management as plain Call requests on the standard NodeIds of ServerConfiguration (Part 12
     /// §7.10) and on the FileType / TrustListType methods of the group's TrustList, all on the one
     /// session of the command (the transaction of Part 12 §7.10.2 is the session's).

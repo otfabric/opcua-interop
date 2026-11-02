@@ -1,4 +1,4 @@
-"""`client alarms` (docs/CLIENT_CONTRACT.md §4 `alarms`): select clauses, ConditionEntry encoding, flags."""
+"""`client alarms` (docs/CONTAINER_CONTRACT.md §4 `alarms`): select clauses, ConditionEntry encoding, flags."""
 
 import datetime
 import unittest

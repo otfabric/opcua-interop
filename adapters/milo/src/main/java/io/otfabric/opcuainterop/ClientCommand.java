@@ -2544,7 +2544,7 @@ public class ClientCommand {
     /**
      * Build a RequestHeader with the active session AuthenticationToken.
      * Raw {@code client.sendRequest(...)} calls do not inject the token; a NULL
-     * token makes CreateMonitoredItems fail ownership checks on go-opcua.
+     * token makes CreateMonitoredItems fail ownership checks on a strict server.
      */
     static RequestHeader newRequestHeader(OpcUaClient client, long timeoutMs)
             throws UaException {

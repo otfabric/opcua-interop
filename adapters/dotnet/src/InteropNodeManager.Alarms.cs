@@ -8,7 +8,7 @@ using Opc.Ua;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// The Alarms &amp; Conditions fixture (fixtures/baseline/README.md "Alarms", serverFeatures "alarms"):
+    /// The Alarms &amp; Conditions fixture (docs/FIXTURES.md "Alarms", serverFeatures "alarms"):
     /// s=Alarms / s=Alarms.Source (root notifier) with the AlarmConditionType instance
     /// s=Alarms.InteropAlarm (ConfirmedState included) and the s=Alarms.Reset method.
     /// Acknowledge / Confirm / AddComment / Enable / Disable / ConditionRefresh are the stack's own

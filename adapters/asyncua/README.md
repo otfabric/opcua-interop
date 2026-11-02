@@ -3,7 +3,7 @@
 [opcua-asyncio](https://github.com/FreeOpcUa/opcua-asyncio) (PyPI `asyncua`)
 **2.1.0** on CPython **3.14.9** (`python:3.14.9-slim-trixie`, pinned by
 digest), adapter version **0.9.0**, image `ghcr.io/otfabric/opcua-interop-asyncua`.
-It implements the CLI contract of `docs/CLIENT_CONTRACT.md` (`server`,
+It implements the CLI contract of `docs/CONTAINER_CONTRACT.md` (`server`,
 `client <subcmd>`, `print-capabilities`, `validate-fixture`, `test`); result
 envelopes carry `"adapter": "asyncua"`.
 
@@ -63,7 +63,7 @@ docker run --rm ghcr.io/otfabric/opcua-interop-asyncua:dev \
 push certificate management client and no GDS client, so both commands are
 built on its generic services (`src/opcua_interop_asyncua/push.py`):
 
-- `push` (CLIENT_CONTRACT §1 "push flags", §15) calls the Part 12 §7.10
+- `push` (CONTAINER_CONTRACT §1 "push flags", §15) calls the Part 12 §7.10
   methods on the standard NodeIds of ServerConfiguration (`i=12637`), with
   every flag of adapter 0.15.0 (`--group`, `--get-certificates`,
   `--create-self-signed`, `--delete-certificate`, `--update-certificate` with
@@ -174,7 +174,7 @@ list would stop. `pki.py` loads the files itself and hands them to asyncua's
   2.0.1 servers send it) is reduced to its leaf before it is handed to
   `Client.set_security`, which reads its `server_certificate` as a single
   certificate (since 0.16.0; 0.15.0 failed with `ExtraData`,
-  CLIENT_CONTRACT.md §16.3).
+  CONTAINER_CONTRACT.md §16.3).
 - **Browse view:** `client browse` sends the null ViewDescription (Part 4
   §7.45: ViewId null, Timestamp null, ViewVersion 0), with Timestamp set to
   `ua.get_win_epoch()` as asyncua's own `Node.get_references` does
@@ -226,10 +226,9 @@ client reads as `None`.
 ## Testing
 
 ```sh
-make test-asyncua          # image build runs the unittest suite; `test` checks the fixtures
-make smoke-asyncua         # single-adapter smoke
-make shutdown-asyncua      # SIGTERM → exit 0
-make smoke-cross-asyncua   # with open62541 and Milo (and async-opcua / dotnet), both directions
+make image-asyncua         # image build runs the unittest suite
+make smoke-asyncua         # single-adapter smoke: fixtures, `test`, SIGTERM
+make interop               # with every other adapter, both directions
 ```
 
 The unit tests (`tests/`, with certificates without private keys in
@@ -239,8 +238,8 @@ builds its address space, and checks that `print-capabilities` declares
 exactly the client operations the adapter dispatches.
 
 The single-adapter smoke runs every check of `scripts/smoke.sh` except the
-codec checks; `check_deadband` is replaced by `check_asyncua_deadband_deviation`
-(deviation 7). `smoke.sh cross-asyncua` runs the
+codec checks; the percent deadband case is a known deviation (deviation 7,
+`tests/known-bugs.tsv`). `scripts/interop.sh` runs the
 asyncua client against the open62541 and Milo servers and their clients
 against the asyncua server. It adds secured channels on a Docker network
 (Basic256Sha256 SignAndEncrypt, Sign with UserName, Basic256, Aes128 / Aes256,
