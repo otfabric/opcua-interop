@@ -191,7 +191,7 @@ check_follow() {
 # MQTT components while the broker's name does not resolve.)
 scenario_mqtt_late_broker() {
     local broker="pubsub-smoke-mosquitto-$$" refuser="pubsub-smoke-refuser-$$"
-    local pubc="pubsub-smoke-pub-$$" subc="pubsub-smoke-sub-$$" i
+    local pubc="pubsub-smoke-pub-$$" subc="pubsub-smoke-sub-$$"
     # grep a captured log: grep -q on a pipe can SIGPIPE docker logs (pipefail)
     local plog; plog=$(mktemp "${TMPDIR:-/tmp}/opcua-interop-late-broker.XXXXXX")
     publog() { docker logs "${pubc}" > "${plog}" 2>&1 || true; }
