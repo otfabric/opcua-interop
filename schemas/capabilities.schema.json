@@ -64,7 +64,7 @@
       "description": "Optional client-side features (docs/CAPABILITIES.md). Added in adapter 0.7.0; codec-pubsub in 0.8.0; transport-https and transport-wss in 0.11.0; push-groups, push-certificates and push-transaction-diagnostics in 0.15.0.",
       "items": {
         "type": "string",
-        "enum": ["channel-lifetime", "deadband", "reverse-listen", "ecc-security", "ecc-user-token",
+        "enum": ["channel-lifetime", "deadband", "reverse-listen", "ecc-security", "ecc-user-token", "x509-user-token",
                  "application-uri", "register-server2", "codec-json", "codec-xml", "codec-json-verbose",
                  "codec-pubsub", "push-groups", "push-certificates", "push-transaction-diagnostics",
                  "transport-https", "transport-wss"]
@@ -75,7 +75,7 @@
       "description": "Optional server-side features (docs/CAPABILITIES.md). Added in adapter 0.7.0; pubsub in 0.8.0; alarms in 0.11.0; push-management in 0.13.0; gds-pull in 0.14.0; transport-https and transport-wss in 0.11.0; alarms-branches, alarms-audible, alarms-105, auditing, pubsub-multicast-loopback in 0.15.0; history-events and history-events-update in 0.17.0.",
       "items": {
         "type": "string",
-        "enum": ["deadband", "percent-deadband", "reverse-connect", "ecc-security", "ecc-user-token",
+        "enum": ["deadband", "percent-deadband", "reverse-connect", "ecc-security", "ecc-user-token", "x509-user-token",
                  "lds", "mdns", "register-with", "node-management", "pubsub", "alarms",
                  "push-management", "gds-pull", "alarms-branches", "alarms-audible",
                  "alarms-105", "auditing", "pubsub-multicast-loopback", "transport-https", "transport-wss",

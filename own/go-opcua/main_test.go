@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -346,4 +348,40 @@ func TestClientAgainstServer(t *testing.T) {
 			t.Errorf("percent without EURange: exit %d: %v", code, doc)
 		}
 	})
+}
+
+// TestServerBehindAnotherPort: a client that dials a published port, not the one the
+// server listens on, gets a session. The Hello names the port the client dialled.
+func TestServerBehindAnotherPort(t *testing.T) {
+	ep := startFixtureServer(t)
+	_, rest, _ := strings.Cut(ep, "opc.tcp://")
+	target, path, _ := strings.Cut(rest, "/")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				up, err := net.Dial("tcp", target)
+				if err != nil {
+					return
+				}
+				defer func() { _ = up.Close() }()
+				go func() { _, _ = io.Copy(up, conn) }()
+				_, _ = io.Copy(conn, up)
+			}()
+		}
+	}()
+	published := fmt.Sprintf("opc.tcp://127.0.0.1:%d/%s", l.Addr().(*net.TCPAddr).Port, path)
+	code, doc := client(t, "read", "--endpoint", published, "--node", model+"Scalar.Int32")
+	if code != exitOK || first(t, doc)["value"] != float64(-123456789) {
+		t.Errorf("exit %d: %v", code, doc)
+	}
 }
