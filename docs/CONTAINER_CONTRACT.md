@@ -4,7 +4,7 @@ Version: **1.0**
 
 | Version | Change |
 |---------|--------|
-| 1.0 | Current. Only moved since it was published as `docs/CLIENT_CONTRACT.md`: section 13 is now [CAPABILITIES.md](CAPABILITIES.md), the other sections keep their numbers and text. No command, flag or JSON document changed, so the version stays 1.0. |
+| 1.0 | Current. Only moved since it was published as `docs/CLIENT_CONTRACT.md`: section 13 is now [CAPABILITIES.md](CAPABILITIES.md), the other sections keep their numbers and text. No command, flag or JSON document changed, so the version stays 1.0.`schemas/client-result.schema.json` now accepts what the released images already send (`serverTimestamp` of a read, `securityLevel` and `userIdentityTokens` of an endpoint, the adapter `otfabric`, a subscribe result that fits two result shapes). |
 
 This document defines the stable external interface for the `client` subcommand of
 every opcua-interop adapter image. `go-opcua` (and any other consumer) depends on

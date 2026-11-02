@@ -13,7 +13,7 @@
     },
     "adapter": {
       "type": "string",
-      "enum": ["open62541", "milo", "async-opcua", "dotnet", "node-opcua", "asyncua", "dotnet-gds"]
+      "enum": ["open62541", "milo", "async-opcua", "dotnet", "node-opcua", "asyncua", "dotnet-gds", "otfabric"]
     },
     "operation": {
       "type": "string",
@@ -36,7 +36,7 @@
     "results": {
       "type": "array",
       "items": {
-        "oneOf": [
+        "anyOf": [
           { "$ref": "#/$defs/endpointResult" },
           { "$ref": "#/$defs/findServersResult" },
           { "$ref": "#/$defs/readResult" },
@@ -101,7 +101,9 @@
       "properties": {
         "url":            { "type": "string" },
         "securityPolicy": { "type": "string" },
-        "securityMode":   { "type": "string" }
+        "securityMode":   { "type": "string" },
+        "securityLevel":  { "type": "integer" },
+        "userIdentityTokens": { "type": "array" }
       }
     },
     "findServersResult": {
@@ -135,7 +137,8 @@
         "dataType":        { "type": "string" },
         "builtInType":     { "type": "integer", "minimum": 1, "maximum": 25 },
         "value":           {},
-        "sourceTimestamp": { "type": "string" }
+        "sourceTimestamp": { "type": "string" },
+        "serverTimestamp": { "type": "string" }
       }
     },
     "writeResult": {
