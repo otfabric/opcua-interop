@@ -31,7 +31,9 @@
 #                  log says what connected
 #   sign           the udp-secure pair with SecurityMode Sign
 #   aes128         the udp-secure pair with PubSub-Aes128-CTR
-#   datavalue, rawdata  the unicast pair with this field encoding
+#   datavalue, rawdata  the unicast pair with this field encoding; with DataValue every
+#                  field on the wire carries the SourceTimestamp and ServerTimestamp
+#                  that the DataSetFieldContentMask selects
 #   chunking       the unicast pair with messages larger than MaxNetworkMessageSize
 #
 # Across stacks: PUBLISHER_ADAPTER and SUBSCRIBER_ADAPTER replace the adapter in that
@@ -58,7 +60,7 @@ ADAPTER="${1:?Usage: pubsub-smoke.sh <adapter> [scenario ...]}"
 shift
 SCENARIOS=("$@")
 if [[ ${#SCENARIOS[@]} -eq 0 ]]; then
-    SCENARIOS=(codec udp-unicast udp-multicast mqtt-uadp mqtt-json mqtt-late-broker udp-secure sks sks-push infomodel)
+    SCENARIOS=(codec udp-unicast udp-multicast mqtt-uadp mqtt-json mqtt-late-broker udp-secure sks sks-push infomodel datavalue)
 fi
 
 # Eclipse Mosquitto 2.0.22 (multi-arch index digest), see docs/CAPABILITIES.md "MQTT broker"
@@ -82,7 +84,7 @@ require_tools
 WORK=$(mktemp -d)
 results_open "pubsub-${ADAPTER}${PAIRING}" "${REPORT_DIR:-${WORK}}" "VERSION=${VERSION} PUBLISHER_ADAPTER=${PUBLISHER_ADAPTER:-} SUBSCRIBER_ADAPTER=${SUBSCRIBER_ADAPTER:-} CLIENT_ADAPTER=${CLIENT_ADAPTER:-} scripts/pubsub-smoke.sh ${ADAPTER} ${SCENARIOS[*]}"
 load_caps "${ADAPTER}" ${PUBLISHER_ADAPTER:+"${PUBLISHER_ADAPTER}"} ${SUBSCRIBER_ADAPTER:+"${SUBSCRIBER_ADAPTER}"} ${CLIENT_ADAPTER:+"${CLIENT_ADAPTER}"}
-load_known_bugs "${ADAPTER}"
+load_known_bugs "${ADAPTER}" ${PUBLISHER_ADAPTER:+"${PUBLISHER_ADAPTER}"}
 # A scenario here is about the one adapter, publisher and subscriber alike.
 RESULT_SUBJECT="${ADAPTER}"
 
@@ -537,6 +539,41 @@ wire_has() {
     fail "${label}: no datagram of $(wc -l <<<"${SNIFFED}") has ${filter}"
 }
 
+# uadp_data <base64 datagram>: the UADP header says DataSetMessages (Part 14 7.2.4.4.2:
+# NetworkMessageType, bits 2-4 of ExtendedFlags2, is 0). A publisher may announce
+# discovery messages on the same address, which decoders treat differently.
+uadp_data() {
+    local -a b
+    read -r -a b <<<"$(base64 -d <<<"$1" 2>/dev/null | od -An -tu1 -N3)"
+    (( ${#b[@]} > 0 )) || return 1
+    (( b[0] & 0x80 )) || return 0
+    (( ${#b[@]} > 1 && (b[1] & 0x80) )) || return 0
+    (( ${#b[@]} > 2 && ((b[2] >> 2) & 7) == 0 ))
+}
+
+# wire_every <label> <case> <jq filter on a decoded message> [decode arguments]: every
+# data datagram of SNIFFED decodes and satisfies it. The case is the one a line of
+# tests/known-bugs.tsv names, with the publisher as the server.
+wire_every() {
+    local label="$1" id="$2" filter="$3" line out n=0 doc=""
+    shift 3
+    label+="${PAIRING}"
+    while read -r line; do
+        [[ -n "${line}" ]] && uadp_data "${line}" || continue
+        n=$((n + 1))
+        out=$(client codec pubsub-uadp-decode --document "${line}" "$@") || true
+        if ! echo "${out}" | jq -e ".success == true and (.results[0].networkMessage | ${filter})" >/dev/null 2>&1; then
+            doc="${out}"
+            break
+        fi
+    done <<<"${SNIFFED}"
+    at "${label}.on-the-wire-every" "${CLIENT_ADAPTER:-${ADAPTER}}" "${PUBLISHER_ADAPTER:-${ADAPTER}}"
+    if (( n == 0 )); then fail "${label}: no data datagram on the wire"; return; fi
+    if [[ -z "${doc}" ]]; then ok "${label}: every datagram of ${n}: ${filter}"; return; fi
+    judge "${id}" "${CLIENT_ADAPTER:-${ADAPTER}}" "${PUBLISHER_ADAPTER:-${ADAPTER}}" - \
+        ".results[0].networkMessage | ${filter}" "${doc}" 0
+}
+
 # delta-frames: fresh values only reach the subscriber in DeltaFrames, and the wire
 # shows them. An open62541 subscriber discards DeltaFrames (§14.10): no such pairing.
 scenario_delta_frames() {
@@ -561,19 +598,30 @@ scenario_chunking() {
 }
 
 # field-encoding <label> <mask> <name>: the unicast pair with this
-# DataSetFieldContentMask, and the wire shows that encoding.
+# DataSetFieldContentMask, and the wire shows that encoding. With DataValue, every
+# field of every datagram carries the timestamps the mask selects (SourceTimestamp 2,
+# ServerTimestamp 4), and they are of this run: the fixture sets none.
 scenario_field_encoding() {
     local mask=".configuration.Connections[].WriterGroups[].DataSetWriters[].DataSetFieldContentMask = $2"
     local reader=".configuration.Connections[].ReaderGroups[].DataSetReaders[].DataSetFieldContentMask = $2"
+    local md since ts=""
+    md=$(jq -c '.configuration.PublishedDataSets[0].DataSetMetaData' "${EXAMPLES}/udp-unicast-publisher.json")
     derive udp-unicast-publisher.json "${mask}"
     derive udp-unicast-subscriber.json "${reader}"
     run_pair "$1" udp-unicast
     derive udp-unicast-publisher.json "${mask}"
+    # A minute of slack for the clocks of the containers.
+    since=$(date -u -r $(( $(date +%s) - 60 )) +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d @$(( $(date +%s) - 60 )) +%Y-%m-%dT%H:%M:%S)
     SNIFFED=$(sniff udp-unicast-publisher.json 6)
     reset_derived
     # RawData cannot be read without the metadata.
-    wire_has "$1" ".messages | any(.fieldEncoding == \"$3\")" \
-        --metadata "$(jq -c '.configuration.PublishedDataSets[0].DataSetMetaData' "${EXAMPLES}/udp-unicast-publisher.json")"
+    wire_has "$1" ".messages | any(.fieldEncoding == \"$3\")" --metadata "${md}"
+    [[ "$3" == DataValue ]] || return 0
+    (( $2 & 2 )) && ts+=' and ((.sourceTimestamp // "")[0:19] >= "'"${since}"'")'
+    (( $2 & 4 )) && ts+=' and ((.serverTimestamp // "")[0:19] >= "'"${since}"'")'
+    [[ -n "${ts}" ]] || return 0
+    wire_every "$1-timestamps" "$1.timestamps" \
+        "[.messages[] | select(.fieldEncoding == \"DataValue\") | .fields[]] | length > 0 and all(true${ts})" --metadata "${md}"
 }
 
 # aes128: the udp-secure pair with PubSub-Aes128-CTR and a key of 52 bytes.

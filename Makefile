@@ -129,7 +129,7 @@ interop: ## Cross-stack self-test: every client against every server
 
 pubsub: ## PubSub self-test: the open62541 set and the UA-.NETStandard set
 	@MOSQUITTO_IMAGE=$(BASE_REGISTRY)/$(MOSQUITTO_IMAGE) scripts/pubsub-smoke.sh open62541
-	@MOSQUITTO_IMAGE=$(BASE_REGISTRY)/$(MOSQUITTO_IMAGE) scripts/pubsub-smoke.sh dotnet codec udp-unicast udp-multicast mqtt-uadp mqtt-json udp-secure discovery
+	@MOSQUITTO_IMAGE=$(BASE_REGISTRY)/$(MOSQUITTO_IMAGE) scripts/pubsub-smoke.sh dotnet codec udp-unicast udp-multicast mqtt-uadp mqtt-json udp-secure discovery datavalue
 
 capabilities: ## Print the capability document of every local image
 	@for a in $(ADAPTERS); do docker run --rm $(call image,$$a):$(VERSION) print-capabilities | jq -c '{adapter, stack, roles}'; done
