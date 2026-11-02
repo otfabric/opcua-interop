@@ -35,6 +35,12 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io/otfabric
+  # Nothing is pulled from Docker Hub: anonymous pulls are rate limited per
+  # runner address and its token service times out under load. Base images
+  # (pinned by digest) and build tooling come from Google's mirror of it, and
+  # every registry operation is retried on transient failures (scripts/retry.sh).
+  BASE_REGISTRY: mirror.gcr.io/library
+  TOOLS_REGISTRY: mirror.gcr.io
 
 jobs:
   # ── 1. Next version; fail fast on versions, release notes, fixtures ──────
@@ -92,22 +98,26 @@ jobs:
       - name: Adapter versions and RELEASE.md section match ${{ steps.next.outputs.tag }}
         run: scripts/check-release.sh "${{ steps.next.outputs.tag }}"
 
-      - name: Install check-jsonschema
-        run: pip install check-jsonschema
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema
 
-      - name: Validate fixtures
+      - name: versions.yaml, fixtures
         run: |
-          check-jsonschema --check-metaschema fixtures/schema/opcua-fixture.schema.json
-          scripts/validate-fixtures.sh
+          scripts/check-versions.sh
+          python3 scripts/validate-fixtures.py --require-schema
 
   # ── 2. Build, test and push each architecture natively ────────────────────
   build:
     name: Build, test, push (${{ matrix.arch }})
     needs: version
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 240
     env:
       VERSION: ${{ needs.version.outputs.tag }}
+      BUILDKIT_CACHE: gha
+      ARCH: ${{ matrix.arch }}
     permissions:
       contents: read
       packages: write
@@ -122,120 +132,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build open62541 (linux/${{ matrix.arch }})
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: adapters/open62541/Dockerfile
-          platforms: linux/${{ matrix.arch }}
-          load: true
-          push: false
-          tags: ${{ env.REGISTRY }}/opcua-interop-open62541:${{ env.VERSION }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ env.VERSION }}
-          cache-from: type=gha,scope=open62541-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=open62541-${{ matrix.arch }}
+      # The runtime token and cache URL of the gha cache backend, for make.
+      - uses: crazy-max/ghaction-github-runtime@v4
 
-      - name: Build Milo (linux/${{ matrix.arch }})
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: adapters/milo/Dockerfile
-          platforms: linux/${{ matrix.arch }}
-          load: true
-          push: false
-          tags: ${{ env.REGISTRY }}/opcua-interop-milo:${{ env.VERSION }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ env.VERSION }}
-          cache-from: type=gha,scope=milo-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=milo-${{ matrix.arch }}
-
-      - name: Build async-opcua (linux/${{ matrix.arch }})
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: adapters/async-opcua/Dockerfile
-          platforms: linux/${{ matrix.arch }}
-          load: true
-          push: false
-          tags: ${{ env.REGISTRY }}/opcua-interop-async-opcua:${{ env.VERSION }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ env.VERSION }}
-          cache-from: type=gha,scope=async-opcua-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=async-opcua-${{ matrix.arch }}
-
-      - name: Build UA-.NETStandard (linux/${{ matrix.arch }})
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: adapters/dotnet/Dockerfile
-          platforms: linux/${{ matrix.arch }}
-          load: true
-          push: false
-          tags: ${{ env.REGISTRY }}/opcua-interop-dotnet:${{ env.VERSION }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ env.VERSION }}
-          cache-from: type=gha,scope=dotnet-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=dotnet-${{ matrix.arch }}
-
-      - name: Build node-opcua (linux/${{ matrix.arch }})
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: adapters/node-opcua/Dockerfile
-          platforms: linux/${{ matrix.arch }}
-          load: true
-          push: false
-          tags: ${{ env.REGISTRY }}/opcua-interop-node-opcua:${{ env.VERSION }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ env.VERSION }}
-          cache-from: type=gha,scope=node-opcua-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=node-opcua-${{ matrix.arch }}
-
-      - name: Build opcua-asyncio (linux/${{ matrix.arch }})
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: adapters/asyncua/Dockerfile
-          platforms: linux/${{ matrix.arch }}
-          load: true
-          push: false
-          tags: ${{ env.REGISTRY }}/opcua-interop-asyncua:${{ env.VERSION }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ env.VERSION }}
-          cache-from: type=gha,scope=asyncua-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=asyncua-${{ matrix.arch }}
-
-      - name: Build UA-.NETStandard GDS (linux/${{ matrix.arch }})
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: adapters/dotnet-gds/Dockerfile
-          platforms: linux/${{ matrix.arch }}
-          load: true
-          push: false
-          tags: ${{ env.REGISTRY }}/opcua-interop-dotnet-gds:${{ env.VERSION }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ env.VERSION }}
-          cache-from: type=gha,scope=dotnet-gds-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=dotnet-gds-${{ matrix.arch }}
+      - name: Build for linux/${{ matrix.arch }}
+        run: make images
 
       - name: Images report the release version
         run: |
@@ -245,35 +154,18 @@ jobs:
             [ "v${got}" = "${VERSION}" ] || { echo "::error::${a} reports adapter.version ${got}, not ${VERSION#v}"; exit 1; }
           done
 
-      - name: Unit tests
-        run: |
-          for a in open62541 milo async-opcua dotnet node-opcua asyncua dotnet-gds; do
-            docker run --rm -v "${PWD}/fixtures:/fixtures:ro" "${REGISTRY}/opcua-interop-${a}:${VERSION}" test
-          done
+      # Unit tests (the images' test commands), smoke with graceful shutdown,
+      # cross-stack and PubSub self-tests, document schemas.
+      - name: Self-test
+        run: make documents
 
-      - name: Smoke (single-adapter, cross-stack, PubSub)
-        run: |
-          scripts/smoke.sh open62541 "${REGISTRY}/opcua-interop-open62541:${VERSION}"
-          scripts/smoke.sh milo "${REGISTRY}/opcua-interop-milo:${VERSION}"
-          scripts/smoke.sh async-opcua "${REGISTRY}/opcua-interop-async-opcua:${VERSION}"
-          scripts/smoke.sh dotnet "${REGISTRY}/opcua-interop-dotnet:${VERSION}"
-          scripts/smoke.sh node-opcua "${REGISTRY}/opcua-interop-node-opcua:${VERSION}"
-          scripts/smoke.sh cross "${REGISTRY}/opcua-interop-open62541:${VERSION}" "${REGISTRY}/opcua-interop-milo:${VERSION}" "${REGISTRY}/opcua-interop-async-opcua:${VERSION}" "${REGISTRY}/opcua-interop-node-opcua:${VERSION}"
-          scripts/smoke.sh cross-dotnet "${REGISTRY}/opcua-interop-dotnet:${VERSION}" "${REGISTRY}/opcua-interop-open62541:${VERSION}" "${REGISTRY}/opcua-interop-milo:${VERSION}" "${REGISTRY}/opcua-interop-node-opcua:${VERSION}"
-          scripts/smoke.sh asyncua "${REGISTRY}/opcua-interop-asyncua:${VERSION}"
-          scripts/smoke.sh cross-asyncua "${REGISTRY}/opcua-interop-asyncua:${VERSION}" "${REGISTRY}/opcua-interop-open62541:${VERSION}" "${REGISTRY}/opcua-interop-milo:${VERSION}"
-          scripts/smoke.sh dotnet-gds "${REGISTRY}/opcua-interop-dotnet-gds:${VERSION}"
-          scripts/pubsub-smoke.sh "${REGISTRY}/opcua-interop-open62541:${VERSION}"
-
-      - name: Graceful shutdown
-        run: |
-          scripts/shutdown-test.sh open62541 "${REGISTRY}/opcua-interop-open62541:${VERSION}"
-          scripts/shutdown-test.sh milo "${REGISTRY}/opcua-interop-milo:${VERSION}"
-          scripts/shutdown-test.sh async-opcua "${REGISTRY}/opcua-interop-async-opcua:${VERSION}"
-          scripts/shutdown-test.sh dotnet "${REGISTRY}/opcua-interop-dotnet:${VERSION}"
-          scripts/shutdown-test.sh node-opcua "${REGISTRY}/opcua-interop-node-opcua:${VERSION}"
-          scripts/shutdown-test.sh asyncua "${REGISTRY}/opcua-interop-asyncua:${VERSION}"
-          scripts/shutdown-test.sh dotnet-gds "${REGISTRY}/opcua-interop-dotnet-gds:${VERSION}"
+      - name: Upload documents
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-documents-${{ matrix.arch }}
+          path: reports/
+          if-no-files-found: ignore
 
       - name: Log in to GHCR
         uses: docker/login-action@v4

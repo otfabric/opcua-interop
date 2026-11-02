@@ -183,7 +183,7 @@ services:
       retries: 15
       start_period: 5s
 
-  # Global Discovery Server (Part 12 pull model, docs/CLIENT_CONTRACT.md §16) of
+  # Global Discovery Server (Part 12 pull model, docs/CONTAINER_CONTRACT.md §16) of
   # UA-.NETStandard 2.0.1 with the dotnet-server identity of the test PKI.
   # Host port 4846 (4845 is asyncua).
   dotnet-gds:
@@ -228,4 +228,4 @@ services:
     ports:
       - "1883:1883"
     volumes:
-      - ./mqtt/mosquitto.conf:/mosquitto-interop.conf:ro
+      - ./fixtures/pubsub/mosquitto.conf:/mosquitto-interop.conf:ro

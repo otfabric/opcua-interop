@@ -5,9 +5,12 @@ run-name: "Upstream check (${{ github.event_name }})"
 # OPC UA stack (open62541, Milo, async-opcua, UA-.NETStandard and its GDS
 # packages, node-opcua, opcua-asyncio; scripts/latest-upstream.py) and the
 # digest of every base image. A stack whose pin is behind is built at the
-# latest release and tested like CI tests it: unit/self-test where the adapter
-# has one, then the smoke against the candidate image (scripts/candidate.sh;
-# once per pin -> latest pair, later runs reuse that result). The table goes to
+# latest release and self-tested (once per pin -> latest pair; later runs reuse
+# that result). A candidate is tested like a release: smoke test plus the
+# cross-stack self-test against the pinned open62541 and Milo (make
+# candidate-<adapter>). Deviations of a specific upstream version listed in
+# tests/known-bugs.tsv are reported as known rather than as failures, so one
+# upstream bug does not hide whether everything else works. The table goes to
 # the Job Summary and to the issue "Upstream releases: pins behind the latest",
 # which is opened or updated (with a comment when a new version shows up) and
 # closed once every pin is current. Pins in Dockerfiles / pom.xml / Cargo.toml
@@ -28,7 +31,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # Nothing is pulled from Docker Hub: anonymous pulls are rate limited per
+  # runner address and its token service times out under load. Base images
+  # (pinned by digest) and build tooling come from Google's mirror of it, and
+  # every registry operation is retried on transient failures (scripts/retry.sh).
   BASE_REGISTRY: mirror.gcr.io/library
+  TOOLS_REGISTRY: mirror.gcr.io
 
 jobs:
   images:
@@ -42,7 +50,7 @@ jobs:
   candidate:
     name: ${{ matrix.adapter }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -66,9 +74,17 @@ jobs:
           name: ${{ matrix.adapter }}
           pinned: ${{ steps.resolve.outputs.pin }}
           latest: ${{ steps.resolve.outputs.latest }}
-          result-pattern: '^\[smoke\] Results: [0-9]+ passed'
-          cache-paths: "adapters/{name} scripts Makefile"
-          command: scripts/candidate.sh "${{ matrix.adapter }}" "${{ steps.resolve.outputs.latest }}"
+          result-pattern: '^\[(smoke|interop)\] [0-9]+ passed'
+          cache-paths: "adapters/{name} scripts tests Makefile"
+          command: make "candidate-${{ matrix.adapter }}" CANDIDATE="${{ steps.resolve.outputs.latest }}"
+
+      - name: Known deviations of the latest release
+        id: known
+        if: always()
+        run: |
+          known=$(awk -F'\t' -v a="${{ matrix.adapter }}" -v v="${{ steps.resolve.outputs.latest }}" \
+            '$1 == a && $2 == v { printf "%s%s", sep, $9; sep = "; " }' tests/known-bugs.tsv)
+          echo "known=${known}" >> "$GITHUB_OUTPUT"
 
       - name: Table row
         if: always()
@@ -83,6 +99,7 @@ jobs:
           test-outcome: ${{ steps.test.outputs.outcome }}
           test-result: ${{ steps.test.outputs.result }}
           test-cached: ${{ steps.test.outputs.cached }}
+          known: ${{ steps.known.outputs.known }}
 
   report:
     name: Report
@@ -110,5 +127,8 @@ jobs:
             - **asyncua:** `asyncua==X.Y.Z` in `adapters/asyncua/requirements.in`, then re-lock the hashed
               `adapters/asyncua/requirements.txt`.
             - **Base image:** replace the digest in every file that pins it.
-            - Reproduce a candidate with `make candidate ADAPTER=<adapter> CANDIDATE_VERSION=<version>`;
-              a `failure` needs the log of the run first. Record a bump in `RELEASE.md`.
+            - Mirror the pin in `versions.yaml` (`scripts/check-versions.sh` checks it). Reproduce a
+              candidate with `make candidate-<adapter> CANDIDATE=<version>`; a `failure` needs the
+              log of the run first. A *known deviation ... did not reproduce* is good news: drop it
+              from `tests/known-bugs.tsv`.
+            - Record the change in `docs/COMPATIBILITY.md` and `RELEASE.md`.
