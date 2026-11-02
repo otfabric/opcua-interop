@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0",
   "id": "gds",
-  "description": "Global Discovery Server fixture (dotnet-gds adapter, docs/CLIENT_CONTRACT.md section 16): the baseline fixture plus the GDS administrator gds-admin with the DiscoveryAdmin, CertificateAuthorityAdmin and SecurityAdmin roles. The dotnet-gds server uses its server, endpoint and users; the other adapters serve it like the baseline.",
+  "description": "Global Discovery Server fixture (dotnet-gds adapter, docs/CONTAINER_CONTRACT.md section 16): the baseline fixture plus the GDS administrator gds-admin with the DiscoveryAdmin, CertificateAuthorityAdmin and SecurityAdmin roles. The dotnet-gds server uses its server, endpoint and users; the other adapters serve it like the baseline.",
   "server": {
     "applicationUri": "urn:otfabric:opcua-interop:server",
     "productUri": "urn:otfabric:opcua-interop",

@@ -2,10 +2,10 @@
 # PubSub (OPC UA Part 14) smoke test of an adapter image.
 #
 # Usage:
-#   pubsub-smoke.sh <adapter-image> [scenario ...]
+#   pubsub-smoke.sh <adapter> [scenario ...]
 #
-# Scenarios (default: all but discovery, the open62541 set; `make
-# smoke-pubsub-dotnet` runs the UA-.NETStandard set):
+# Scenarios (default: all but discovery, the open62541 set; `make pubsub` runs
+# this set for open62541 and the UA-.NETStandard set for dotnet):
 #   codec          UADP / JSON NetworkMessage encode → decode round trips (no transport)
 #   udp-unicast    UADP over opc.udp:// unicast, container → container
 #   udp-multicast  UADP over opc.udp:// multicast (224.0.0.22), container → container
@@ -24,46 +24,43 @@
 #                  (adapters whose capabilities declare pubsub.discovery)
 #
 # Every transport scenario starts a subscriber and a publisher container (the
-# configurations in pubsub/examples/) on a dedicated Docker network, writes
+# configurations in fixtures/pubsub/) on a dedicated Docker network, writes
 # fresh values into the publisher's PubSub.* variables with `client write` and
 # checks with `client read` that the subscriber's TargetVariables follow
 # (Dynamic.Counter is published into the subscriber's PubSub.Int64).
 #
-# Exit codes: 0 all checks passed, 1 one or more failed.
+# Exit codes: 0 all checks passed, 1 one or more failed or none passed.
+#
+# Environment: REGISTRY, VERSION (image tag, default dev), REPORT_DIR, MOSQUITTO_IMAGE.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-EXAMPLES="${REPO_ROOT}/pubsub/examples"
-IMG="${1:?Usage: pubsub-smoke.sh <adapter-image> [scenario ...]}"
+EXAMPLES="${REPO_ROOT}/fixtures/pubsub"
+ADAPTER="${1:?Usage: pubsub-smoke.sh <adapter> [scenario ...]}"
 shift
 SCENARIOS=("$@")
 if [[ ${#SCENARIOS[@]} -eq 0 ]]; then
     SCENARIOS=(codec udp-unicast udp-multicast mqtt-uadp mqtt-json mqtt-late-broker udp-secure sks sks-push infomodel)
 fi
 
-# Eclipse Mosquitto 2.0.22 (multi-arch index digest), see README "MQTT broker"
+# Eclipse Mosquitto 2.0.22 (multi-arch index digest), see docs/CAPABILITIES.md "MQTT broker"
 MOSQUITTO_IMAGE="${MOSQUITTO_IMAGE:-eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c}"
 
-ENDPOINT_PATH="/opcua-interop"
-MODEL="nsu=urn:otfabric:opcua-interop:model;s="
 FOLLOW_TIMEOUT=20
 
-PASS=0
-FAIL=0
-log()  { echo "[pubsub-smoke] $*" >&2; }
-ok()   { log "OK: $*"; PASS=$((PASS + 1)); record pass; }
-fail() { log "FAIL: $*"; FAIL=$((FAIL + 1)); record fail "$*"; }
-
-# shellcheck source=scripts/results.sh
-source "${SCRIPT_DIR}/results.sh"
+# shellcheck source=scripts/lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+IMG="$(image_of "${ADAPTER}")"
 SUITE=pubsub
-RESULT_ADAPTER="${IMG##*/}"; RESULT_ADAPTER="${RESULT_ADAPTER%%[:@]*}"; RESULT_ADAPTER="${RESULT_ADAPTER#opcua-interop-}"
-RESULTS_ARGS="${IMG} ${SCENARIOS[*]}"
-results_start "${IMG}"
-
-command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
+require_tools
+WORK=$(mktemp -d)
+results_open "pubsub-${ADAPTER}" "${REPORT_DIR:-${WORK}}" "VERSION=${VERSION} scripts/pubsub-smoke.sh ${ADAPTER} ${SCENARIOS[*]}"
+load_caps "${ADAPTER}"
+load_known_bugs "${ADAPTER}"
+# A scenario here is about the one adapter, publisher and subscriber alike.
+RESULT_SUBJECT="${ADAPTER}"
 
 NET="pubsub-smoke-$$"
 TMP=""
@@ -74,6 +71,8 @@ cleanup() {
     for c in ${CONTAINERS[@]+"${CONTAINERS[@]}"}; do docker rm -f "${c}" &>/dev/null || true; done
     docker network rm "${NET}" &>/dev/null || true
     if [[ -n "${TMP}" ]]; then rm -rf "${TMP}"; fi
+    results_abort
+    rm -rf "${WORK}"
 }
 trap cleanup EXIT
 
@@ -110,17 +109,17 @@ prepare_pki() {
 
 # start_server <container> <network-alias> <config> [extra server args...]
 start_server() {
-    local name="$1" alias="$2" config="$3"
+    local name="$1" net_alias="$2" config="$3"
     shift 3
     docker rm -f "${name}" &>/dev/null || true
     CONTAINERS+=("${name}")
-    docker run -d --name "${name}" --network "${NET}" --network-alias "${alias}" \
+    docker run -d --name "${name}" --network "${NET}" --network-alias "${net_alias}" \
         -v "${REPO_ROOT}/fixtures:/fixtures:ro" -v "${EXAMPLES}:/pubsub:ro" \
         ${TMP:+-v "${TMP}/pki:/pki"} \
         "${IMG}" server --fixture /fixtures/baseline/fixture.json \
-        --advertised-host "${alias}" --endpoint-path "${ENDPOINT_PATH}" \
+        --advertised-host "${net_alias}" --endpoint-path "${ENDPOINT_PATH}" \
         --pubsub-config "/pubsub/${config}" "$@" >/dev/null
-    if ! "${SCRIPT_DIR}/wait-ready.sh" "${name}" 60; then
+    if ! wait_ready "${name}"; then
         at "harness.server-ready-${config%.json}"
         infra "${name}: server with ${config} did not become ready"
         return 1
@@ -137,7 +136,7 @@ ensure_mosquitto() {
     if docker ps --format '{{.Names}}' | grep -qx "${name}"; then return; fi
     CONTAINERS+=("${name}")
     docker run -d --name "${name}" --network "${NET}" --network-alias mosquitto \
-        -v "${REPO_ROOT}/mqtt/mosquitto.conf:/mosquitto-interop.conf:ro" \
+        -v "${EXAMPLES}/mosquitto.conf:/mosquitto-interop.conf:ro" \
         "${MOSQUITTO_IMAGE}" mosquitto -c /mosquitto-interop.conf >/dev/null
     sleep 1
 }
@@ -193,7 +192,7 @@ check_follow() {
 # MQTT components while the broker's name does not resolve.)
 scenario_mqtt_late_broker() {
     local broker="pubsub-smoke-mosquitto-$$" refuser="pubsub-smoke-refuser-$$"
-    local pubc="pubsub-smoke-pub-$$" subc="pubsub-smoke-sub-$$" i
+    local pubc="pubsub-smoke-pub-$$" subc="pubsub-smoke-sub-$$"
     # grep a captured log: grep -q on a pipe can SIGPIPE docker logs (pipefail)
     local plog; plog=$(mktemp "${TMPDIR:-/tmp}/opcua-interop-late-broker.XXXXXX")
     publog() { docker logs "${pubc}" > "${plog}" 2>&1 || true; }
@@ -204,7 +203,7 @@ scenario_mqtt_late_broker() {
         --entrypoint sleep "${MOSQUITTO_IMAGE}" 600 >/dev/null
     start_server "${pubc}" pubsub-publisher "mqtt-json-publisher.json" || { stop_servers "${refuser}"; return; }
     at mqtt-late-broker.error-state
-    for i in $(seq 1 20); do
+    for _ in $(seq 1 20); do
         publog; grep -q "is in Error" "${plog}" && break
         sleep 0.5
     done
@@ -448,8 +447,4 @@ for sc in "${SCENARIOS[@]}"; do
     esac
 done
 
-echo ""
-log "Results: ${PASS} passed, ${FAIL} failed"
-results_finish
-if [[ "${PASS}" -eq 0 ]]; then log "no check passed: this run proves nothing"; exit 1; fi
-[[ "${FAIL}" -eq 0 ]]
+finish

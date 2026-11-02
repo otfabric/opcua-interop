@@ -1,0 +1,14 @@
+.git
+.github
+reports
+certs/test-pki
+fixtures/pubsub
+**/target
+**/build
+**/node_modules
+**/dist
+**/bin
+**/obj
+**/__pycache__
+**/*.pyc
+adapters/node-opcua/*.patch

@@ -1,0 +1,48 @@
+# Secured channels and user tokens for scripts/lib.sh run_secure_cases, with the
+# identities of the test PKI (certs/generate.sh). Each server adapter named here runs once,
+# with its certificate, and takes the clients in the order of this file.
+#
+# Columns, separated by tabs:
+#   1  id        stable dotted scenario id of results.json; never change it
+#   2  clients   comma-separated adapters; @own is the adapter whose capabilities say
+#                upstream.independentEngine false
+#   3  servers   the same
+#   4  exit      expected exit code of the client; "-" when only the document counts
+#   5  expect    jq filter that must hold on the result document
+#   6  operation arguments of "client"; the runner adds --endpoint after the first word.
+#                $M is the namespace prefix of the model.
+#                @cred    --certificate, --private-key of the client's identity, --trust-list the CA
+#                @bad     the same with an identity no one trusts
+#                @badca   the client's identity, --trust-list a certificate that issued no server
+#                @user    --username test-user --password test-password
+#                @b256 @b256s @a128 @a256  --security-policy and --security-mode:
+#                         Basic256Sha256 SignAndEncrypt, Basic256Sha256 Sign,
+#                         Aes128_Sha256_RsaOaep SignAndEncrypt, Aes256_Sha256_RsaPss SignAndEncrypt
+secure.basic256sha256-signandencrypt-read	open62541	async-opcua,node-opcua,asyncua	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @b256 @cred
+secure.basic256sha256-signandencrypt-write	open62541	async-opcua	-	.success == true and .results[0].statusCode.name == "Good"	write --node $MAccess.ReadWrite --type Int32 --value 4242 @b256 @cred
+secure.basic256sha256-signandencrypt-call-methods.add-10-20-30	open62541	async-opcua,node-opcua,asyncua	-	.success == true and .results[0].outputArguments[0] == 30	call --object $MMethods --method $MMethods.Add --input Int32:10 --input Int32:20 @b256 @cred
+secure.basic256sha256-signandencrypt-subscribe-dynamic.counter	open62541	async-opcua	-	.success == true and (.results[0].notifications | length) >= 3	subscribe --node $MDynamic.Counter --publishing-interval-ms 500 --notifications 3 --timeout-ms 15000 @b256 @cred
+secure.basic256sha256-sign-username	open62541	async-opcua,node-opcua,asyncua	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @b256s @cred @user
+secure.aes128_sha256_rsaoaep-signandencrypt-read	open62541	async-opcua,asyncua	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a128 @cred
+secure.aes128_sha256_rsaoaep-signandencrypt-read	milo	node-opcua	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a128 @cred
+secure.aes256_sha256_rsapss-signandencrypt-read	milo	async-opcua	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a256 @cred
+secure.aes256_sha256_rsapss-signandencrypt-subscribe-dynamic.counter	milo	node-opcua,asyncua	-	.success == true and (.results[0].notifications | length) >= 3	subscribe --node $MDynamic.Counter --publishing-interval-ms 500 --notifications 3 --timeout-ms 15000 @a256 @cred
+secure.untrusted-client-certificate-is-rejected	open62541	async-opcua,node-opcua,asyncua	-	.success == false	read --node $MScalar.Int32 @b256 @bad
+secure.basic256sha256-signandencrypt-read	node-opcua	open62541,milo	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @b256 @cred
+secure.aes256_sha256_rsapss-signandencrypt-username	node-opcua	open62541,milo	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a256 @cred @user
+secure.basic256sha256-signandencrypt-username	asyncua	open62541,milo	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @b256 @cred @user
+secure.aes256_sha256_rsapss-signandencrypt-write	asyncua	open62541,milo	-	.success == true and .results[0].statusCode.name == "Good"	write --node $MAccess.ReadWrite --type Int32 --value 4242 @a256 @cred
+secure.server-certificate-not-issued-by-a-trust-list-entry-is-rejected	asyncua	milo	-	.success == false	read --node $MScalar.Int32 @b256 @badca
+secure.basic256sha256-sign-read	@own,open62541,milo	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @b256s @cred
+secure.basic256sha256-signandencrypt-read	@own,open62541,milo	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @b256 @cred
+secure.aes128_sha256_rsaoaep-signandencrypt-read	@own,open62541,milo	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a128 @cred
+secure.aes256_sha256_rsapss-signandencrypt-read	@own,open62541,milo	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a256 @cred
+secure.basic256sha256-signandencrypt-username	@own,open62541,milo	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @b256 @cred @user
+secure.wrong-password-is-rejected	@own,open62541,milo	@own	-	.success == false	read --node $MScalar.Int32 @b256 @cred --username test-user --password wrong
+secure.untrusted-client-certificate-is-rejected	@own,open62541,milo	@own	-	.success == false	read --node $MScalar.Int32 @b256 @bad
+secure.server-certificate-not-issued-by-a-trust-list-entry-is-rejected	@own	@own	-	.success == false	read --node $MScalar.Int32 @b256 @badca
+secure.basic256sha256-sign-read	@own	open62541,milo	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @b256s @cred
+secure.basic256sha256-signandencrypt-read	@own	open62541,milo	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @b256 @cred
+secure.aes128_sha256_rsaoaep-signandencrypt-read	@own	open62541,milo	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a128 @cred
+secure.aes256_sha256_rsapss-signandencrypt-read	@own	open62541,milo	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a256 @cred
+secure.basic256sha256-signandencrypt-username-write	@own	open62541,milo	-	.success == true and .results[0].statusCode.name == "Good"	write --node $MAccess.ReadWrite --type Int32 --value 4242 @b256 @cred @user

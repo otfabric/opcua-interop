@@ -1,0 +1,8 @@
+# Codec documents for scripts/lib.sh run_codec: the encoder's document, decoded by the
+# decoder (possibly another stack), must yield the same OPC UA Binary encoding.
+#
+# Columns, separated by tabs: format, type, value. A pairing needs client:codec-<format> on both.
+json	Int64	-1234567890123456789
+json	LocalizedText[]	["en:Hello","de:Hallo"]
+xml	Double[]	1.5,2.5
+xml	String	interop

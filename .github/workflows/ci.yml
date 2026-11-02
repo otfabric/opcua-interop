@@ -1,285 +1,132 @@
 name: CI
+run-name: "CI (${{ github.event_name }}) on ${{ github.ref_name }} by @${{ github.actor }}"
 
-# One workflow for every push and pull request: fixtures and release notes are
-# checked, each adapter image is built once (amd64) and shared with the unit
-# tests, the single-adapter smoke tests (with the graceful-shutdown checks),
-# the PubSub smoke and the cross-stack smokes (open62541 ↔ Milo, and the
-# dotnet and asyncua adapters against both), which all run in parallel. On
-# main the arm64 images are built natively as well, in parallel with the rest.
-#
-# Docker layer caches are scoped per adapter and architecture
-# (<adapter>-<arch>), the same scopes the Release workflow uses, so the
-# adapters and architectures do not evict each other's cache.
-
+# On pull requests, on main, nightly and by hand; not on every branch push as in
+# the other interop repositories, because a self-test takes hours here and each
+# push of a branch with a pull request would run it twice.
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
-  workflow_dispatch: {}
+  pull_request:
+    branches: ["**"]
+  schedule:
+    # Nightly: catches drift in what the pinned builds fetch.
+    - cron: "37 3 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
-  OPEN62541_IMAGE: ghcr.io/otfabric/opcua-interop-open62541:ci
-  MILO_IMAGE: ghcr.io/otfabric/opcua-interop-milo:ci
-  ASYNC_OPCUA_IMAGE: ghcr.io/otfabric/opcua-interop-async-opcua:ci
-  DOTNET_IMAGE: ghcr.io/otfabric/opcua-interop-dotnet:ci
-  NODE_OPCUA_IMAGE: ghcr.io/otfabric/opcua-interop-node-opcua:ci
-  ASYNCUA_IMAGE: ghcr.io/otfabric/opcua-interop-asyncua:ci
+  # Nothing is pulled from Docker Hub: anonymous pulls are rate limited per
+  # runner address and its token service times out under load. Base images
+  # (pinned by digest) and build tooling come from Google's mirror of it, and
+  # every registry operation is retried on transient failures (scripts/retry.sh).
+  BASE_REGISTRY: mirror.gcr.io/library
+  TOOLS_REGISTRY: mirror.gcr.io
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate:
-    name: Validate fixtures and release notes
+    name: Fixtures, versions, scripts
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install check-jsonschema
-        run: pip install check-jsonschema
-
-      - name: Validate fixture schema
-        run: check-jsonschema --check-metaschema fixtures/schema/opcua-fixture.schema.json
-
-      - name: Validate fixtures
-        run: scripts/validate-fixtures.sh
-
-      - name: Result scripts
-        run: make unittests
-
-      - name: versions.yaml agrees with the build inputs
-        run: python3 scripts/check-versions.py
-
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema
+      - name: Unit tests of the result scripts
+        run: python3 -m unittest discover -q -s scripts -p 'test_*.py'
+      - name: versions.yaml matches the build files
+        run: scripts/check-versions.sh
       # The newest section of RELEASE.md must be non-empty and end with "---"
       # (the GitHub release body is the text up to that line).
       - name: RELEASE.md has the notes of its newest version
         run: scripts/release-notes.sh > /dev/null
-
       # The version the adapters report must have a section in RELEASE.md
       # (its date may still say "unreleased"; the Release workflow requires one).
       - name: Release notes for the adapter version
         run: |
-          version=$(sed -nE 's/.*"adapter\\": \{\\"name\\": \\"open62541\\", \\"version\\": \\"([0-9.]+)\\".*/\1/p' open62541/src/main.c | head -1)
-          [ -n "${version}" ] || { echo "::error::cannot read adapter.version from open62541/src/main.c"; exit 1; }
+          version=$(sed -nE 's/.*"adapter\\": \{\\"name\\": \\"open62541\\", \\"version\\": \\"([0-9.]+)\\".*/\1/p' adapters/open62541/src/main.c | head -1)
+          [ -n "${version}" ] || { echo "::error::cannot read adapter.version from adapters/open62541/src/main.c"; exit 1; }
           scripts/release-notes.sh "v${version}" > /dev/null \
             || { echo "::error::RELEASE.md has no section \"## v${version}\""; exit 1; }
           echo "RELEASE.md has notes for v${version}"
+      - name: Fixtures
+        run: python3 scripts/validate-fixtures.py --require-schema
+      - name: Shellcheck
+        run: make lint
+      - name: No reference to a library under test
+        # REQUIREMENTS.md R1: adapters, fixtures, scripts and schemas must not
+        # know any consumer. Documentation may name consumers as examples.
+        run: |
+          if grep -rInE --exclude='*.md' 'go-opcua|otfabric/go-' adapters fixtures schemas scripts tests Makefile compose.yaml; then
+            echo "::error::consumer-specific reference found"; exit 1
+          fi
 
-  # ── Build each image once (amd64) and share it as an artifact ────────────
-  build:
-    name: Build ${{ matrix.adapter }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+  # Built and self-tested natively on both architectures: no emulation.
+  selftest:
+    name: Build, smoke, cross-stack (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
-        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua, dotnet-gds]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      BUILDKIT_CACHE: gha
+      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build ${{ matrix.adapter }} (linux/amd64)
-        uses: docker/build-push-action@v7
-        with:
-          context: ${{ matrix.adapter }}
-          file: ${{ matrix.adapter }}/Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:ci
-          cache-from: type=gha,scope=${{ matrix.adapter }}-amd64
-          cache-to: type=gha,mode=max,scope=${{ matrix.adapter }}-amd64
+      # The runtime token and cache URL of the gha cache backend, for make.
+      - uses: crazy-max/ghaction-github-runtime@v4
 
-      - name: Save image
-        run: docker save ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:ci | gzip -1 > /tmp/${{ matrix.adapter }}.tar.gz
+      - name: Build images
+        run: make images
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: image-${{ matrix.adapter }}
-          path: /tmp/${{ matrix.adapter }}.tar.gz
-          retention-days: 1
+      - name: Capabilities
+        run: make capabilities | tee -a "$GITHUB_STEP_SUMMARY"
 
-  # ── Tests on the built images, all in parallel ────────────────────────────
-  adapter:
-    name: ${{ matrix.adapter }} unit tests, smoke, shutdown
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua, dotnet-gds]
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: image-${{ matrix.adapter }}
-          path: /tmp
-
-      - name: Load image
-        run: docker load < /tmp/${{ matrix.adapter }}.tar.gz
-
-      - name: Unit tests
-        run: docker run --rm -v "$PWD/fixtures:/fixtures:ro" ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:ci test
-
-      - name: Smoke
-        run: scripts/smoke.sh ${{ matrix.adapter }} ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:ci
-
-      - name: Graceful shutdown
-        run: scripts/shutdown-test.sh ${{ matrix.adapter }} ghcr.io/otfabric/opcua-interop-${{ matrix.adapter }}:ci
-
-  pubsub:
-    name: PubSub smoke
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: image-open62541
-          path: /tmp
-
-      - name: Load image
-        run: docker load < /tmp/open62541.tar.gz
-
-      - name: PubSub smoke
-        run: scripts/pubsub-smoke.sh "${OPEN62541_IMAGE}"
-
-  pubsub-dotnet:
-    name: PubSub smoke (dotnet)
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: image-dotnet
-          path: /tmp
-
-      - name: Load image
-        run: docker load < /tmp/dotnet.tar.gz
-
-      - name: PubSub smoke
-        run: >-
-          scripts/pubsub-smoke.sh "${DOTNET_IMAGE}"
-          codec udp-unicast udp-multicast mqtt-uadp mqtt-json udp-secure discovery
-
-  cross-stack:
-    name: Cross-stack smoke
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: image-*
-          path: /tmp
-          merge-multiple: true
-
-      - name: Load images
+      - name: Images are linux/${{ matrix.arch }}
         run: |
-          docker load < /tmp/open62541.tar.gz
-          docker load < /tmp/milo.tar.gz
-          docker load < /tmp/async-opcua.tar.gz
-          docker load < /tmp/node-opcua.tar.gz
+          for image in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep 'opcua-interop-.*:dev$'); do
+            got=$(docker image inspect --format '{{.Architecture}}' "${image}")
+            [[ "${got}" == "${{ matrix.arch }}" ]] || { echo "::error::${image} is ${got}"; exit 1; }
+          done
 
-      - name: Cross-stack smoke
-        env:
-          REPORT_DIR: reports
-        run: scripts/smoke.sh cross "${OPEN62541_IMAGE}" "${MILO_IMAGE}" "${ASYNC_OPCUA_IMAGE}" "${NODE_OPCUA_IMAGE}"
+      - name: Smoke, cross-stack and PubSub self-tests, document schemas
+        run: make documents
 
-      - name: Upload results
+      - name: Collect container logs on failure
+        if: failure()
+        run: |
+          mkdir -p reports/logs
+          for c in $(docker ps -aq --filter "label=opcua-interop.run"); do
+            docker logs "$c" > "reports/logs/${c}.log" 2>&1 || true
+          done
+
+      - name: Upload documents
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: results-cross-stack
-          path: reports/results.json
+          name: selftest-documents-${{ matrix.arch }}
+          path: reports/
           if-no-files-found: ignore
-
-  cross-stack-dotnet:
-    name: Cross-stack smoke (dotnet)
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: image-*
-          path: /tmp
-          merge-multiple: true
-
-      - name: Load images
-        run: |
-          docker load < /tmp/open62541.tar.gz
-          docker load < /tmp/milo.tar.gz
-          docker load < /tmp/dotnet.tar.gz
-          docker load < /tmp/node-opcua.tar.gz
-
-      - name: Cross-stack smoke (dotnet against open62541 and Milo, node-opcua against the dotnet history events)
-        run: scripts/smoke.sh cross-dotnet "${DOTNET_IMAGE}" "${OPEN62541_IMAGE}" "${MILO_IMAGE}" "${NODE_OPCUA_IMAGE}"
-
-  cross-stack-asyncua:
-    name: Cross-stack smoke (asyncua)
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: image-*
-          path: /tmp
-          merge-multiple: true
-
-      - name: Load images
-        run: |
-          docker load < /tmp/open62541.tar.gz
-          docker load < /tmp/milo.tar.gz
-          docker load < /tmp/asyncua.tar.gz
-
-      - name: Cross-stack smoke (asyncua against open62541 and Milo)
-        run: scripts/smoke.sh cross-asyncua "${ASYNCUA_IMAGE}" "${OPEN62541_IMAGE}" "${MILO_IMAGE}"
-
-  # ── main only: the arm64 images build natively (no QEMU) ──────────────────
-  arm64:
-    name: Build ${{ matrix.adapter }} (arm64)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        adapter: [open62541, milo, async-opcua, dotnet, node-opcua, asyncua, dotnet-gds]
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build ${{ matrix.adapter }} (linux/arm64)
-        uses: docker/build-push-action@v7
-        with:
-          context: ${{ matrix.adapter }}
-          file: ${{ matrix.adapter }}/Dockerfile
-          platforms: linux/arm64
-          push: false
-          cache-from: type=gha,scope=${{ matrix.adapter }}-arm64
-          cache-to: type=gha,mode=max,scope=${{ matrix.adapter }}-arm64

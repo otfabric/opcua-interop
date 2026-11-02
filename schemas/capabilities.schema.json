@@ -61,7 +61,7 @@
     },
     "clientFeatures": {
       "type": "array",
-      "description": "Optional client-side features (docs/CLIENT_CONTRACT.md §13). Added in adapter 0.7.0; codec-pubsub in 0.8.0; transport-https and transport-wss in 0.11.0; push-groups, push-certificates and push-transaction-diagnostics in 0.15.0.",
+      "description": "Optional client-side features (docs/CAPABILITIES.md). Added in adapter 0.7.0; codec-pubsub in 0.8.0; transport-https and transport-wss in 0.11.0; push-groups, push-certificates and push-transaction-diagnostics in 0.15.0.",
       "items": {
         "type": "string",
         "enum": ["channel-lifetime", "deadband", "reverse-listen", "ecc-security", "ecc-user-token",
@@ -72,7 +72,7 @@
     },
     "serverFeatures": {
       "type": "array",
-      "description": "Optional server-side features (docs/CLIENT_CONTRACT.md §13). Added in adapter 0.7.0; pubsub in 0.8.0; alarms in 0.11.0; push-management in 0.13.0; gds-pull in 0.14.0; transport-https and transport-wss in 0.11.0; alarms-branches, alarms-audible, alarms-105, auditing, pubsub-multicast-loopback in 0.15.0; history-events and history-events-update in 0.17.0.",
+      "description": "Optional server-side features (docs/CAPABILITIES.md). Added in adapter 0.7.0; pubsub in 0.8.0; alarms in 0.11.0; push-management in 0.13.0; gds-pull in 0.14.0; transport-https and transport-wss in 0.11.0; alarms-branches, alarms-audible, alarms-105, auditing, pubsub-multicast-loopback in 0.15.0; history-events and history-events-update in 0.17.0.",
       "items": {
         "type": "string",
         "enum": ["deadband", "percent-deadband", "reverse-connect", "ecc-security", "ecc-user-token",
@@ -97,7 +97,7 @@
     },
     "pubsub": {
       "type": "object",
-      "description": "OPC UA PubSub (Part 14) support (docs/CLIENT_CONTRACT.md §14). Added in adapter 0.8.0. An adapter without PubSub declares supported=false with empty lists.",
+      "description": "OPC UA PubSub (Part 14) support (docs/CONTAINER_CONTRACT.md §14). Added in adapter 0.8.0. An adapter without PubSub declares supported=false with empty lists.",
       "required": ["supported", "transports", "encodings", "securityPolicies", "sks", "informationModel", "codecOps"],
       "additionalProperties": false,
       "properties": {
@@ -115,7 +115,7 @@
             "multicast": { "type": "boolean" }
           }
         },
-        "mqttVersions":       { "type": "array", "description": "MQTT protocol versions the MQTT transports connect with, the default first; per-version restrictions are in docs/CLIENT_CONTRACT.md §14.13. Added in adapter 0.10.0.", "items": { "type": "string", "enum": ["3.1", "3.1.1", "5.0"] } },
+        "mqttVersions":       { "type": "array", "description": "MQTT protocol versions the MQTT transports connect with, the default first; per-version restrictions are in docs/CONTAINER_CONTRACT.md §14.13. Added in adapter 0.10.0.", "items": { "type": "string", "enum": ["3.1", "3.1.1", "5.0"] } },
         "encodings":          { "type": "array", "items": { "type": "string", "enum": ["uadp", "json"] } },
         "fieldEncodings":     { "type": "array", "items": { "type": "string", "enum": ["Variant", "DataValue", "RawData"] } },
         "dataSetMessageTypes": {
@@ -148,7 +148,7 @@
           "description": "UADP discovery on datagram connections (Part 14 §7.2.4.6). Added in adapter 0.10.0.",
           "additionalProperties": false,
           "properties": {
-            "layout":          { "type": "string", "enum": ["spec", "dotnet"], "description": "Byte layout of probes and announcements: Part 14 (spec), or that of Opc.Ua.PubSub 2.x (dotnet, docs/CLIENT_CONTRACT.md §14.13)." },
+            "layout":          { "type": "string", "enum": ["spec", "dotnet"], "description": "Byte layout of probes and announcements: Part 14 (spec), or that of Opc.Ua.PubSub 2.x (dotnet, docs/CONTAINER_CONTRACT.md §14.13)." },
             "respond":         { "type": "array", "description": "Probe types a --pubsub-config publisher answers.", "items": { "type": "string", "enum": ["DataSetMetaData", "DataSetWriterConfiguration", "PublisherEndpoints"] } },
             "probe":           { "type": "array", "description": "Probe types the client operation sends.", "items": { "type": "string", "enum": ["DataSetMetaData", "DataSetWriterConfiguration", "PublisherEndpoints"] } },
             "clientOperation": { "type": "string", "description": "The client operation that sends a probe and prints the announcements." }

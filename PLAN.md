@@ -1,5 +1,18 @@
 # Implementation Plan
 
+Delivery in phases, each with a gate. Status as of 2026-11-02.
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 0–8 | Bootstrap, fixture format, open62541 and Milo, security, subscriptions, node services, filters, ECC, discovery, encodings | done: v0.1.0–v0.7.0 |
+| PubSub | OPC UA Part 14 on open62541, then UA-.NETStandard | done: v0.8.0, v0.10.0 |
+| Stacks | async-opcua, UA-.NETStandard, node-opcua, opcua-asyncio, GDS | done: v0.9.0, v0.14.0 |
+| Own image | go-opcua behind the contract (`own/go-opcua`) | done; a core subset |
+| Structure | Layout, scripts and documents as in the other interop repositories | done, unreleased: see the last phase |
+| Own coverage | Wider coverage of the own adapter | next: built on the structure phase |
+
+The sections below are the record of each phase.
+
 ## Governing principle
 
 `opcua-interop` owns reference implementations and deterministic test environments.
@@ -20,7 +33,7 @@ compose.yaml, basic CI skeletons, fixture schema stub, Docker image naming.
 Deliverables:
 - `fixtures/schema/opcua-fixture.schema.json` (v1.0)
 - `fixtures/baseline/fixture.json`
-- `fixtures/baseline/README.md`
+- `docs/FIXTURES.md`
 - Schema validation in CI
 
 ---
@@ -28,10 +41,10 @@ Deliverables:
 ## Phase 2 — open62541 adapter foundation ✓
 
 Deliverables:
-- `open62541/Dockerfile` (multi-stage, pinned release)
-- `open62541/CMakeLists.txt`
+- `adapters/open62541/Dockerfile` (multi-stage, pinned release)
+- `adapters/open62541/CMakeLists.txt`
 - `open62541/src/` — fixture parser, server, client, readiness, signal handling, output
-- `open62541/tests/` — fixture parser unit tests
+- `adapters/open62541/tests/` — fixture parser unit tests
 
 Client commands at foundation: endpoints, read, write, browse, call, subscribe
 (later extended — see Phase 14 / v0.4.0).
@@ -41,10 +54,10 @@ Client commands at foundation: endpoints, read, write, browse, call, subscribe
 ## Phase 3 — Eclipse Milo adapter foundation ✓
 
 Deliverables:
-- `milo/Dockerfile` (multi-stage, JDK 25 + Maven 3.9)
-- `milo/pom.xml`
-- `milo/src/main/java/` — fixture loader, namespace, server, client, shutdown, readiness
-- `milo/src/test/java/` — fixture loading unit tests (8 tests, all pass)
+- `adapters/milo/Dockerfile` (multi-stage, JDK 25 + Maven 3.9)
+- `adapters/milo/pom.xml`
+- `adapters/milo/src/main/java/` — fixture loader, namespace, server, client, shutdown, readiness
+- `adapters/milo/src/test/java/` — fixture loading unit tests (8 tests, all pass)
 
 Client commands at foundation: endpoints, read, write, browse, call, subscribe
 (later extended — see Phase 14 / v0.4.0).
@@ -57,7 +70,7 @@ The two adapters produce identical output shapes for identical inputs.
 
 ### Workstream A — Command and output contract ✓
 
-- `docs/CLIENT_CONTRACT.md`
+- `docs/CONTAINER_CONTRACT.md`
 - `schemas/client-result.schema.json`
 - `schemas/capabilities.schema.json`
 
@@ -350,12 +363,12 @@ Adapter release **v0.8.0** (supports the go-opcua PubSub work); `adapter.version
 3. **Codec** — `codec pubsub-{uadp,json}-{encode,decode}` with a canonical
    NetworkMessage description (`src/pubsub_codec.c`).
 4. **Fixture** — baseline `PubSub` folder (10 writable variables).
-5. **MQTT broker** — `eclipse-mosquitto:2.0.22` by digest, `mqtt/mosquitto.conf`.
+5. **MQTT broker** — `eclipse-mosquitto:2.0.22` by digest, `fixtures/pubsub/mosquitto.conf`.
 6. **Networking contract** — host ↔ container UDP unicast verified on
    macOS / Docker Desktop; multicast container ↔ container.
 7. **Capabilities** — `pubsub` section (Milo: `supported: false`),
    `serverFeatures` `pubsub`, `clientFeatures` `codec-pubsub`.
-8. **Smoke** — `scripts/pubsub-smoke.sh` (`make smoke-pubsub`, CI job
+8. **Smoke** — `scripts/pubsub-smoke.sh` (`make pubsub`, CI job
    `PubSub smoke`, candidate workflow).
 
 | Feature | open62541 | Milo | Notes |
@@ -371,7 +384,7 @@ Adapter release **v0.8.0** (supports the go-opcua PubSub work); `adapter.version
 | Information-model configuration methods | ✓ | — | AddReaderGroup via methods: name only (no MQTT / JSON / security) |
 | `codec pubsub-*` | ✓ | — | no message security in the standalone API |
 
-Known limits recorded for consumers (docs/CLIENT_CONTRACT.md §14.10): a
+Known limits recorded for consumers (docs/CONTAINER_CONTRACT.md §14.10): a
 DataSetReader that hit its MessageReceiveTimeout stays in Error; JSON
 `MessageId` is null; KeyFrameCount 1 with delta frames enabled alternates Key /
 Delta; the unicast destination host must resolve when the publisher starts.
@@ -417,3 +430,17 @@ Delta; the unicast destination host must resolve when the publisher starts.
 `schemaVersion` is independent of the repository release version. A release may
 upgrade upstream stacks without changing the fixture schema. A schema change
 increments `schemaVersion` and requires both adapters to be updated before release.
+
+---
+
+## Phase — Repository structure aligned with the other interop harnesses
+
+Same layout, scripts and methodology as `modbus-interop` and `iec104-interop`:
+adapters under `adapters/`, `scripts/lib.sh`, `scripts/interop.sh` with
+`tests/cases.tsv` and `tests/known-bugs.tsv`, a smoke per adapter, a Makefile with
+the adapter as a parameter, `check-versions.sh`, the contract split into
+`docs/CONTAINER_CONTRACT.md`, `CAPABILITIES.md`, `COMPATIBILITY.md`, `FIXTURES.md`.
+The contract version stays 1.0: no command, flag or document changed.
+
+**Gate:** every check of the old `smoke.sh` still runs, image names and released
+digests are untouched, `certs/generate.sh` stays where consumers find it.

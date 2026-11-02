@@ -366,7 +366,7 @@ func (a *addressSpace) addArguments(method *server.Node, prop string, args []fix
 	method.AddRef(node, id.HasProperty, true)
 }
 
-// methodHandler is the method of fixtures/baseline/README.md "Methods".
+// methodHandler is the method of docs/FIXTURES.md "Methods".
 func methodHandler(behavior string, inputs int) server.MethodHandler {
 	return func(_ context.Context, _, _ *ua.NodeID, args []*ua.Variant) ([]*ua.Variant, ua.StatusCode) {
 		if len(args) != inputs {

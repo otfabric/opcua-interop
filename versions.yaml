@@ -1,81 +1,104 @@
 # Machine-readable version manifest of opcua-interop. The Dockerfiles,
 # pom.xml, Cargo.toml, package.json and requirements.in are the source of
-# truth for a build; scripts/check-versions.py (make validate) fails when
+# truth for a build; scripts/check-versions.sh (make validate) fails when
 # this file disagrees with them.
 # No source archive hash is recorded: package registries and the open62541
 # tag are the pins.
 
 interop_version: "0.18.2"
-contract_version: "1.0"        # docs/CLIENT_CONTRACT.md
+contract_version: "1.0"        # docs/CONTAINER_CONTRACT.md, schemaVersion of every document
+fixture_schema: "1.0"          # fixtures/schema/opcua-fixture.schema.json
 
 protocol:
   name: "OPC UA"
+  default_port: 4840
 
 implementations:
   open62541:
+    priority: P0
+    status: published
     upstream: "open62541"
     repository: "https://github.com/open62541/open62541"
     version: "v1.5.9"
     tag_commit: "05c2b389b65cc35884eb40d800301af1f3d130cf"   # resolved from the tag; the Dockerfile clones the tag
     license: "MPL-2.0"
+    language: "C"
+    independent_engine: true
     roles: [server, client, pubsub]
-    published: true
     pinned_in:
-      - open62541/Dockerfile
+      - adapters/open62541/Dockerfile
   milo:
+    priority: P0
+    status: published
     upstream: "Eclipse Milo"
     repository: "https://github.com/eclipse-milo/milo"
     version: "1.1.8"
     license: "EPL-2.0"
+    language: "Java"
+    independent_engine: true
     roles: [server, client]
-    published: true
     pinned_in:
-      - milo/pom.xml
+      - adapters/milo/pom.xml
   async-opcua:
+    priority: P1
+    status: published
     upstream: "async-opcua"
     repository: "https://github.com/FreeOpcUa/async-opcua"
     version: "0.19.0"
     license: "MPL-2.0"
+    language: "Rust"
+    independent_engine: true
     roles: [server, client]
-    published: true
     pinned_in:
-      - async-opcua/Cargo.toml
+      - adapters/async-opcua/Cargo.toml
   dotnet:
+    priority: P0
+    status: published
     upstream: "OPC Foundation UA-.NETStandard"
     repository: "https://github.com/OPCFoundation/UA-.NETStandard"
     version: "2.0.1"
     license: "LicenseRef-OPC-Foundation-MIT-1.00"
+    language: "C#"
+    independent_engine: true
     roles: [server, client, pubsub]
-    published: true
     pinned_in:
-      - dotnet/Dockerfile
+      - adapters/dotnet/Dockerfile
   dotnet-gds:
+    priority: P1
+    status: published
     upstream: "OPC Foundation UA-.NETStandard GDS"
     repository: "https://github.com/OPCFoundation/UA-.NETStandard"
     version: "2.0.1"
     license: "LicenseRef-OPC-Foundation-MIT-1.00"
+    language: "C#"
+    independent_engine: true
     roles: [gds-server, gds-client]
-    published: true
     pinned_in:
-      - dotnet-gds/Dockerfile
+      - adapters/dotnet-gds/Dockerfile
   node-opcua:
+    priority: P1
+    status: published
     upstream: "node-opcua"
     repository: "https://github.com/node-opcua/node-opcua"
     version: "2.187.12"
     license: "MIT"
+    language: "TypeScript"
+    independent_engine: true
     roles: [server, client]
-    published: true
     pinned_in:
-      - node-opcua/package.json
+      - adapters/node-opcua/package.json
   asyncua:
+    priority: P1
+    status: published
     upstream: "opcua-asyncio (PyPI asyncua)"
     repository: "https://github.com/FreeOpcUa/opcua-asyncio"
     version: "2.1.0"
     license: "LGPL-3.0"
+    language: "Python"
+    independent_engine: true
     roles: [server, client]
-    published: true
     pinned_in:
-      - asyncua/requirements.in
+      - adapters/asyncua/requirements.in
 
 base_images:
   debian: "docker.io/library/debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"
@@ -105,3 +128,16 @@ own_implementations:
     roles: [server, client]
     image: "ghcr.io/otfabric/opcua-interop-otfabric"
     build: "own/go-opcua"
+
+images:
+  open62541: "ghcr.io/otfabric/opcua-interop-open62541"
+  milo: "ghcr.io/otfabric/opcua-interop-milo"
+  async-opcua: "ghcr.io/otfabric/opcua-interop-async-opcua"
+  dotnet: "ghcr.io/otfabric/opcua-interop-dotnet"
+  node-opcua: "ghcr.io/otfabric/opcua-interop-node-opcua"
+  asyncua: "ghcr.io/otfabric/opcua-interop-asyncua"
+  dotnet-gds: "ghcr.io/otfabric/opcua-interop-dotnet-gds"
+
+platforms:
+  - "linux/amd64"
+  - "linux/arm64"

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Builds one adapter at a candidate upstream release and tests it: unit/self
-# tests where the adapter has a `test` command, then the smoke (open62541 also
-# the PubSub smoke). The Upstream workflow (.github/workflows/upstream.yml)
-# runs it for every stack whose pin is behind the latest release
-# (scripts/latest-upstream.py).
+# Builds one adapter at a candidate upstream release and tests it like a
+# release: the smoke test (with its `test` command; open62541 also the PubSub
+# self-test), then the cross-stack self-test against the pinned open62541 and
+# Milo. The Upstream workflow (.github/workflows/upstream.yml) runs it, through
+# make candidate-<adapter>, for every stack whose pin is behind the latest
+# release (scripts/latest-upstream.py).
 #
 # Usage:
 #   candidate.sh <open62541|milo|async-opcua|dotnet|dotnet-gds|node-opcua|asyncua> <version>
 #
-# The image is tagged opcua-interop-<adapter>:candidate. Pins are not changed:
+# The image is tagged ghcr.io/otfabric/opcua-interop-<adapter>:candidate. Pins are not changed:
 # async-opcua, node-opcua and asyncua pin exactly and build from a lock file,
 # so their manifest and lock file (async-opcua: also STACK_VERSION in
 # src/common.rs) are pointed at the candidate for the build and restored on
@@ -25,8 +26,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 ADAPTER="${1:?Usage: candidate.sh <adapter> <version>}"
-VERSION="${2:?Usage: candidate.sh <adapter> <version>}"
-IMAGE="opcua-interop-${ADAPTER}:candidate"
+UPSTREAM="${2:?Usage: candidate.sh <adapter> <version>}"
+REGISTRY="${REGISTRY:-ghcr.io/otfabric}"
+BASE_REGISTRY="${BASE_REGISTRY:-docker.io/library}"
+IMAGE="${REGISTRY}/opcua-interop-${ADAPTER}:candidate"
 
 log() { echo "[candidate] $*" >&2; }
 
@@ -51,39 +54,54 @@ edit() {
 
 build() {
     log "Building ${IMAGE}..."
-    docker build --tag "${IMAGE}" --file "${ADAPTER}/Dockerfile" "$@" "${ADAPTER}/"
+    scripts/retry.sh docker build --build-arg "BASE_REGISTRY=${BASE_REGISTRY}" --tag "${IMAGE}" --file "adapters/${ADAPTER}/Dockerfile" "$@" .
+}
+
+# The pinned stacks it is tested against, tagged like the candidate.
+peers() {
+    local peer
+    for peer in open62541 milo; do
+        [[ "${peer}" != "${ADAPTER}" ]] || continue
+        make --no-print-directory "image-${peer}" VERSION=dev
+        docker tag "${REGISTRY}/opcua-interop-${peer}:dev" "${REGISTRY}/opcua-interop-${peer}:candidate"
+    done
 }
 
 self_test() {
-    log "Running the ${ADAPTER} test command..."
-    docker run --rm -v "${REPO_ROOT}/fixtures:/fixtures:ro" "${IMAGE}" test
+    VERSION=candidate scripts/smoke.sh "${ADAPTER}"
+    if [[ "${ADAPTER}" == dotnet-gds ]]; then return; fi
+    peers
+    local others=(open62541 milo) list=("${ADAPTER}") peer
+    for peer in "${others[@]}"; do
+        [[ "${peer}" == "${ADAPTER}" ]] || list+=("${peer}")
+    done
+    VERSION=candidate scripts/interop.sh "${list[@]}"
 }
 
 case "${ADAPTER}" in
     open62541)
-        build --build-arg "OPEN62541_COMMIT=${VERSION}"
-        scripts/smoke.sh open62541 "${IMAGE}"
-        scripts/pubsub-smoke.sh "${IMAGE}"
+        build --build-arg "OPEN62541_COMMIT=${UPSTREAM}"
+        self_test
+        VERSION=candidate scripts/pubsub-smoke.sh open62541
         ;;
     milo)
-        build --build-arg "MILO_VERSION=${VERSION}"
-        scripts/smoke.sh milo "${IMAGE}"
+        build --build-arg "MILO_VERSION=${UPSTREAM}"
+        self_test
         ;;
     async-opcua)
         # The pin is exact (=X.Y.Z) and the build is --locked.
-        edit async-opcua/Cargo.toml async-opcua/Cargo.lock async-opcua/src/common.rs
-        sed -i.orig -E "s/^async-opcua = \{ version = \"=[0-9.]+\"/async-opcua = { version = \"=${VERSION}\"/" async-opcua/Cargo.toml
-        sed -i.orig -E "s/^pub const STACK_VERSION: &str = \"[0-9.]+\";/pub const STACK_VERSION: \&str = \"${VERSION}\";/" async-opcua/src/common.rs
-        rm -f async-opcua/Cargo.toml.orig async-opcua/src/common.rs.orig
-        cargo update --manifest-path async-opcua/Cargo.toml -p async-opcua
-        git diff --stat -- async-opcua
+        edit adapters/async-opcua/Cargo.toml adapters/async-opcua/Cargo.lock adapters/async-opcua/src/common.rs
+        sed -i.orig -E "s/^async-opcua = \{ version = \"=[0-9.]+\"/async-opcua = { version = \"=${UPSTREAM}\"/" adapters/async-opcua/Cargo.toml
+        sed -i.orig -E "s/^pub const STACK_VERSION: &str = \"[0-9.]+\";/pub const STACK_VERSION: \&str = \"${UPSTREAM}\";/" adapters/async-opcua/src/common.rs
+        rm -f adapters/async-opcua/Cargo.toml.orig adapters/async-opcua/src/common.rs.orig
+        cargo update --manifest-path adapters/async-opcua/Cargo.toml -p async-opcua
+        git diff --stat -- adapters/async-opcua
         build
-        scripts/smoke.sh async-opcua "${IMAGE}"
+        self_test
         ;;
     dotnet | dotnet-gds)
-        build --build-arg "OPCUA_VERSION=${VERSION}"
+        build --build-arg "OPCUA_VERSION=${UPSTREAM}"
         self_test
-        scripts/smoke.sh "${ADAPTER}" "${IMAGE}"
         ;;
     node-opcua)
         # The pin is exact and the build is `npm ci`: every node-opcua-* package
@@ -91,30 +109,29 @@ case "${ADAPTER}" in
         # (node-opcua-types) or else to the same release
         # (node-opcua-server-configuration). A package left behind puts a
         # second node-opcua-server in the tree and the build fails.
-        edit node-opcua/package.json node-opcua/package-lock.json
-        packages=("node-opcua@${VERSION}")
-        for pkg in $(jq -r '.dependencies | keys[] | select(startswith("node-opcua-"))' node-opcua/package.json); do
-            version=$(npm view "node-opcua@${VERSION}" "dependencies.${pkg}")
-            packages+=("${pkg}@${version:-${VERSION}}")
+        edit adapters/node-opcua/package.json adapters/node-opcua/package-lock.json
+        packages=("node-opcua@${UPSTREAM}")
+        for pkg in $(jq -r '.dependencies | keys[] | select(startswith("node-opcua-"))' adapters/node-opcua/package.json); do
+            version=$(npm view "node-opcua@${UPSTREAM}" "dependencies.${pkg}")
+            packages+=("${pkg}@${version:-${UPSTREAM}}")
         done
-        log "Pointing node-opcua/package.json at: ${packages[*]}"
-        (cd node-opcua && npm install --package-lock-only --save-exact --no-audit --no-fund "${packages[@]}")
-        git diff --stat -- node-opcua
+        log "Pointing adapters/node-opcua/package.json at: ${packages[*]}"
+        (cd adapters/node-opcua && npm install --package-lock-only --save-exact --no-audit --no-fund "${packages[@]}")
+        git diff --stat -- adapters/node-opcua
         build
-        scripts/smoke.sh node-opcua "${IMAGE}"
+        self_test
         ;;
     asyncua)
         # The pin is exact (asyncua==X.Y.Z) and the lock carries hashes. The
         # image build runs the unit tests.
-        edit asyncua/requirements.in asyncua/requirements.txt
-        sed -i.orig -E "s/^asyncua==[0-9.]+$/asyncua==${VERSION}/" asyncua/requirements.in
-        rm -f asyncua/requirements.in.orig
+        edit adapters/asyncua/requirements.in adapters/asyncua/requirements.txt
+        sed -i.orig -E "s/^asyncua==[0-9.]+$/asyncua==${UPSTREAM}/" adapters/asyncua/requirements.in
+        rm -f adapters/asyncua/requirements.in.orig
         command -v uv >/dev/null 2>&1 || pip install --quiet uv
-        (cd asyncua && uv pip compile requirements.in --universal --python-version 3.14 --generate-hashes -o requirements.txt)
-        git diff --stat -- asyncua
+        (cd adapters/asyncua && uv pip compile requirements.in --universal --python-version 3.14 --generate-hashes -o requirements.txt)
+        git diff --stat -- adapters/asyncua
         build
         self_test
-        scripts/smoke.sh asyncua "${IMAGE}"
         ;;
     *)
         echo "Unknown adapter: ${ADAPTER}. Use open62541, milo, async-opcua, dotnet, dotnet-gds, node-opcua or asyncua." >&2

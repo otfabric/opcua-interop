@@ -1,7 +1,7 @@
 # opcua-interop-otfabric
 
 [go-opcua](https://github.com/otfabric/go-opcua), OT Fabric's own OPC UA stack,
-behind the [client command contract](../../docs/CLIENT_CONTRACT.md), so that
+behind the [container contract](../../docs/CONTAINER_CONTRACT.md), so that
 other stacks can test against it. Unlike the images under `adapters/`, it is not
 a reference: its tags are go-opcua versions, and no harness release or
 `manifest.json` contains it.
@@ -42,9 +42,10 @@ and `docker run --rm <image> version` prints the versions.
 
 ## Why it is apart from the other adapters
 
-Nothing under `adapters/` or the top-level `Makefile` knows the library under
-test. This directory, `.github/workflows/own-go-opcua.yml` and the `otfabric`
-modes of `scripts/smoke.sh` are the one exception.
+Nothing under `adapters/`, `scripts/`, `tests/` or the top-level `Makefile` knows
+the library under test: the scripts take the image from `ADAPTER_IMAGE_otfabric`
+and recognise it by its capabilities. This directory and
+`.github/workflows/own-go-opcua.yml` are the one exception.
 
 No release loop can form (`otfabric/engineering` ADR-0012). This image is built
 by hand, from the latest go-opcua release, and nothing is committed: this
@@ -62,14 +63,14 @@ publishing. Nothing runs it automatically, so after a go-opcua release the image
 stays on the old version until someone does.
 
 ```sh
-make -f own/go-opcua/Makefile image smoke cross    # from the repository root
+make -f own/go-opcua/Makefile image smoke interop    # from the repository root
 ```
 
 `smoke` is `scripts/smoke.sh otfabric`: the image against itself, unsecured and
-secured. `cross` is `scripts/smoke.sh cross-otfabric`, which stands in for the
-`interop.sh` of the Modbus harness: each released reference against this image in
-both roles, for the operations of `smoke.sh`, then the secured path with open62541
-and Milo.
+secured. `interop` is `scripts/interop.sh otfabric <references>`, as in the other
+interop repositories: each released reference against this image in both roles,
+for the cases of `tests/cases.tsv`, then the secured path of
+`tests/secure-cases.tsv`.
 
 ## What it covers
 
@@ -83,7 +84,7 @@ not declared and never as a pass.
   Anonymous and UserName tokens.
 
 `register-nodes`, channel renewal (`--channel-lifetime-ms`) and deadbands are here
-because `scripts/smoke.sh` requires them of every adapter.
+because the self-tests in `tests/cases.tsv` exercise them.
 
 Left out: PubSub, GDS, alarms and conditions, history, certificate management, ECC
 policies, X.509 user tokens, reverse connect, opc.wss and opc.https. Flags that

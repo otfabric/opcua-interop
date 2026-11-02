@@ -13,7 +13,7 @@ updates:
           - "*"
 
   - package-ecosystem: "docker"
-    directory: "/open62541"
+    directory: "/adapters/open62541"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -21,7 +21,7 @@ updates:
       - "dependencies"
 
   - package-ecosystem: "docker"
-    directory: "/milo"
+    directory: "/adapters/milo"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -29,7 +29,7 @@ updates:
       - "dependencies"
 
   - package-ecosystem: "maven"
-    directory: "/milo"
+    directory: "/adapters/milo"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -41,7 +41,7 @@ updates:
           - "org.eclipse.milo*"
 
   - package-ecosystem: "docker"
-    directory: "/async-opcua"
+    directory: "/adapters/async-opcua"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -52,7 +52,7 @@ updates:
   # daily Upstream workflow; Dependabot keeps the adapter's other crates
   # current.
   - package-ecosystem: "cargo"
-    directory: "/async-opcua"
+    directory: "/adapters/async-opcua"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -85,7 +85,7 @@ updates:
         patterns: ["x509-cert", "spki", "sha2", "const-oid", "der", "rsa", "p256"]
 
   - package-ecosystem: "docker"
-    directory: "/node-opcua"
+    directory: "/adapters/node-opcua"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -96,7 +96,7 @@ updates:
   # together) and checked by the daily Upstream workflow; Dependabot keeps the
   # adapter's dev dependencies (TypeScript, @types/node) current.
   - package-ecosystem: "npm"
-    directory: "/node-opcua"
+    directory: "/adapters/node-opcua"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -106,14 +106,14 @@ updates:
       - dependency-name: "node-opcua"
       - dependency-name: "node-opcua-*"
       # @types/node follows the major of the Node.js runtime in the
-      # node-opcua/Dockerfile (NODE_IMAGE, node:24): typings of a newer major
+      # adapters/node-opcua/Dockerfile (NODE_IMAGE, node:24): typings of a newer major
       # describe APIs the runtime does not have. Raise this bound together
       # with the base image's major.
       - dependency-name: "@types/node"
         versions: [">=25.0.0"]
 
   - package-ecosystem: "docker"
-    directory: "/asyncua"
+    directory: "/adapters/asyncua"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -124,7 +124,7 @@ updates:
   # checked by the daily Upstream workflow; Dependabot keeps the other locked
   # wheels of the adapter (requirements.txt) current.
   - package-ecosystem: "pip"
-    directory: "/asyncua"
+    directory: "/adapters/asyncua"
     schedule:
       interval: "weekly"
       day: "monday"
