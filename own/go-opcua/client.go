@@ -215,6 +215,8 @@ func commandFor(op string, g *globals, fs *flag.FlagSet) (command, bool) {
 		return historyUpdateEventsCommand(fs), true
 	case "codec":
 		return codecCommand(fs, g), true
+	case "pubsub-discover":
+		return discoverCommand(fs), true
 	case "push":
 		return pushCommand(fs), true
 	case "gds-pull":

@@ -22,8 +22,8 @@ import (
 	"github.com/otfabric/go-opcua/ua"
 )
 
-// serverFlags are the flags of §11 this adapter has. Any other, such as
-// --pubsub-config or --lds, is refused with exit 2.
+// serverFlags are the flags of §11 this adapter has. Any other, such as --lds, is
+// refused with exit 2.
 type serverFlags struct {
 	fixture, bindAddress, advertisedHost, endpointPath string
 	readyFile, pkiDir, certificate, privateKey, eccDir string
@@ -31,6 +31,7 @@ type serverFlags struct {
 	httpsPort, wssPort                                 int
 	reverseConnect                                     repeated
 	reverseIntervalMS                                  int64
+	pubsubConfig                                       string
 }
 
 func parseServerFlags(args []string) (*serverFlags, map[string]bool, error) {
@@ -51,6 +52,7 @@ func parseServerFlags(args []string) (*serverFlags, map[string]bool, error) {
 	fs.IntVar(&f.wssPort, "wss-port", 0, "also serve opc.wss on this port")
 	fs.Var(&f.reverseConnect, "reverse-connect", "dial this client and send ReverseHello, repeatable")
 	fs.Int64Var(&f.reverseIntervalMS, "reverse-connect-interval-ms", 1000, "retry interval of --reverse-connect")
+	fs.StringVar(&f.pubsubConfig, "pubsub-config", "", "PubSub configuration (§14.1)")
 	if err := fs.Parse(args); err != nil {
 		return nil, nil, err
 	}
@@ -114,6 +116,14 @@ func startServer(ctx context.Context, f *serverFlags, fx *fixture) (*server.Serv
 	if advertisedPort == 0 {
 		advertisedPort = bindPort
 	}
+	var pubsubConfig *pubsubFile
+	if f.pubsubConfig != "" {
+		var err error
+		if pubsubConfig, err = loadPubSubFile(f.pubsubConfig); err != nil {
+			fmt.Fprintln(os.Stderr, "--pubsub-config:", err)
+			return nil, nil, 1
+		}
+	}
 	var directory *gdsserver.GDS
 	opts := []server.Option{
 		server.ListenOn(fmt.Sprintf("%s:%d", f.bindAddress, bindPort)),
@@ -152,6 +162,9 @@ func startServer(ctx context.Context, f *serverFlags, fx *fixture) (*server.Serv
 		return nil, nil, exitInternal
 	}
 	opts = append(append(opts, transports...), reverseOptions(f)...)
+	if pubsubConfig != nil {
+		opts = append(opts, server.WithPubSub(nil, pubsubOptions()...))
+	}
 	s, err := server.New(opts...)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
@@ -172,9 +185,22 @@ func startServer(ctx context.Context, f *serverFlags, fx *fixture) (*server.Serv
 			return nil, nil, exitInternal
 		}
 	}
+	if pubsubConfig != nil {
+		if err := configurePubSub(s, a, pubsubConfig); err != nil {
+			fmt.Fprintln(os.Stderr, "--pubsub-config:", err)
+			return nil, nil, 1
+		}
+	}
 	if err := s.Start(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
 		return nil, nil, exitInternal
+	}
+	if pubsubConfig != nil {
+		if err := startSKSClient(ctx, s.PubSub(), f, pubsubConfig); err != nil {
+			_ = s.Close()
+			fmt.Fprintln(os.Stderr, "--pubsub-config:", err)
+			return nil, nil, 1
+		}
 	}
 	err = a.startBehaviors(ctx, fx)
 	if err == nil {
