@@ -198,3 +198,85 @@ run_gds() {
     stop_server "${gds}" "${leaf}"
     SERVER_FIXTURE=/fixtures/baseline/fixture.json
 }
+
+# run_reverse <client> <server>: the server dials the client (ReverseHello). --endpoint
+# names a host that does not exist, so a pass cannot have come from dialling it. A server
+# that does not dial this client leaves the client waiting (exit 7), and a client told to
+# insist on another ServerUri refuses the connection (exit 3).
+run_reverse() {
+    local c="$1" s="$2" name="rev-${RUN_ID}" rclient="rclient-${RUN_ID}" out rc nowhere="opc.tcp://nowhere.invalid:4840${ENDPOINT_PATH}"
+    local cert me host listen=(--reverse-listen 4855 --reverse-timeout-ms 30000) node="${MODEL}Scalar.Int32"
+    prepare_pki
+    cert=$(identity_of "${s}" server); me=$(identity_of "${c}" client); host=$(server_host "${s}" "${name}")
+    log "features: ${c} listens, the ${s} server dials it"
+    server_up "${name}" "${s}" --host "${host}" --certificate "/pki/${cert}/cert.crt" --private-key "/pki/${cert}/cert.key" \
+        --pki-dir "/pki/${cert}/pki" --reverse-connect "opc.tcp://${rclient}:4855" --reverse-connect-interval-ms 500 || return 0
+
+    out=$(CLIENT_NAME="${rclient}" run_client "${c}" read --endpoint "${nowhere}" --node "${node}" "${listen[@]}")
+    check reverse.read "${c}" "${s}" "${READ_OK}" "${out}"
+    out=$(CLIENT_NAME="${rclient}" run_client "${c}" subscribe --endpoint "${nowhere}" --node "${MODEL}Dynamic.Counter" --notifications 2 --timeout-ms 15000 "${listen[@]}")
+    check reverse.subscribe "${c}" "${s}" '.success == true and (.results[0].notifications | length) == 2' "${out}"
+    out=$(CLIENT_NAME="${rclient}" run_client "${c}" endpoints --endpoint "${nowhere}" "${listen[@]}")
+    check reverse.endpoints "${c}" "${s}" '.success == true and (.results | length) > 1' "${out}"
+    out=$(CLIENT_NAME="${rclient}" run_client "${c}" read --endpoint "${nowhere}" --node "${node}" "${listen[@]}" \
+            --security-policy Basic256Sha256 --security-mode SignAndEncrypt \
+            --certificate "/pki/${me}/cert.crt" --private-key "/pki/${me}/cert.key" --trust-list /pki/ca/ca.crt)
+    check reverse.basic256sha256-signandencrypt-read "${c}" "${s}" "${READ_OK}" "${out}"
+    if is_own "${c}"; then
+        out=$(CLIENT_NAME="${rclient}" run_client "${c}" read --endpoint "${nowhere}" --node "${node}" "${listen[@]}" --reverse-server-uri urn:not:this:server); rc=$?
+        at reverse.other-server-uri-is-refused "${c}" "${s}"
+        if [[ "${rc}" == 3 ]] && jq -e '.success == false and .serviceResult.severity == "Bad"' <<<"${out}" >/dev/null 2>&1; then ok "${c}->${s}: --reverse-server-uri"
+        else fail "${c}->${s}: --reverse-server-uri: exit ${rc}: ${out:0:400}"; fi
+    fi
+    stop_server "${name}"
+    # Nothing dials this client: the wait ends with exit 7.
+    out=$(CLIENT_NAME="${rclient}" run_client "${c}" read --endpoint "${nowhere}" --node "${node}" --reverse-listen 4855 --reverse-timeout-ms 2000); rc=$?
+    at reverse.no-server-times-out "${c}" "${s}"
+    if [[ "${rc}" == 7 ]] && jq -e '.success == false and .error.category == "timeout"' <<<"${out}" >/dev/null 2>&1; then ok "${c}: reverse timeout"
+    else fail "${c}: --reverse-listen without a server: exit ${rc}: ${out:0:400}"; fi
+}
+
+# run_transports <client> <server>: opc.https and opc.wss (docs/CONTAINER_CONTRACT.md 9,
+# 11). The endpoints list the transports, a read and a subscription work over each, and
+# a TLS certificate outside --trust-list ends the connection.
+run_transports() {
+    local c="$1" s="$2" name="tls-${RUN_ID}" out cert host scheme url
+    local node="${MODEL}Scalar.Int32" user=(--username test-user --password test-password)
+    prepare_pki
+    cert=$(identity_of "${s}" server); host=$(server_host "${s}" "${name}")
+    log "features: ${c} client, ${s} server over opc.https and opc.wss"
+    server_up "${name}" "${s}" --host "${host}" --certificate "/pki/${cert}/cert.crt" --private-key "/pki/${cert}/cert.key" \
+        --pki-dir "/pki/${cert}/pki" --https-port 4843 --wss-port 4844 || return 0
+    for scheme in https:4843 wss:4844; do
+        url="opc.${scheme%:*}://${host}:${scheme#*:}${ENDPOINT_PATH}"
+        out=$(run_client "${c}" endpoints --endpoint "${url}" --trust-list /pki/ca/ca.crt)
+        check "transport.${scheme%:*}-endpoints" "${c}" "${s}" ".success == true and ([.results[].url] | map(test(\"^opc.${scheme%:*}://\")) | any)" "${out}"
+        out=$(run_client "${c}" read --endpoint "${url}" --node "${node}" --trust-list /pki/ca/ca.crt "${user[@]}")
+        check "transport.${scheme%:*}-read-username" "${c}" "${s}" "${READ_OK}" "${out}"
+        out=$(run_client "${c}" write --endpoint "${url}" --node "${MODEL}Access.ReadWrite" --type Int32 --value 77 --trust-list /pki/ca/ca.crt "${user[@]}")
+        check "transport.${scheme%:*}-write" "${c}" "${s}" '.success == true and .results[0].statusCode.severity == "Good"' "${out}"
+        out=$(run_client "${c}" read --endpoint "${url}" --node "${node}" --trust-list /pki/untrusted/cert.crt "${user[@]}")
+        check "transport.${scheme%:*}-untrusted-tls-certificate-is-rejected" "${c}" "${s}" '.success == false' "${out}"
+    done
+    out=$(run_client "${c}" subscribe --endpoint "opc.wss://${host}:4844${ENDPOINT_PATH}" --node "${MODEL}Dynamic.Counter" --notifications 3 --timeout-ms 15000 --trust-list /pki/ca/ca.crt "${user[@]}")
+    check transport.wss-subscribe "${c}" "${s}" '.success == true and (.results[0].notifications | length) == 3' "${out}"
+    stop_server "${name}"
+}
+
+# run_codec_literals <adapter>: codec documents the shared table does not reach: the
+# verbose JSON form, DataValues, matrices and a document that does not decode.
+run_codec_literals() {
+    local a="$1" out doc bin
+    log "features: ${a} codec literals"
+    out=$(run_client "${a}" codec encode --format json --json-mode verbose --type Int32 --value 7)
+    check codec.json-verbose "${a}" "${a}" '.success == true and .results[0].jsonMode == "verbose" and (.results[0].encoded.variant | fromjson | .UaType == 6 and .Value == 7)' "${out}"
+    out=$(run_client "${a}" codec encode --format json --type Int32[] --value 1,2,3,4,5,6 --dimensions 2,3)
+    check codec.json-matrix "${a}" "${a}" '.success == true and .results[0].valueRank == 2 and .results[0].arrayDimensions == [2,3] and .results[0].value == [1,2,3,4,5,6] and .results[0].binary.variant == "xgYAAAABAAAAAgAAAAMAAAAEAAAABQAAAAYAAAACAAAAAgAAAAMAAAA="' "${out}"
+    out=$(run_client "${a}" codec encode --format xml --type String --value interop --status 0x40000000 --source-timestamp 2026-07-24T10:00:00Z)
+    check codec.xml-datavalue-members "${a}" "${a}" '.success == true and .results[0].dataValue.statusCode.code == 1073741824 and .results[0].dataValue.sourceTimestamp != null and (.results[0].encoded.dataValue | test("SourceTimestamp"))' "${out}"
+    doc=$(jq -r '.results[0].encoded.dataValue // empty' <<<"${out}"); bin=$(jq -r '.results[0].binary.dataValue // empty' <<<"${out}")
+    out=$(printf '%s' "${doc}" | CLIENT_STDIN=1 run_client "${a}" codec decode --format xml --type DataValue)
+    check codec.xml-datavalue-roundtrip "${a}" "${a}" ".success == true and .results[0].binary == \"${bin}\"" "${out}"
+    out=$(run_client "${a}" codec decode --format json --type Variant --document 'not json')
+    check codec.undecodable-document-is-bad "${a}" "${a}" '.success == false and .results[0].statusCode.name == "BadDecodingError"' "${out}"
+}

@@ -3,12 +3,10 @@
 package main
 
 import (
-	"crypto/rsa"
-	"crypto/x509"
+	"crypto"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	"github.com/otfabric/go-opcua/ua"
+	"github.com/otfabric/go-opcua/uapolicy"
 )
 
 // builtInTypes are the OPC UA built-in types by name. The number is both the
@@ -319,23 +318,18 @@ func readDER(path string) ([]byte, error) {
 	return b, nil
 }
 
-// readRSAKey reads an RSA private key, PEM or DER, PKCS#8 or PKCS#1.
-func readRSAKey(path string) (*rsa.PrivateKey, error) {
-	der, err := readDER(path)
+// readKey reads a private key of any type go-opcua takes: RSA, ECDSA (also on the
+// Brainpool curves), Ed25519 or Ed448.
+func readKey(path string) (crypto.Signer, error) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	if k, err := x509.ParsePKCS1PrivateKey(der); err == nil {
-		return k, nil
-	}
-	k, err := x509.ParsePKCS8PrivateKey(der)
+	key, err := uapolicy.ParsePrivateKey(b)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if rk, ok := k.(*rsa.PrivateKey); ok {
-		return rk, nil
-	}
-	return nil, errors.New(path + ": not an RSA key; this adapter has the RSA policies only")
+	return key, nil
 }
 
 // repeated is a flag that may be given several times.

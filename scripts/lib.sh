@@ -122,6 +122,7 @@ supported() {
             server:!*)  has_cap "$2" server "${need#server:!}" && return 1 ;;
             server:*)   has_cap "$2" server "${need#server:}" || return 1 ;;
             server=*)   [[ "$2" == "${need#server=}" ]] || return 1 ;;
+            own)        ;;
             *)          log "bad needs in a case: ${need}"; return 1 ;;
         esac
     done
@@ -290,6 +291,8 @@ run_cases() {
     local client="$1" server="$2" url="$3" id state want expect needs op doc rc args
     while IFS=$'\t' read -r id state want expect needs op; do
         [[ -z "${id}" || "${id}" == \#* ]] && continue
+        # Only for an own stack: a pairing of references does not report it at all.
+        if [[ ",${needs}," == *,own,* ]] && ! is_own "${client}" && ! is_own "${server}"; then continue; fi
         at "${id}" "${client}" "${server}"
         if ! supported "${client}" "${server}" "${needs}"; then
             skip "${client}->${server}: ${id} (needs ${needs})"
@@ -350,6 +353,23 @@ run_codec() {
     fi
 }
 
+# any_own <adapter>...: one of them is an own stack.
+any_own() {
+    local a
+    for a in "$@"; do is_own "${a}" && return 0; done
+    return 1
+}
+
+# ecc_identity <operation> <identity>: @ecc-<curve> becomes the certificate of that
+# curve of the identity (certs/README.md).
+ecc_identity() {
+    local o="$1" me="$2" curve
+    for curve in nistp256 nistp384 brainpoolp256r1 brainpoolp384r1 curve25519 curve448; do
+        o="${o//@ecc-${curve}/--certificate /pki/${me}/ecc-${curve}/cert.crt --private-key /pki/${me}/ecc-${curve}/cert.key --trust-list /pki/ca/ca.crt}"
+    done
+    printf '%s' "${o}"
+}
+
 # secure_name <token> <adapter>: the token of tests/secure-cases.tsv names the adapter.
 secure_names() {
     local t
@@ -383,9 +403,13 @@ run_secure_cases() {
                         break 2
                     fi
                     log "secure: ${server} server with ${cert}"
+                    local ecc=()
+                    # An ECC identity only in a run with an own stack: the rows that
+                    # need one are its rows, and the references keep their endpoints.
+                    if has_cap "${server}" server ecc-security && any_own "$@"; then ecc=(--ecc-dir "/pki/${cert}"); fi
                     server_up "${name}" "${server}" --host "${host}" \
                         --certificate "/pki/${cert}/cert.crt" --private-key "/pki/${cert}/cert.key" \
-                        --pki-dir "/pki/${cert}/pki" || break 2
+                        --pki-dir "/pki/${cert}/pki" ${ecc[@]+"${ecc[@]}"} || break 2
                     url=$(url_of "${host}")
                     started=1
                 fi
@@ -394,6 +418,11 @@ run_secure_cases() {
                 o="${op//\$M/${MODEL}}"
                 o="${o//@cred/--certificate /pki/${me}/cert.crt --private-key /pki/${me}/cert.key --trust-list /pki/ca/ca.crt}"
                 o="${o//@badca/--certificate /pki/${me}/cert.crt --private-key /pki/${me}/cert.key --trust-list /pki/untrusted/cert.crt}"
+                o="${o//@x509bad/--user-certificate /pki/untrusted/cert.crt --user-private-key /pki/untrusted/cert.key}"
+                o="${o//@x509ecc/--user-certificate /pki/consumer/ecc-nistp256/cert.crt --user-private-key /pki/consumer/ecc-nistp256/cert.key}"
+                o="${o//@x509/--user-certificate /pki/consumer/cert.crt --user-private-key /pki/consumer/cert.key}"
+                o="${o//@eccbad/--certificate /pki/untrusted/ecc-nistp256/cert.crt --private-key /pki/untrusted/ecc-nistp256/cert.key --trust-list /pki/ca/ca.crt}"
+                o=$(ecc_identity "${o}" "${me}")
                 o="${o//@bad/--certificate /pki/untrusted/cert.crt --private-key /pki/untrusted/cert.key --trust-list /pki/ca/ca.crt}"
                 o="${o//@user/--username test-user --password test-password}"
                 o="${o//@b256s/--security-policy Basic256Sha256 --security-mode Sign}"

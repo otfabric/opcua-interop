@@ -4,19 +4,17 @@ package main
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"slices"
-	"strings"
 	"time"
 
 	opcua "github.com/otfabric/go-opcua"
-	"github.com/otfabric/go-opcua/id"
 	"github.com/otfabric/go-opcua/ua"
+	"github.com/otfabric/go-opcua/uacp"
 )
 
 // cliError is the `error` member of the envelope (§3).
@@ -81,6 +79,13 @@ type globals struct {
 	trust                                   repeated
 	connect, request, disconnect            float64
 	lifetimeMS                              int64
+	userCert, userKey                       string
+	reverseListen                           int
+	reverseTimeoutMS                        int64
+	reverseServerURI                        string
+	listener                                *uacp.ReverseListener
+	// positional takes the first word after the operation (`codec encode`).
+	positional func(word string) bool
 }
 
 func (g *globals) define(fs *flag.FlagSet) {
@@ -96,6 +101,11 @@ func (g *globals) define(fs *flag.FlagSet) {
 	fs.Float64Var(&g.request, "request-timeout", 5, "request timeout in seconds")
 	fs.Float64Var(&g.disconnect, "disconnect-timeout", 2, "disconnect timeout in seconds")
 	fs.Int64Var(&g.lifetimeMS, "channel-lifetime-ms", 0, "requested SecureChannel lifetime")
+	fs.StringVar(&g.userCert, "user-certificate", "", "certificate of an X509IdentityToken")
+	fs.StringVar(&g.userKey, "user-private-key", "", "private key of the user certificate")
+	fs.IntVar(&g.reverseListen, "reverse-listen", 0, "wait for the server's ReverseHello on this port")
+	fs.Int64Var(&g.reverseTimeoutMS, "reverse-timeout-ms", 30000, "how long to wait for the reverse connection")
+	fs.StringVar(&g.reverseServerURI, "reverse-server-uri", "", "required ServerArray[0] of the server that dials in")
 }
 
 func seconds(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
@@ -105,11 +115,20 @@ func (g *globals) validate() error {
 	if g.endpoint == "" {
 		return errors.New("--endpoint is required")
 	}
+	if g.isReverse() && g.isTLS() {
+		return errors.New("--reverse-listen is for opc.tcp")
+	}
 	if !slices.Contains(securityProfiles, securityProfile{g.policy, g.mode}) {
 		return fmt.Errorf("security policy %s with mode %s is not declared by this image", g.policy, g.mode)
 	}
 	if g.policy != "None" && (g.cert == "" || g.key == "") {
 		return errors.New("--certificate and --private-key are required with a security policy")
+	}
+	if (g.userCert == "") != (g.userKey == "") {
+		return errors.New("--user-certificate and --user-private-key go together")
+	}
+	if g.userCert != "" && g.userSet {
+		return errors.New("--user-certificate and --username exclude each other")
 	}
 	return nil
 }
@@ -120,6 +139,9 @@ type command struct {
 	run      func(ctx context.Context, c *opcua.Client) outcome
 	// discovery runs without a session.
 	discovery func(ctx context.Context) outcome
+	// offline says that this call needs no server, and local runs it.
+	offline func() bool
+	local   func() outcome
 }
 
 func runClient(args []string, out io.Writer) int {
@@ -132,9 +154,17 @@ func runClient(args []string, out io.Writer) int {
 	fs.SetOutput(os.Stderr)
 	g.define(fs)
 	var res outcome
-	if cmd, ok := commandFor(op, g, fs); !ok {
+	cmd, ok := commandFor(op, g, fs)
+	var words []string
+	if len(args) > 1 {
+		words = presenceFlags(args[1:])
+		if g.positional != nil && len(words) > 0 && g.positional(words[0]) {
+			words = words[1:]
+		}
+	}
+	if !ok {
 		res = inputError("operation " + op + " is not provided by this image (print-capabilities)")
-	} else if err := fs.Parse(args[1:]); err != nil {
+	} else if err := fs.Parse(words); err != nil {
 		res = inputError(err.Error())
 	} else {
 		fs.Visit(func(f *flag.Flag) { g.userSet = g.userSet || f.Name == "username" })
@@ -170,20 +200,61 @@ func commandFor(op string, g *globals, fs *flag.FlagSet) (command, bool) {
 		return subscribeCommand(fs), true
 	case "register-nodes":
 		return registerCommand(fs), true
+	case "event-subscribe":
+		return eventSubscribeCommand(fs), true
+	case "alarms":
+		return alarmsCommand(fs), true
+	case "history-read":
+		return historyReadCommand(fs), true
+	case "history-read-events":
+		return historyReadEventsCommand(fs), true
+	case "history-update-events":
+		return historyUpdateEventsCommand(fs), true
+	case "codec":
+		return codecCommand(fs, g), true
 	}
 	return command{}, false
 }
 
+// presenceFlags writes the presence flags that may be followed by true or false
+// (§1) in the one form the flag package reads.
+func presenceFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		out = append(out, args[i])
+		switch args[i] {
+		case "--acknowledge", "--confirm", "--add-comment", "--release-continuation-point":
+			if i+1 < len(args) {
+				switch args[i+1] {
+				case "true", "false", "1", "0":
+					out[len(out)-1] = args[i] + "=" + args[i+1]
+					i++
+				}
+			}
+		}
+	}
+	return out
+}
+
 func execute(cmd command, g *globals) outcome {
+	defer g.close()
+	if cmd.validate != nil && cmd.offline != nil {
+		if err := cmd.validate(); err != nil {
+			return inputError(err.Error())
+		}
+		if cmd.offline() {
+			return cmd.local()
+		}
+	}
 	if err := g.validate(); err != nil {
 		return inputError(err.Error())
 	}
-	if cmd.validate != nil {
+	if cmd.validate != nil && cmd.offline == nil {
 		if err := cmd.validate(); err != nil {
 			return inputError(err.Error())
 		}
 	}
-	connectCtx, cancel := context.WithTimeout(context.Background(), seconds(g.connect))
+	connectCtx, cancel := context.WithTimeout(context.Background(), g.connectTime())
 	defer cancel()
 	if cmd.discovery != nil {
 		return cmd.discovery(connectCtx)
@@ -195,141 +266,11 @@ func execute(cmd command, g *globals) outcome {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), seconds(g.disconnect))
 		defer cancel()
-		if err := c.Close(ctx); err != nil {
-			fmt.Fprintln(os.Stderr, "close:", err)
-		}
+		logClose(c.Close(ctx))
 	}()
 	ctx, cancel2 := context.WithTimeout(context.Background(), seconds(g.request))
 	defer cancel2()
 	return cmd.run(ctx, c)
-}
-
-// dial selects the endpoint of exactly the requested policy and mode (§9) and
-// connects to --endpoint, not to the URL the server advertises: a server behind a
-// published port knows itself under another name.
-func (g *globals) dial(ctx context.Context) (*opcua.Client, *outcome) {
-	endpoints, err := opcua.GetEndpoints(ctx, g.endpoint, opcua.DialTimeout(seconds(g.connect)))
-	if err != nil {
-		res := classifyConnect(err)
-		return nil, &res
-	}
-	wantPolicy, wantMode := ua.FormatSecurityPolicyURI(g.policy), ua.MessageSecurityModeFromString(g.mode)
-	var chosen *ua.EndpointDescription
-	for _, ep := range endpoints {
-		if ep.SecurityPolicyURI == wantPolicy && ep.SecurityMode == wantMode &&
-			(ep.TransportProfileURI == "" || ep.TransportProfileURI == ua.TransportProfileUATCP) {
-			chosen = ep
-			break
-		}
-	}
-	if chosen == nil {
-		res := failure(exitConnect, "transport", fmt.Sprintf("the server has no endpoint %s/%s", g.policy, g.mode), ua.StatusBadSecurityPolicyRejected)
-		return nil, &res
-	}
-	chosen.EndpointURL = g.endpoint
-
-	opts := []opcua.Option{
-		opcua.DialTimeout(seconds(g.connect)),
-		opcua.RequestTimeout(seconds(g.request)),
-		opcua.AutoReconnect(false),
-	}
-	if g.lifetimeMS > 0 {
-		opts = append(opts, opcua.Lifetime(time.Duration(g.lifetimeMS)*time.Millisecond))
-	}
-	if g.policy == "None" {
-		opts = append(opts, opcua.InsecureNoSecurity())
-	}
-	if g.cert != "" && g.key != "" {
-		cert, err := readDER(g.cert)
-		if err != nil {
-			res := failure(exitInternal, "internal", err.Error(), ua.StatusBadInternalError)
-			return nil, &res
-		}
-		key, err := readRSAKey(g.key)
-		if err != nil {
-			res := failure(exitInternal, "internal", err.Error(), ua.StatusBadInternalError)
-			return nil, &res
-		}
-		opts = append(opts, opcua.Certificate(cert), opcua.PrivateKey(key))
-	}
-	if len(g.trust) > 0 {
-		certs := make([]*x509.Certificate, 0, len(g.trust))
-		for _, path := range g.trust {
-			der, err := readDER(path)
-			if err == nil {
-				var cert *x509.Certificate
-				if cert, err = x509.ParseCertificate(der); err == nil {
-					certs = append(certs, cert)
-				}
-			}
-			if err != nil {
-				res := failure(exitInternal, "internal", path+": "+err.Error(), ua.StatusBadInternalError)
-				return nil, &res
-			}
-		}
-		opts = append(opts, opcua.TrustedCertificates(certs...))
-	} else {
-		// §9: without --trust-list every certificate is accepted.
-		opts = append(opts, opcua.InsecureSkipVerify())
-	}
-	if g.userSet {
-		opts = append(opts, opcua.SecurityFromEndpoint(chosen, ua.UserTokenTypeUserName), opcua.AuthUsername(g.user, g.password))
-	} else {
-		opts = append(opts, opcua.SecurityFromEndpoint(chosen, ua.UserTokenTypeAnonymous), opcua.AuthAnonymous())
-	}
-
-	c, err := opcua.NewClient(g.endpoint, opts...)
-	if err != nil {
-		res := failure(exitInternal, "internal", err.Error(), ua.StatusBadInternalError)
-		return nil, &res
-	}
-	if err := c.Connect(ctx); err != nil {
-		res := classifyConnect(err)
-		return nil, &res
-	}
-	return c, nil
-}
-
-// classifyConnect is classify for the time before a session exists, where running
-// out of time is a transport failure (§3: hello timeout).
-func classifyConnect(err error) outcome {
-	res := classify(err)
-	if res.exit == exitTimeout {
-		return failure(exitConnect, "transport", err.Error(), res.status)
-	}
-	return res
-}
-
-func (g *globals) endpoints(ctx context.Context) outcome {
-	eps, err := opcua.GetEndpoints(ctx, g.endpoint, opcua.DialTimeout(seconds(g.connect)))
-	if err != nil {
-		return classifyConnect(err)
-	}
-	results := make([]any, len(eps))
-	for i, ep := range eps {
-		results[i] = map[string]any{"url": ep.EndpointURL, "securityPolicy": ep.SecurityPolicyURI, "securityMode": modeName(ep.SecurityMode)}
-	}
-	return outcome{status: ua.StatusOK, results: results}
-}
-
-func modeName(m ua.MessageSecurityMode) string {
-	return strings.TrimPrefix(m.String(), "MessageSecurityMode")
-}
-
-func (g *globals) findServers(ctx context.Context) outcome {
-	apps, err := opcua.FindServers(ctx, g.endpoint, opcua.DialTimeout(seconds(g.connect)))
-	if err != nil {
-		return classifyConnect(err)
-	}
-	results := make([]any, len(apps))
-	for i, app := range apps {
-		urls := app.DiscoveryURLs
-		if urls == nil {
-			urls = []string{}
-		}
-		results[i] = map[string]any{"applicationUri": app.ApplicationURI, "applicationName": localizedText(app.ApplicationName), "productUri": app.ProductURI, "discoveryUrls": urls}
-	}
-	return outcome{status: ua.StatusOK, results: results}
 }
 
 // resolve gives the NodeId on this server, or the failure of §8.
@@ -382,415 +323,4 @@ func serviceBad(status ua.StatusCode, results []any) outcome {
 	res := failure(exitService, "service", status.Error(), status)
 	res.results = results
 	return res
-}
-
-func readResult(nodeID string, dv *ua.DataValue) map[string]any {
-	r := map[string]any{"nodeId": nodeID, "statusCode": statusOf(dv.Status)}
-	if dv.Value != nil && dv.Value.Value() != nil {
-		r["dataType"] = typeName(uint32(dv.Value.Type()))
-		r["builtInType"] = int(dv.Value.Type())
-	}
-	r["value"] = encodeValue(dv.Value)
-	if !dv.SourceTimestamp.IsZero() {
-		r["sourceTimestamp"] = timeString(dv.SourceTimestamp)
-	}
-	return r
-}
-
-func readCommand(fs *flag.FlagSet) command {
-	var nodes repeated
-	var refs []nodeRef
-	fs.Var(&nodes, "node", "NodeId, repeatable")
-	indexRange := fs.String("index-range", "", "NumericRange")
-	return command{
-		validate: func() (err error) { refs, err = parseRefs(nodes); return err },
-		run: func(ctx context.Context, c *opcua.Client) outcome {
-			ids, failed := resolveAll(ctx, c, refs)
-			if failed != nil {
-				return *failed
-			}
-			req := &ua.ReadRequest{TimestampsToReturn: ua.TimestampsToReturnBoth}
-			for _, nodeID := range ids {
-				req.NodesToRead = append(req.NodesToRead, &ua.ReadValueID{NodeID: nodeID, AttributeID: ua.AttributeIDValue, IndexRange: *indexRange})
-			}
-			resp, err := c.Read(ctx, req)
-			if err != nil {
-				return classify(err)
-			}
-			results := make([]any, len(resp.Results))
-			bad := ua.StatusOK
-			for i, dv := range resp.Results {
-				results[i] = readResult(nodeIDString(ids[i]), dv)
-				if !isGood(dv.Status) && bad == ua.StatusOK {
-					bad = dv.Status
-				}
-			}
-			if bad != ua.StatusOK {
-				return serviceBad(bad, results)
-			}
-			return outcome{status: ua.StatusOK, results: results}
-		},
-	}
-}
-
-func writeCommand(fs *flag.FlagSet) command {
-	node := fs.String("node", "", "NodeId")
-	typ := fs.String("type", "", "type name")
-	value := fs.String("value", "", "value literal")
-	indexRange := fs.String("index-range", "", "NumericRange")
-	var ref nodeRef
-	return command{
-		validate: func() (err error) {
-			if *typ == "" {
-				return errors.New("--type is required")
-			}
-			ref, err = parseNodeRef(*node)
-			return err
-		},
-		run: func(ctx context.Context, c *opcua.Client) outcome {
-			nodeID, failed := resolve(ctx, c, ref)
-			if failed != nil {
-				return *failed
-			}
-			resp, err := c.Write(ctx, &ua.WriteRequest{NodesToWrite: []*ua.WriteValue{{
-				NodeID: nodeID, AttributeID: ua.AttributeIDValue, IndexRange: *indexRange,
-				Value: &ua.DataValue{EncodingMask: ua.DataValueValue, Value: literalVariant(*typ, *value)},
-			}}})
-			if err != nil {
-				return classify(err)
-			}
-			if len(resp.Results) != 1 {
-				return failure(exitInternal, "internal", "no result for the write", ua.StatusBadUnexpectedError)
-			}
-			results := []any{map[string]any{"nodeId": nodeIDString(nodeID), "statusCode": statusOf(resp.Results[0])}}
-			if !isGood(resp.Results[0]) {
-				return serviceBad(resp.Results[0], results)
-			}
-			return outcome{status: ua.StatusOK, results: results}
-		},
-	}
-}
-
-func browseCommand(fs *flag.FlagSet) command {
-	node := fs.String("node", "i=85", "starting node")
-	maxRefs := fs.Uint("max-refs", 0, "maximum references per Browse request")
-	var ref nodeRef
-	return command{
-		validate: func() (err error) { ref, err = parseNodeRef(*node); return err },
-		run: func(ctx context.Context, c *opcua.Client) outcome {
-			nodeID, failed := resolve(ctx, c, ref)
-			if failed != nil {
-				return *failed
-			}
-			resp, err := c.Browse(ctx, &ua.BrowseRequest{
-				RequestedMaxReferencesPerNode: uint32(*maxRefs),
-				NodesToBrowse: []*ua.BrowseDescription{{
-					NodeID: nodeID, BrowseDirection: ua.BrowseDirectionForward,
-					ReferenceTypeID: ua.NewNumericNodeID(0, id.HierarchicalReferences), IncludeSubtypes: true,
-					NodeClassMask: uint32(ua.NodeClassAll), ResultMask: uint32(ua.BrowseResultMaskAll),
-				}},
-			})
-			if err != nil {
-				return classify(err)
-			}
-			if len(resp.Results) != 1 {
-				return failure(exitInternal, "internal", "no result for the browse", ua.StatusBadUnexpectedError)
-			}
-			result := resp.Results[0]
-			if !isGood(result.StatusCode) {
-				return serviceBad(result.StatusCode, nil)
-			}
-			results := browseRefs(nil, result.References)
-			for point := result.ContinuationPoint; len(point) > 0; {
-				next, err := c.BrowseNext(ctx, &ua.BrowseNextRequest{ContinuationPoints: [][]byte{point}})
-				if err != nil {
-					return classify(err)
-				}
-				if len(next.Results) != 1 {
-					return failure(exitInternal, "internal", "no result for the browse", ua.StatusBadUnexpectedError)
-				}
-				if !isGood(next.Results[0].StatusCode) {
-					return serviceBad(next.Results[0].StatusCode, results)
-				}
-				results = browseRefs(results, next.Results[0].References)
-				point = next.Results[0].ContinuationPoint
-			}
-			return outcome{status: ua.StatusOK, results: results}
-		},
-	}
-}
-
-func browseRefs(results []any, refs []*ua.ReferenceDescription) []any {
-	for _, ref := range refs {
-		nodeID := ""
-		if ref.NodeID != nil {
-			nodeID = nodeIDString(ref.NodeID.NodeID)
-		}
-		var name map[string]any
-		if ref.BrowseName != nil {
-			name = map[string]any{"ns": ref.BrowseName.NamespaceIndex, "name": ref.BrowseName.Name}
-		}
-		results = append(results, map[string]any{
-			"referenceTypeId": nodeIDString(ref.ReferenceTypeID),
-			"isForward":       ref.IsForward,
-			"nodeId":          nodeID,
-			"browseName":      name,
-			"displayName":     localizedText(ref.DisplayName),
-			"nodeClass":       strings.TrimPrefix(ref.NodeClass.String(), "NodeClass"),
-		})
-	}
-	return results
-}
-
-func callCommand(fs *flag.FlagSet) command {
-	object := fs.String("object", "", "NodeId of the object")
-	method := fs.String("method", "", "NodeId of the method")
-	var inputs repeated
-	fs.Var(&inputs, "input", "input argument Type:value, repeatable")
-	var objectRef, methodRef nodeRef
-	return command{
-		validate: func() (err error) {
-			if objectRef, err = parseNodeRef(*object); err != nil {
-				return err
-			}
-			methodRef, err = parseNodeRef(*method)
-			return err
-		},
-		run: func(ctx context.Context, c *opcua.Client) outcome {
-			ids, failed := resolveAll(ctx, c, []nodeRef{objectRef, methodRef})
-			if failed != nil {
-				return *failed
-			}
-			args := make([]*ua.Variant, len(inputs))
-			for i, input := range inputs {
-				typ, lit, _ := strings.Cut(input, ":")
-				args[i] = literalVariant(typ, lit)
-			}
-			res, err := c.Call(ctx, &ua.CallMethodRequest{ObjectID: ids[0], MethodID: ids[1], InputArguments: args})
-			if err != nil {
-				return classify(err)
-			}
-			outputs := make([]any, len(res.OutputArguments))
-			for i, v := range res.OutputArguments {
-				outputs[i] = encodeValue(v)
-			}
-			results := []any{map[string]any{
-				"objectNodeId": nodeIDString(ids[0]), "methodNodeId": nodeIDString(ids[1]),
-				"statusCode": statusOf(res.StatusCode), "outputArguments": outputs,
-			}}
-			if !isGood(res.StatusCode) {
-				return serviceBad(res.StatusCode, results)
-			}
-			return outcome{status: ua.StatusOK, results: results}
-		},
-	}
-}
-
-func registerCommand(fs *flag.FlagSet) command {
-	var nodes repeated
-	var refs []nodeRef
-	fs.Var(&nodes, "node", "NodeId, repeatable")
-	return command{
-		validate: func() (err error) { refs, err = parseRefs(nodes); return err },
-		run: func(ctx context.Context, c *opcua.Client) outcome {
-			ids, failed := resolveAll(ctx, c, refs)
-			if failed != nil {
-				return *failed
-			}
-			reg, err := c.RegisterNodes(ctx, &ua.RegisterNodesRequest{NodesToRegister: ids})
-			if err != nil {
-				return classify(err)
-			}
-			if len(reg.RegisteredNodeIDs) != len(ids) {
-				return failure(exitInternal, "internal", "RegisterNodes returned another number of nodes", ua.StatusBadUnexpectedError)
-			}
-			req := &ua.ReadRequest{TimestampsToReturn: ua.TimestampsToReturnBoth}
-			for _, alias := range reg.RegisteredNodeIDs {
-				req.NodesToRead = append(req.NodesToRead, &ua.ReadValueID{NodeID: alias, AttributeID: ua.AttributeIDValue})
-			}
-			read, err := c.Read(ctx, req)
-			if err != nil {
-				return classify(err)
-			}
-			unregStatus := ua.StatusOK
-			if _, err := c.UnregisterNodes(ctx, &ua.UnregisterNodesRequest{NodesToUnregister: reg.RegisteredNodeIDs}); err != nil {
-				out := classify(err)
-				unregStatus = out.status
-			}
-			results := make([]any, len(ids))
-			bad := unregStatus
-			for i := range ids {
-				r := map[string]any{"nodeId": nodeIDString(ids[i]), "registeredNodeId": nodeIDString(reg.RegisteredNodeIDs[i])}
-				dv := read.Results[i]
-				r["statusCode"] = statusOf(dv.Status)
-				if isGood(dv.Status) {
-					r["dataType"] = typeName(uint32(dv.Value.Type()))
-					r["builtInType"] = int(dv.Value.Type())
-					r["value"] = encodeValue(dv.Value)
-				} else if bad == ua.StatusOK {
-					bad = dv.Status
-				}
-				r["unregisterStatusCode"] = statusOf(unregStatus)
-				results[i] = r
-			}
-			if bad != ua.StatusOK {
-				return serviceBad(bad, results)
-			}
-			return outcome{status: ua.StatusOK, results: results}
-		},
-	}
-}
-
-func subscribeCommand(fs *flag.FlagSet) command {
-	node := fs.String("node", "", "node to monitor")
-	publishing := fs.Int64("publishing-interval-ms", 500, "publishing interval")
-	sampling := fs.Int64("sampling-interval-ms", 100, "sampling interval")
-	count := fs.Int("notifications", 5, "notifications to collect")
-	timeoutMS := fs.Int64("timeout-ms", 10000, "command timeout")
-	queueSize := fs.Uint("queue-size", 1, "queue size")
-	discardOldest := fs.String("discard-oldest", "true", "queue overflow policy")
-	timestamps := fs.String("timestamps", "Both", "TimestampsToReturn")
-	absolute := fs.Float64("deadband-absolute", 0, "absolute deadband")
-	percent := fs.Float64("deadband-percent", 0, "percent deadband")
-	trigger := fs.String("trigger", "StatusValue", "DataChangeFilter trigger")
-	set := map[string]bool{}
-	var ref nodeRef
-	var ts ua.TimestampsToReturn
-	var triggerValue ua.DataChangeTrigger
-	return command{
-		validate: func() (err error) {
-			fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-			if set["deadband-absolute"] && set["deadband-percent"] {
-				return errors.New("--deadband-absolute and --deadband-percent exclude each other")
-			}
-			var ok bool
-			if ts, ok = map[string]ua.TimestampsToReturn{"Source": ua.TimestampsToReturnSource, "Server": ua.TimestampsToReturnServer, "Both": ua.TimestampsToReturnBoth, "Neither": ua.TimestampsToReturnNeither}[*timestamps]; !ok {
-				return errors.New("--timestamps: " + *timestamps)
-			}
-			if triggerValue, ok = map[string]ua.DataChangeTrigger{"Status": ua.DataChangeTriggerStatus, "StatusValue": ua.DataChangeTriggerStatusValue, "StatusValueTimestamp": ua.DataChangeTriggerStatusValueTimestamp}[*trigger]; !ok {
-				return errors.New("--trigger: " + *trigger)
-			}
-			ref, err = parseNodeRef(*node)
-			return err
-		},
-		run: func(requestCtx context.Context, c *opcua.Client) outcome {
-			nodeID, failed := resolve(requestCtx, c, ref)
-			if failed != nil {
-				return *failed
-			}
-			notify := make(chan *opcua.PublishNotificationData, 64)
-			sub, err := c.Subscribe(requestCtx, &opcua.SubscriptionParameters{Interval: time.Duration(*publishing) * time.Millisecond}, notify)
-			if err != nil {
-				return classify(err)
-			}
-			defer func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer cancel()
-				_ = sub.Cancel(ctx)
-			}()
-
-			// A filter only when one was asked for: the result then says so (§4).
-			var filter *ua.DataChangeFilter
-			deadbandName := "None"
-			if set["deadband-absolute"] || set["deadband-percent"] || set["trigger"] {
-				filter = &ua.DataChangeFilter{Trigger: triggerValue, DeadbandType: uint32(ua.DeadbandTypeNone)}
-				switch {
-				case set["deadband-absolute"]:
-					filter.DeadbandType, filter.DeadbandValue, deadbandName = uint32(ua.DeadbandTypeAbsolute), *absolute, "Absolute"
-				case set["deadband-percent"]:
-					filter.DeadbandType, filter.DeadbandValue, deadbandName = uint32(ua.DeadbandTypePercent), *percent, "Percent"
-				}
-			}
-			params := &ua.MonitoringParameters{
-				ClientHandle: 1, SamplingInterval: float64(*sampling),
-				QueueSize: uint32(*queueSize), DiscardOldest: *discardOldest != "false",
-			}
-			if filter != nil {
-				params.Filter = ua.NewExtensionObject(filter)
-			}
-			resp, err := sub.Monitor(requestCtx, ts, &ua.MonitoredItemCreateRequest{
-				ItemToMonitor:       &ua.ReadValueID{NodeID: nodeID, AttributeID: ua.AttributeIDValue},
-				MonitoringMode:      ua.MonitoringModeReporting,
-				RequestedParameters: params,
-			})
-			if err != nil {
-				return classify(err)
-			}
-			item := resp.Results[0]
-
-			result := map[string]any{
-				"nodeId":                    nodeIDString(nodeID),
-				"subscriptionId":            sub.SubscriptionID,
-				"revisedPublishingInterval": float64(sub.RevisedPublishingInterval / time.Millisecond),
-				"revisedLifetimeCount":      sub.RevisedLifetimeCount,
-				"revisedMaxKeepAliveCount":  sub.RevisedMaxKeepAliveCount,
-				"monitoredItemStatusCode":   statusOf(item.StatusCode),
-			}
-			if filter != nil {
-				result["monitoredItemId"] = item.MonitoredItemID
-				result["revisedSamplingInterval"] = item.RevisedSamplingInterval
-				result["revisedQueueSize"] = item.RevisedQueueSize
-				result["filter"] = map[string]any{"trigger": *trigger, "deadbandType": deadbandName, "deadbandValue": filter.DeadbandValue}
-				result["filterResult"] = nil
-				if item.FilterResult != nil && item.FilterResult.TypeID != nil {
-					result["filterResult"] = map[string]any{"typeId": item.FilterResult.TypeID.String()}
-				}
-			}
-			result["notifications"] = []any{}
-			results := []any{result}
-			if !isGood(item.StatusCode) {
-				return serviceBad(item.StatusCode, results)
-			}
-
-			notifications, res := collect(notify, *count, time.Duration(*timeoutMS)*time.Millisecond)
-			result["notifications"] = notifications
-			res.results = results
-			return res
-		},
-	}
-}
-
-// collect reads data-change notifications until there are enough, or the timeout
-// has passed. The sequence number is the position in the result: go-opcua does not
-// hand out the one of the NotificationMessage.
-func collect(notify <-chan *opcua.PublishNotificationData, count int, timeout time.Duration) ([]any, outcome) {
-	deadline := time.After(timeout)
-	notifications := []any{}
-	for len(notifications) < count {
-		select {
-		case msg := <-notify:
-			if msg.Error != nil {
-				return notifications, classify(msg.Error)
-			}
-			change, ok := msg.Value.(*ua.DataChangeNotification)
-			if !ok {
-				continue
-			}
-			for _, item := range change.MonitoredItems {
-				if len(notifications) == count {
-					break
-				}
-				notifications = append(notifications, notification(len(notifications)+1, item.Value))
-			}
-		case <-deadline:
-			res := failure(exitTimeout, "timeout", fmt.Sprintf("%d of %d notifications after %v", len(notifications), count, timeout), ua.StatusBadTimeout)
-			return notifications, res
-		}
-	}
-	return notifications, outcome{status: ua.StatusOK}
-}
-
-func notification(sequence int, dv *ua.DataValue) map[string]any {
-	n := map[string]any{"sequenceNumber": sequence, "statusCode": statusOf(dv.Status), "value": encodeValue(dv.Value)}
-	if dv.Value != nil && dv.Value.Value() != nil {
-		n["dataType"] = typeName(uint32(dv.Value.Type()))
-		n["builtInType"] = int(dv.Value.Type())
-	}
-	if !dv.SourceTimestamp.IsZero() {
-		n["sourceTimestamp"] = timeString(dv.SourceTimestamp)
-	}
-	if !dv.ServerTimestamp.IsZero() {
-		n["serverTimestamp"] = timeString(dv.ServerTimestamp)
-	}
-	return n
 }

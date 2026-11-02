@@ -72,6 +72,11 @@ else
         open62541) run_lds_features open62541 ;;
         dotnet)    run_chain dotnet ;;
     esac
+    if is_own "${ADAPTER}"; then
+        if has_cap "${ADAPTER}" client reverse-listen; then run_reverse "${ADAPTER}" "${ADAPTER}"; fi
+        if has_cap "${ADAPTER}" client transport-wss; then run_transports "${ADAPTER}" "${ADAPTER}"; fi
+        if has_cap "${ADAPTER}" client codec; then run_codec_literals "${ADAPTER}"; fi
+    fi
 fi
 
 # ---- SIGTERM ends the server with exit code 0 ----

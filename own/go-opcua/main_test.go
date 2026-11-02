@@ -188,7 +188,7 @@ func TestInputIsRefusedWithoutANetworkRequest(t *testing.T) {
 		{"read", "--endpoint", nowhere, "--node", "i=85", "--security-policy", "Basic256Sha256", "--security-mode", "Sign"},
 		{"subscribe", "--endpoint", nowhere, "--node", "i=85", "--deadband-absolute", "1", "--deadband-percent", "1"},
 		// Not in the subset: refused, never faked.
-		{"history-read", "--endpoint", nowhere, "--node", "i=85"},
+		{"gds-pull", "--endpoint", nowhere, "--node", "i=85"},
 		{"codec", "encode", "--format", "json"},
 	} {
 		code, doc := client(t, args...)

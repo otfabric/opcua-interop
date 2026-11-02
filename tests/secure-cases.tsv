@@ -15,6 +15,10 @@
 #                @bad     the same with an identity no one trusts
 #                @badca   the client's identity, --trust-list a certificate that issued no server
 #                @user    --username test-user --password test-password
+#                @ecc-<curve>  --certificate, --private-key of the identity's certificate of that
+#                         curve, --trust-list the CA; @eccbad the same with one no one trusts
+#                @x509 @x509ecc @x509bad  --user-certificate, --user-private-key: RSA, ECC, one no
+#                         one trusts
 #                @b256 @b256s @a128 @a256  --security-policy and --security-mode:
 #                         Basic256Sha256 SignAndEncrypt, Basic256Sha256 Sign,
 #                         Aes128_Sha256_RsaOaep SignAndEncrypt, Aes256_Sha256_RsaPss SignAndEncrypt
@@ -46,3 +50,32 @@ secure.basic256sha256-signandencrypt-read	@own	open62541,milo	-	.success == true
 secure.aes128_sha256_rsaoaep-signandencrypt-read	@own	open62541,milo	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a128 @cred
 secure.aes256_sha256_rsapss-signandencrypt-read	@own	open62541,milo	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a256 @cred
 secure.basic256sha256-signandencrypt-username-write	@own	open62541,milo	-	.success == true and .results[0].statusCode.name == "Good"	write --node $MAccess.ReadWrite --type Int32 --value 4242 @b256 @cred @user
+secure.ecc_nistp256-sign-read	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256 --security-mode Sign @ecc-nistp256
+secure.ecc_nistp256-sign-read	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256 --security-mode Sign @ecc-nistp256
+secure.ecc_nistp256-signandencrypt-read	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256 --security-mode SignAndEncrypt @ecc-nistp256
+secure.ecc_nistp256-signandencrypt-read	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256 --security-mode SignAndEncrypt @ecc-nistp256
+secure.ecc_nistp384-sign-read	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP384 --security-mode Sign @ecc-nistp384
+secure.ecc_nistp384-sign-read	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP384 --security-mode Sign @ecc-nistp384
+secure.ecc_nistp384-signandencrypt-read	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP384 --security-mode SignAndEncrypt @ecc-nistp384
+secure.ecc_nistp384-signandencrypt-read	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP384 --security-mode SignAndEncrypt @ecc-nistp384
+secure.ecc_brainpoolp256r1-signandencrypt-read	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_brainpoolP256r1 --security-mode SignAndEncrypt @ecc-brainpoolp256r1
+secure.ecc_brainpoolp256r1-signandencrypt-read	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_brainpoolP256r1 --security-mode SignAndEncrypt @ecc-brainpoolp256r1
+secure.ecc_brainpoolp384r1-signandencrypt-read	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_brainpoolP384r1 --security-mode SignAndEncrypt @ecc-brainpoolp384r1
+secure.ecc_brainpoolp384r1-signandencrypt-read	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_brainpoolP384r1 --security-mode SignAndEncrypt @ecc-brainpoolp384r1
+secure.ecc_curve25519-signandencrypt-read	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_curve25519 --security-mode SignAndEncrypt @ecc-curve25519
+secure.ecc_curve25519-signandencrypt-read	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_curve25519 --security-mode SignAndEncrypt @ecc-curve25519
+secure.ecc_curve448-signandencrypt-read	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_curve448 --security-mode SignAndEncrypt @ecc-curve448
+secure.ecc_curve448-signandencrypt-read	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_curve448 --security-mode SignAndEncrypt @ecc-curve448
+secure.ecc_nistp256_aesgcm-signandencrypt-read	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256_AesGcm --security-mode SignAndEncrypt @ecc-nistp256
+secure.ecc_nistp256_aesgcm-signandencrypt-read	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256_AesGcm --security-mode SignAndEncrypt @ecc-nistp256
+secure.ecc_nistp256_chachapoly-signandencrypt-read	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256_ChaChaPoly --security-mode SignAndEncrypt @ecc-nistp256
+secure.ecc_nistp256_chachapoly-signandencrypt-read	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256_ChaChaPoly --security-mode SignAndEncrypt @ecc-nistp256
+secure.ecc_nistp256-signandencrypt-username	@own,open62541	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256 --security-mode SignAndEncrypt @ecc-nistp256 @user
+secure.ecc_nistp256-signandencrypt-username	@own	open62541	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256 --security-mode SignAndEncrypt @ecc-nistp256 @user
+secure.ecc-wrong-password-is-rejected	@own,open62541	@own	-	.success == false	read --node $MScalar.Int32 --security-policy ECC_nistP256 --security-mode SignAndEncrypt @ecc-nistp256 --username test-user --password wrong
+secure.untrusted-ecc-certificate-is-rejected	@own,open62541	@own	-	.success == false	read --node $MScalar.Int32 --security-policy ECC_nistP256 --security-mode SignAndEncrypt @eccbad
+secure.untrusted-ecc-certificate-is-rejected	@own	open62541	-	.success == false	read --node $MScalar.Int32 --security-policy ECC_nistP256 --security-mode SignAndEncrypt @eccbad
+secure.x509-user-token-basic256sha256	@own	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @b256 @cred @x509
+secure.x509-user-token-aes256_sha256_rsapss	@own	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 @a256 @cred @x509
+secure.x509-user-token-ecc_nistp256	@own	@own	-	.success == true and .results[0].value == -123456789	read --node $MScalar.Int32 --security-policy ECC_nistP256 --security-mode SignAndEncrypt @ecc-nistp256 @x509ecc
+secure.x509-user-token-untrusted-is-rejected	@own	@own	-	.success == false and .serviceResult.severity == "Bad"	read --node $MScalar.Int32 @b256 @cred @x509bad
