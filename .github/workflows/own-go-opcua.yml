@@ -73,6 +73,9 @@ jobs:
     needs: version
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash  # -eo pipefail: the tee above does not hide a failure
     permissions:
       contents: read
       packages: write
@@ -89,7 +92,7 @@ jobs:
       UPSTREAM: ${{ needs.version.outputs.upstream }}
       REVISION: ${{ needs.version.outputs.revision }}
       REFERENCES: open62541 milo async-opcua dotnet node-opcua asyncua
-      OWN_IMAGE: ghcr.io/otfabric/opcua-interop-otfabric:ci
+      ADAPTER_IMAGE_otfabric: ghcr.io/otfabric/opcua-interop-otfabric:ci
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -102,16 +105,16 @@ jobs:
           scripts/retry.sh docker build --progress=plain --build-arg BASE_REGISTRY="${BASE_REGISTRY}" \
             --build-arg UPSTREAM_VERSION="${UPSTREAM}" --build-arg UPSTREAM_SHA="${REVISION}" \
             --build-arg ADAPTER_VERSION="${UPSTREAM}" \
-            --tag "${OWN_IMAGE}" --file own/go-opcua/Dockerfile .
+            --tag "${ADAPTER_IMAGE_otfabric}" --file own/go-opcua/Dockerfile .
 
       - name: What was built
         run: |
-          reported=$(docker run --rm "${OWN_IMAGE}" print-capabilities | jq -r '.upstream.version')
+          reported=$(docker run --rm "${ADAPTER_IMAGE_otfabric}" print-capabilities | jq -r '.upstream.version')
           {
             echo "## ${{ matrix.arch }}"
             echo
-            echo "- \`$(docker run --rm "${OWN_IMAGE}" version)\`"
-            docker run --rm "${OWN_IMAGE}" print-capabilities | jq -r '"- upstream \(.upstream.name) \(.upstream.version), commit `\(.upstream.revision)`, independent engine: \(.upstream.independentEngine)"'
+            echo "- \`$(docker run --rm "${ADAPTER_IMAGE_otfabric}" version)\`"
+            docker run --rm "${ADAPTER_IMAGE_otfabric}" print-capabilities | jq -r '"- upstream \(.upstream.name) \(.upstream.version), commit `\(.upstream.revision)`, independent engine: \(.upstream.independentEngine)"'
           } | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${reported}" = "${UPSTREAM}" ] || { echo "::error::the image reports go-opcua ${reported}, want ${UPSTREAM}"; exit 1; }
 
@@ -123,19 +126,14 @@ jobs:
               | jq -r --arg image "${a}:${VERSION}" '"- \($image): \(.stack.name) \(.stack.version)"' | tee -a "$GITHUB_STEP_SUMMARY"
           done
 
-      # In place of scripts/interop.sh of the Modbus harness: the OPC UA harness
-      # has no such script, the pairs are in scripts/smoke.sh. cross-otfabric runs
-      # the core operations with each released reference in both roles, then the
-      # secured path with open62541 and Milo.
       - name: Smoke, cross-stack self-test against the references, document schemas
         run: |
-          set -o pipefail
-          mkdir -p reports/smoke reports/cross
-          REPORT_DIR=reports/smoke scripts/smoke.sh otfabric "${OWN_IMAGE}" 2>&1 | tee reports/smoke.log
-          images=()
-          for a in ${REFERENCES}; do images+=("ghcr.io/otfabric/opcua-interop-${a}:${VERSION}"); done
-          REPORT_DIR=reports/cross scripts/smoke.sh cross-otfabric "${OWN_IMAGE}" "${images[@]}" 2>&1 | tee reports/cross.log
-          grep -hE '^\[smoke\] Results' reports/smoke.log reports/cross.log | tee -a "$GITHUB_STEP_SUMMARY" || true
+          mkdir -p reports
+          REPORT_DIR=reports scripts/smoke.sh otfabric 2>&1 | tee reports/smoke.log
+          # shellcheck disable=SC2086
+          REPORT_DIR=reports scripts/interop.sh otfabric ${REFERENCES} 2>&1 | tee reports/interop.log
+          python3 scripts/validate-documents.py reports
+          grep -hE '^\[(smoke|interop)\] [0-9]+ passed' reports/smoke.log reports/interop.log | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Upload documents
         if: always()
@@ -153,7 +151,7 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: |
           printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${ACTOR}" --password-stdin
-          docker tag "${OWN_IMAGE}" "${IMAGE}:${UPSTREAM}-${ARCH}"
+          docker tag "${ADAPTER_IMAGE_otfabric}" "${IMAGE}:${UPSTREAM}-${ARCH}"
           scripts/retry.sh docker push --quiet "${IMAGE}:${UPSTREAM}-${ARCH}"
 
   publish:
