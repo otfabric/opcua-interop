@@ -87,7 +87,8 @@ validate: ## Validate every fixture against the schema and the cross-field rules
 
 documents: ## Run the self-tests keeping every document, and validate them against schemas/
 	@rm -rf reports && mkdir -p reports
-	@REPORT_DIR=reports $(MAKE) --no-print-directory smoke interop pubsub
+	@# -k: a failing smoke test of one adapter does not hide the rest of the run.
+	@REPORT_DIR=reports $(MAKE) -k --no-print-directory smoke interop pubsub
 	@echo "Validating documents..."
 	@if python3 -c 'import jsonschema' 2>/dev/null; then \
 		python3 scripts/validate-documents.py reports; \

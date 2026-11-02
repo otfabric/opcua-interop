@@ -84,6 +84,19 @@ done
 
 run_secure_cases in_scope "${ADAPTERS[@]}"
 
+if [[ -n "${FOCUS}" ]]; then
+    for client in "${ADAPTERS[@]}"; do
+        for server in "${ADAPTERS[@]}"; do
+            in_scope "${client}" "${server}" || continue
+            if has_cap "${client}" client reverse-listen && has_cap "${server}" server reverse-connect; then run_reverse "${client}" "${server}"; fi
+            if has_cap "${client}" client transport-wss && has_cap "${server}" server transport-wss; then run_transports "${client}" "${server}"; fi
+        done
+    done
+    for adapter in ${FOCUS}; do
+        if has_cap "${adapter}" client codec; then run_codec_literals "${adapter}"; fi
+    done
+fi
+
 if [[ -z "${FOCUS}" ]]; then
     if named open62541 && named milo; then run_lds_features open62541 milo; fi
     if named dotnet && named open62541; then run_chain dotnet open62541; fi

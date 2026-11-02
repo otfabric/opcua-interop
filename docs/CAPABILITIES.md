@@ -59,6 +59,7 @@ Schema: `schemas/capabilities.schema.json`. Consumers gate tests on:
 | `deadband` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `subscribe --deadband-absolute/--deadband-percent/--trigger` |
 | `reverse-listen` | client | ✓ | — | ✓ | — | ✓ | — | `--reverse-listen` |
 | `ecc-security` | client, server | ✓ | — | — | — | — | — | ECC SecurityPolicies (`securityProfiles` lists them) |
+| `x509-user-token` | client, server | — | — | — | — | — | — | own stack only (`own/go-opcua/README.md`): an X.509 user token, `--user-certificate` / `--user-private-key`. No reference declares it, so only the own stack against itself exercises it |
 | `ecc-user-token` | client, server | ✓ | — | — | — | — | — | UserName token over an ECC endpoint (EccEncryptedSecret) |
 | `application-uri` | client | ✓ | — | ✓ | ✓ | ✓ | ✓ | `--application-uri`, ApplicationUri from the certificate |
 | `register-server2` | client | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `register-server` can call RegisterServer2 |

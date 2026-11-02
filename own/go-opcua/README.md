@@ -26,7 +26,7 @@ docker run -d --name go-opcua -p 127.0.0.1:4840:4840 ghcr.io/otfabric/opcua-inte
 until docker exec go-opcua test -f /run/opcua-interop/ready; do sleep 0.1; done
 ```
 
-`<tag>` is a go-opcua version such as `v1.29.3`, or `latest`, the newest one
+`<tag>` is a go-opcua version such as `v1.29.4`, or `latest`, the newest one
 published. A rebuild of a version replaces its tag, so pin the digest if you need
 an exact build. The digest is in the summary of the
 [workflow run](https://github.com/otfabric/opcua-interop/actions/workflows/own-go-opcua.yml),
@@ -74,21 +74,43 @@ for the cases of `tests/cases.tsv`, then the secured path of
 
 ## What it covers
 
-A core subset, declared in `print-capabilities`, so that everything else reads as
-not declared and never as a pass.
+Every capability is declared in `print-capabilities` and exercised by
+`scripts/smoke.sh` or `scripts/interop.sh`. Anything else reads as not declared and
+never as a pass.
 
-- Client operations: `endpoints`, `find-servers`, `read`, `write`, `browse`,
-  `call`, `subscribe` (data changes), `register-nodes`.
-- Server: the shared fixture address space, data change subscriptions, methods.
-- Security: None, Basic256Sha256, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss, with
-  Anonymous and UserName tokens.
+| Feature | Client | Server | Exercised with |
+|---------|--------|--------|----------------|
+| Discovery, read, write, browse, call, subscribe, register-nodes, channel renewal, deadbands | yes | yes | every reference, `tests/cases.tsv` |
+| Raw history (`history-read`, continuation points) | yes | yes | every reference |
+| Event history (`history-read-events`, `history-update-events`) | yes | yes | references with `history-events`, `history-events-update` |
+| Events (`event-subscribe`, `--of-type`, `--min-severity`) | yes | yes | every reference |
+| Alarms (`alarms`, the fixture of docs/FIXTURES.md) | yes | yes | open62541, dotnet, node-opcua servers; every client with `alarms` |
+| ECC policies (nistP256, nistP384, brainpool, curve25519, curve448, AEAD), UserName over ECC | yes | yes | open62541 |
+| X.509 user tokens | yes | yes | itself only: no reference declares them |
+| Reverse connect | yes | yes | open62541, async-opcua, node-opcua |
+| opc.https, opc.wss | yes | yes | dotnet |
+| `codec` JSON, verbose JSON, XML | yes | - | open62541, milo, dotnet documents |
+| Security None, Basic256Sha256, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss; Anonymous, UserName | yes | yes | every reference |
 
-`register-nodes`, channel renewal (`--channel-lifetime-ms`) and deadbands are here
-because the self-tests in `tests/cases.tsv` exercise them.
+An image of a go-opcua version lacks what that version's adapter did not have when
+it was built: read `print-capabilities`.
 
-Left out: PubSub, GDS, alarms and conditions, history, certificate management, ECC
-policies, X.509 user tokens, reverse connect, opc.wss and opc.https. Flags that
-belong to them are refused with exit code 2.
+Flags only this image has: `--user-certificate`, `--user-private-key` (client, an
+X.509 user token), `--ecc-dir` (server, one certificate per curve under
+`<dir>/ecc-<curve>/`). Flags of the features left out are refused with exit code 2.
+
+## Left out
+
+The library has them, and the contract has no operation that would exercise them, so
+they stay undeclared:
+
+- HistoryUpdate of data values: `Server.SetHistorian` takes updates and
+  `Client.HistoryUpdate` sends them, but the contract only updates events.
+- Condition branches and other Part 9 features behind `alarms-branches`,
+  `alarms-audible`, `alarms-105`: `AddCondition` takes them, and this fixture has
+  no scenario that shows them.
+
+Not part of this round, to follow: certificate management, GDS, PubSub.
 
 ## What it cannot do
 
@@ -96,12 +118,15 @@ Limits of the public API of go-opcua, or of this adapter:
 
 - `--endpoint-path` is not advertised: `server.EndPoint` takes a host and a port.
   A path in the URL a client dials is accepted, and the ready file names it.
-- A Hello is checked against the listen address. So the server listens without a
-  port when it is on 4840, which is what lets a published port differ. On any other
-  `--bind-port`, a client must dial that port.
 - `sequenceNumber` in a `subscribe` result is the position in the result, since
   go-opcua does not expose the number of the NotificationMessage.
-- Reading a write-only node answers `BadUserAccessDenied`, not the `BadNotReadable`
-  the fixture names, and writing a read-only node answers the same.
-- A method with a behaviour of `Events.Source` emits no events.
+- `history-read --timestamps` other than `Both` is refused with exit code 2:
+  `Client.HistoryReadRawModified` always asks for both.
+- The `--trust-list` of opc.https and opc.wss checks the chain, not the host name,
+  as the contract asks (the test certificates name other hosts).
+- The UserTokenPolicies of opc.https and opc.wss name no security policy. The dotnet
+  client refuses to send a password on them: `own-token-policy-over-tls`.
 - Revocation lists in the trust directories are not read.
+
+The other deviations of the versions under test are in
+[docs/COMPATIBILITY.md](../../docs/COMPATIBILITY.md).

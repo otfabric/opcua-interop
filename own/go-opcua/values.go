@@ -3,12 +3,10 @@
 package main
 
 import (
-	"crypto/rsa"
-	"crypto/x509"
+	"crypto"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	"github.com/otfabric/go-opcua/ua"
+	"github.com/otfabric/go-opcua/uapolicy"
 )
 
 // builtInTypes are the OPC UA built-in types by name. The number is both the
@@ -250,6 +249,8 @@ func parseArray(base string, items []string) (any, error) {
 		"Boolean": false, "SByte": int8(0), "Byte": uint8(0), "Int16": int16(0), "UInt16": uint16(0),
 		"Int32": int32(0), "UInt32": uint32(0), "Int64": int64(0), "UInt64": uint64(0),
 		"Float": float32(0), "Double": float64(0), "String": "", "ByteString": []byte(nil),
+		"DateTime": time.Time{}, "Guid": (*ua.GUID)(nil), "NodeId": (*ua.NodeID)(nil), "StatusCode": ua.StatusCode(0),
+		"QualifiedName": (*ua.QualifiedName)(nil), "LocalizedText": (*ua.LocalizedText)(nil),
 	}[base]
 	if zero == nil {
 		return nil, fmt.Errorf("no arrays of %q in this adapter", base)
@@ -319,23 +320,18 @@ func readDER(path string) ([]byte, error) {
 	return b, nil
 }
 
-// readRSAKey reads an RSA private key, PEM or DER, PKCS#8 or PKCS#1.
-func readRSAKey(path string) (*rsa.PrivateKey, error) {
-	der, err := readDER(path)
+// readKey reads a private key of any type go-opcua takes: RSA, ECDSA (also on the
+// Brainpool curves), Ed25519 or Ed448.
+func readKey(path string) (crypto.Signer, error) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	if k, err := x509.ParsePKCS1PrivateKey(der); err == nil {
-		return k, nil
-	}
-	k, err := x509.ParsePKCS8PrivateKey(der)
+	key, err := uapolicy.ParsePrivateKey(b)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if rk, ok := k.(*rsa.PrivateKey); ok {
-		return rk, nil
-	}
-	return nil, errors.New(path + ": not an RSA key; this adapter has the RSA policies only")
+	return key, nil
 }
 
 // repeated is a flag that may be given several times.

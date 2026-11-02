@@ -49,6 +49,7 @@
           { "$ref": "#/$defs/eventSubscribeResult" },
           { "$ref": "#/$defs/alarmsResult" },
           { "$ref": "#/$defs/historyReadResult" },
+          { "$ref": "#/$defs/historyReadContinueResult" },
           { "$ref": "#/$defs/historyReadEventsResult" },
           { "$ref": "#/$defs/historyUpdateEventsResult" },
           { "$ref": "#/$defs/republishResult" },
@@ -135,7 +136,7 @@
         "nodeId":          { "type": "string" },
         "statusCode":      { "$ref": "#/$defs/statusCode" },
         "dataType":        { "type": "string" },
-        "builtInType":     { "type": "integer", "minimum": 1, "maximum": 25 },
+        "builtInType":     { "type": "integer", "minimum": 0, "maximum": 25 },
         "value":           {},
         "sourceTimestamp": { "type": "string" },
         "serverTimestamp": { "type": "string" }
@@ -404,6 +405,31 @@
         "confirmed":     { "type": ["boolean", "null"] },
         "active":        { "type": ["boolean", "null"] },
         "comment":       { "type": ["string", "null"] }
+      }
+    },
+    "historyReadContinueResult": {
+      "description": "history-read --scenario continue: the pages, the release and the reuse after it.",
+      "type": "object",
+      "required": ["nodeId", "scenario", "pages", "releaseStatusCode", "reuseAfterReleaseStatusCode"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId": { "type": "string" },
+        "scenario": { "type": "string", "const": "continue" },
+        "pages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["statusCode", "continuationPoint", "values"],
+            "properties": {
+              "nodeId": { "type": "string" },
+              "statusCode": { "$ref": "#/$defs/statusCode" },
+              "continuationPoint": { "oneOf": [{ "type": "null" }, { "type": "string" }] },
+              "values": { "type": "array" }
+            }
+          }
+        },
+        "releaseStatusCode": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/statusCode" }] },
+        "reuseAfterReleaseStatusCode": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/statusCode" }] }
       }
     },
     "historyReadResult": {
