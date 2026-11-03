@@ -136,7 +136,7 @@ they stay undeclared:
   speaks them, so `transports` does not list them.
 - PublishedEvents (`pubsub/components.go:22`) and PubSub Actions: the contract's data
   sets are PublishedDataItems, and it has no scenario for these.
-- Discovery in the layout of Part 14 (`pubsub/message/message.go:437`): a server answers
+- Discovery in the layout of Part 14 (`pubsub/message/message.go:463`): a server answers
   it, but `client pubsub-discover` probes in the .NET layout of the contract, so
   `discovery.layout` says `dotnet`.
 - The other PubSub information model methods (AddWriterGroup, AddReaderGroup,
@@ -164,7 +164,7 @@ Limits of the public API of go-opcua, or of this adapter:
   and nothing in `gds/gdsserver` calls it. The contract has no such operation either.
 - The trust list served by push is one list for the three certificate groups, the one
   of `<pki-dir>`.
-- A connection has one address (`pubsub/config.go:670` refuses one on the writer group).
+- A connection has one address (`pubsub/config.go:689` refuses one on the writer group).
   The adapter moves the unicast address of a DatagramWriterGroupTransport2DataType to the
   connection. Two destinations on a connection, or one next to readers, are refused
   (§14.14).
@@ -179,5 +179,5 @@ Limits of the public API of go-opcua, or of this adapter:
   (`pubsub/subscriber.go:746`), and open62541 generates its own: its publisher runs
   with a subscriber that configures none (`any_version` in `scripts/pubsub-smoke.sh`).
 
-All versions refer to go-opcua v1.29.5. The other deviations of the versions under test are in
+All versions refer to go-opcua v1.31.0. The other deviations of the versions under test are in
 [docs/COMPATIBILITY.md](../../docs/COMPATIBILITY.md).
