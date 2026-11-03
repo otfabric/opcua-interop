@@ -2,7 +2,7 @@ module github.com/otfabric/opcua-interop/own/go-opcua
 
 go 1.26.0
 
-require github.com/otfabric/go-opcua v1.29.5
+require github.com/otfabric/go-opcua v1.31.0
 
 require (
 	github.com/ProtonMail/go-crypto v1.5.2 // indirect
