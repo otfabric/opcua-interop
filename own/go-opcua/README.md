@@ -26,7 +26,7 @@ docker run -d --name go-opcua -p 127.0.0.1:4840:4840 ghcr.io/otfabric/opcua-inte
 until docker exec go-opcua test -f /run/opcua-interop/ready; do sleep 0.1; done
 ```
 
-`<tag>` is a go-opcua version such as `v1.29.4`, or `latest`, the newest one
+`<tag>` is a go-opcua version such as `v1.29.5`, or `latest`, the newest one
 published. A rebuild of a version replaces its tag, so pin the digest if you need
 an exact build. The digest is in the summary of the
 [workflow run](https://github.com/otfabric/opcua-interop/actions/workflows/own-go-opcua.yml),
