@@ -26,7 +26,7 @@ docker run -d --name go-opcua -p 127.0.0.1:4840:4840 ghcr.io/otfabric/opcua-inte
 until docker exec go-opcua test -f /run/opcua-interop/ready; do sleep 0.1; done
 ```
 
-`<tag>` is a go-opcua version such as `v1.31.0`, or `latest`, the newest one
+`<tag>` is a go-opcua version such as `v1.32.0`, or `latest`, the newest one
 published. A rebuild of a version replaces its tag, so pin the digest if you need
 an exact build. The digest is in the summary of the
 [workflow run](https://github.com/otfabric/opcua-interop/actions/workflows/own-go-opcua.yml),
@@ -179,5 +179,5 @@ Limits of the public API of go-opcua, or of this adapter:
   (`pubsub/subscriber.go:746`), and open62541 generates its own: its publisher runs
   with a subscriber that configures none (`any_version` in `scripts/pubsub-smoke.sh`).
 
-All versions refer to go-opcua v1.31.0. The other deviations of the versions under test are in
+All versions refer to go-opcua v1.32.0. The other deviations of the versions under test are in
 [docs/COMPATIBILITY.md](../../docs/COMPATIBILITY.md).
