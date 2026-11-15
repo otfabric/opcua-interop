@@ -52,6 +52,41 @@ while read -r d; do
 done < <(comm -13 <(echo "${used}") <(echo "${listed}"))
 echo "ok   $(echo "${listed}" | wc -l | tr -d ' ') base image digests checked"
 
+# ---- every FROM line is pinned by digest ----
+# An image is pinned when it carries @sha256:<digest>, @${X_DIGEST} with
+# ARG X_DIGEST=sha256:<digest>, or is ${X} with ARG X=<image>@sha256:<digest>; a
+# FROM may also name an earlier stage of the same Dockerfile.
+unpinned=0
+for dockerfile in adapters/*/Dockerfile own/*/Dockerfile; do
+    [[ -f "${dockerfile}" ]] || continue
+    stages=" "
+    while read -r image stage; do
+        arg=""
+        case "${image}" in
+            *@sha256:*) ok=1 ;;
+            *'@${'*'}')
+                arg=$(sed -nE 's/.*@\$\{([A-Za-z0-9_]+)\}$/\1/p' <<<"${image}")
+                grep -qE "^ARG ${arg}=sha256:[0-9a-f]{64}$" "${dockerfile}" && ok=1 || ok=0 ;;
+            '${'*'}')
+                arg=$(sed -nE 's/^\$\{([A-Za-z0-9_]+)\}$/\1/p' <<<"${image}")
+                grep -qE "^ARG ${arg}=[^[:space:]]+@sha256:[0-9a-f]{64}$" "${dockerfile}" && ok=1 || ok=0 ;;
+            *) [[ "${stages}" == *" ${image} "* ]] && ok=1 || ok=0 ;;
+        esac
+        if [[ "${ok}" != 1 ]]; then
+            bad "${dockerfile}: FROM ${image} is not pinned by digest"
+            unpinned=1
+        fi
+        [[ -n "${stage}" ]] && stages+="${stage} "
+    done < <(sed -nE 's/^FROM[[:space:]]+(--[^[:space:]]+[[:space:]]+)*([^[:space:]]+)([[:space:]]+[Aa][Ss][[:space:]]+([^[:space:]]+))?[[:space:]]*$/\2 \4/p' "${dockerfile}")
+done
+[[ "${unpinned}" == 0 ]] && echo "ok   every FROM line is pinned by digest"
+
+# ---- open62541 is built from the commit versions.yaml records for its tag ----
+tag_commit=$(sed -n '/^  open62541:$/,/^  [a-z0-9-]*:$/p' versions.yaml | sed -nE 's/^    tag_commit: "([0-9a-f]{40})".*/\1/p')
+build_sha=$(sed -nE 's/^ARG OPEN62541_SHA=([0-9a-f]{40})$/\1/p' adapters/open62541/Dockerfile)
+if [[ -n "${tag_commit}" && "${build_sha}" == "${tag_commit}" ]]; then echo "ok   open62541 tag_commit: ${tag_commit}"
+else bad "open62541: tag_commit ${tag_commit:-missing} of versions.yaml is not ARG OPEN62541_SHA ${build_sha:-missing} of adapters/open62541/Dockerfile"; fi
+
 # ---- images and platforms ----
 images=$(sed -n '/^images:/,/^[a-z_]*:$/p' versions.yaml | sed -nE 's/^  ([a-z0-9-]+): "ghcr.io\/otfabric\/opcua-interop-([a-z0-9-]+)"$/\1 \2/p' | awk '$1 == $2 { print $1 }' | sort | xargs)
 adapters=$(sed -nE 's/^ADAPTERS \?= //p' Makefile | tr ' ' '\n' | sort | xargs)

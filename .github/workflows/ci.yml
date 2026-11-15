@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install jsonschema
+      - run: pip install jsonschema==4.26.0
       - name: Unit tests of the result scripts
         run: python3 -m unittest discover -q -s scripts -p 'test_*.py'
       - name: versions.yaml matches the build files
@@ -90,7 +90,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install jsonschema
+      - run: pip install jsonschema==4.26.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

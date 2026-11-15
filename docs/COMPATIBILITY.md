@@ -133,6 +133,12 @@ completed in v0.2.0; Aes128 / Aes256 profiles followed in v0.2.1; SecureChannel 
 open62541 adapter to the OpenSSL crypto backend and adds the ECC security policies.
 
 **What is implemented and verified:**
+
+The lines that name go-opcua are scenarios that go-opcua's interop suite runs against
+these images. Whether go-opcua is compatible is go-opcua's claim, with its evidence in
+its own [`INTEROP.md`](https://github.com/otfabric/go-opcua/blob/main/INTEROP.md): the
+consumer owns the compatibility claims of a library (REQUIREMENTS.md R1).
+
 - Full test PKI with CA, fifteen identities (including go-server and, since v0.9.0, the async-opcua, dotnet, node-opcua and asyncua server / client pairs), and OPC UA PKI directory layout
 - Server `--certificate`, `--private-key`, `--pki-dir` flags on all adapters
 - Secure endpoint advertisement driven by fixture `securityProfiles`
@@ -152,7 +158,7 @@ open62541 adapter to the OpenSSL crypto backend and adds the ECC security polici
 - Aes256_Sha256_RsaPss / SignAndEncrypt — all four directions
 - Untrusted certificate rejection — go-opcua client vs. all adapter servers
 - Username valid/invalid — all four directions (go-opcua client ↔ adapter servers; adapter clients ↔ go-opcua server)
-- go-opcua server OPN asymmetric decryption (Part 6 §6.7.4 conformance fix)
+- OpenSecureChannel with asymmetric encryption from the adapter clients to a go-opcua server (Part 6 §6.7.4); the conformance fix this scenario found was in go-opcua
 - open62541 client `UA_ExtensionObject_setValueCopy` argument-order fix (data first, type second)
 - ECC (open62541 ↔ open62541, verified by `make smoke`): `ECC_nistP256`, `ECC_nistP384`,
   `ECC_brainpoolP256r1`, `ECC_brainpoolP384r1`, `ECC_curve25519`, `ECC_curve448`,

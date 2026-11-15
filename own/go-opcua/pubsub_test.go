@@ -3,12 +3,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/otfabric/go-opcua/pubsub"
 	"github.com/otfabric/go-opcua/ua"
 )
 
@@ -130,6 +134,38 @@ func TestDiscoverInputIsRefused(t *testing.T) {
 	} {
 		if err := f.validate(); err == nil || strings.TrimSpace(err.Error()) == "" {
 			t.Errorf("%+v: accepted", f)
+		}
+	}
+}
+
+// go-opcua calls the event handler from the goroutine that changed a component, so
+// from several at once: two components that go to Error and back concurrently are
+// both logged every time (run with -race).
+func TestStateLogFromTwoGoroutines(t *testing.T) {
+	var out bytes.Buffer
+	handle := stateLog(&out)
+	const rounds = 500
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for id := pubsub.ComponentID(1); id <= 2; id++ {
+		wg.Go(func() {
+			<-start
+			for range rounds {
+				for _, state := range []ua.PubSubState{ua.PubSubStateError, ua.PubSubStateOperational} {
+					handle(pubsub.Event{Type: pubsub.EventStateChanged, Component: pubsub.ComponentInfo{ID: id, Name: fmt.Sprint("reader", id), State: state}})
+				}
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	text := out.String()
+	for id := 1; id <= 2; id++ {
+		if n := strings.Count(text, fmt.Sprintf("reader%d is in Error", id)); n != rounds {
+			t.Errorf("reader%d: %d Error lines, want %d", id, n, rounds)
+		}
+		if n := strings.Count(text, fmt.Sprintf("reader%d re-enabled", id)); n != rounds {
+			t.Errorf("reader%d: %d re-enabled lines, want %d", id, n, rounds)
 		}
 	}
 }

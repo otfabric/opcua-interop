@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"slices"
 	"time"
 
 	opcua "github.com/otfabric/go-opcua"
+	uaerrors "github.com/otfabric/go-opcua/errors"
 	"github.com/otfabric/go-opcua/ua"
 	"github.com/otfabric/go-opcua/uacp"
 )
@@ -169,6 +171,10 @@ func runClient(args []string, out io.Writer) int {
 		res = inputError("operation " + op + " is not provided by this image (print-capabilities)")
 	} else if err := fs.Parse(words); err != nil {
 		res = inputError(err.Error())
+	} else if fs.NArg() > 0 {
+		// The flag package stops at the first word that is not a flag: what follows
+		// it would be ignored.
+		res = inputError(fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	} else {
 		fs.Visit(func(f *flag.Flag) { g.userSet = g.userSet || f.Name == "username" })
 		res = execute(cmd, g)
@@ -245,8 +251,16 @@ func presenceFlags(args []string) []string {
 	return out
 }
 
-func execute(cmd command, g *globals) outcome {
+// execute runs one command. A command that stops with a runtime error ends as an
+// internal failure (§3, exit 6), with its result document like any other.
+func execute(cmd command, g *globals) (out outcome) {
 	defer g.close()
+	defer func() {
+		if v := recover(); v != nil {
+			fmt.Fprintf(os.Stderr, "opcua-interop: %v\n%s", v, debug.Stack())
+			out = failure(exitInternal, "internal", fmt.Sprintf("unexpected adapter failure: %v", v), ua.StatusBadInternalError)
+		}
+	}()
 	if cmd.validate != nil && cmd.offline != nil {
 		if err := cmd.validate(); err != nil {
 			return inputError(err.Error())
@@ -286,14 +300,20 @@ func execute(cmd command, g *globals) outcome {
 	return cmd.run(ctx, c)
 }
 
-// resolve gives the NodeId on this server, or the failure of §8.
+// resolve gives the NodeId on this server, or the failure of §8. A URI the server
+// does not have is input (exit 2); a failure to read its NamespaceArray is
+// classified like that of any other request.
 func resolve(ctx context.Context, c *opcua.Client, ref nodeRef) (*ua.NodeID, *outcome) {
 	if ref.uri == "" {
 		return ref.id, nil
 	}
 	ns, err := c.FindNamespace(ctx, ref.uri)
-	if err != nil {
+	if errors.Is(err, uaerrors.ErrNamespaceNotFound) {
 		res := inputError("unknown namespace URI " + ref.uri + ": " + err.Error())
+		return nil, &res
+	}
+	if err != nil {
+		res := classify(err)
 		return nil, &res
 	}
 	if err := ref.id.SetNamespace(ns); err != nil {

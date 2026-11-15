@@ -76,12 +76,46 @@ Tags are immutable. A fix is a new version; a published tag is never moved
 | New command, flag, result field, capability, fixture node or reference-stack feature | minor |
 | Upstream pin, base image or bug fix with unchanged contract | patch |
 
-Upstream pins: `open62541/Dockerfile` (`ARG OPEN62541_COMMIT`),
+Upstream pins: `open62541/Dockerfile` (`ARG OPEN62541_COMMIT`, the tag, and `ARG OPEN62541_SHA`, its commit),
 `milo/pom.xml` (`milo.version`), `adapters/async-opcua/Cargo.toml` (`async-opcua =
 "=X.Y.Z"`, with `Cargo.lock`), `dotnet/Dockerfile` (`ARG OPCUA_VERSION`, the
 `OPCFoundation.NetStandard.Opc.Ua.*` NuGet version; `ARG DOTNET_SDK_VERSION` /
 `DOTNET_RUNTIME_VERSION` for .NET), the MQTT broker `eclipse-mosquitto:2.0.22` by
 digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
+
+---
+
+## v0.19.1
+
+**Date:** 2026-11-16
+**Previous release:** v0.19.0
+
+### Changed
+
+- The container contract (1.0), the fixtures and what the reference images do are unchanged.
+- open62541: the Dockerfile records the commit of the v1.5.9 tag (`ARG OPEN62541_SHA`, `tag_commit` in versions.yaml), and the build stops when the tag names another commit. `scripts/candidate.sh` builds a candidate tag without that check.
+- `scripts/check-versions.sh` (`make validate`, CI) fails on a `FROM` line without a digest, and when `tag_commit` and `ARG OPEN62541_SHA` differ.
+- Release workflow: the digest step runs with pipefail, and `scripts/check-digests.sh` wants exactly one sha256 digest for every adapter of `ADAPTERS`; the manifest step refuses an image reference without a digest.
+- The workflows and the Makefile's container fallbacks install `jsonschema==4.26.0` instead of the newest release.
+- versions.yaml and THIRD_PARTY_NOTICES.md give the licence of opcua-asyncio as `LGPL-3.0-or-later`, as upstream states it.
+- SECURITY.md says how the base images and open62541 are pinned; docs/COMPATIBILITY.md says that its go-opcua lines are scenarios of go-opcua's interop suite and links go-opcua's own evidence; CONTRIBUTING.md says what the release workflow runs.
+
+### Own image (`own/go-opcua`, not part of this release)
+
+These reach users with the next manual build of `opcua-interop-otfabric`:
+
+- `read` and `register-nodes`: a response with another number of results than requested nodes is reported as an internal failure (exit 6), a result without a DataValue as `BadUnknownResponse`, and a Good `register-nodes` read without a value has the type Null, as in `read`.
+- An unexpected failure inside a command ends as an internal failure (exit 6), with its result document.
+- `alarms` keeps the events of one notification in a list of its own and hands them out in the server's order, before those of the next notification.
+- The PubSub state-change log keeps the components in Error under a lock: go-opcua calls it from several goroutines.
+- Exit codes and categories now as docs/CONTAINER_CONTRACT.md says (§3, §5, §8, §10):
+  - only a namespace URI the server does not have is input (exit 2); a failure to read the NamespaceArray is classified like any other request (timeout 7, transport 3, service 4);
+  - `pubsub-discover` reports a socket failure with the category `transport` of the schema, not `connection`;
+  - a word that is not a flag is refused with exit 2, by the client and the server, instead of the flags after it being ignored;
+  - in `alarms`, a failed ConditionRefresh or method call keeps its class (transport 3, timeout 7) instead of becoming a service failure (exit 4);
+  - the server removes the ready file of a previous run on startup, before it loads the fixture.
+
+Every adapter reports version 0.19.1 (`make check-release VERSION=v0.19.1`).
 
 ---
 

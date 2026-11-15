@@ -55,7 +55,7 @@ def main(argv):
         validator = jsonschema.Draft202012Validator(schema)
     except ImportError:
         if require_schema:
-            print("the jsonschema package is required (pip install jsonschema)", file=sys.stderr)
+            print("the jsonschema package is required (pip install jsonschema==4.26.0)", file=sys.stderr)
             return 1
         print("note: jsonschema not installed, schema layer skipped (semantic rules still checked)", file=sys.stderr)
 

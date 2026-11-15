@@ -80,7 +80,8 @@ self_test() {
 
 case "${ADAPTER}" in
     open62541)
-        build --build-arg "OPEN62541_COMMIT=${UPSTREAM}"
+        # A candidate tag has no recorded commit: OPEN62541_SHA is empty.
+        build --build-arg "OPEN62541_COMMIT=${UPSTREAM}" --build-arg "OPEN62541_SHA="
         self_test
         VERSION=candidate scripts/pubsub-smoke.sh open62541
         ;;

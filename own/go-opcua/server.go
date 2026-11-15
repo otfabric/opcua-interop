@@ -56,6 +56,9 @@ func parseServerFlags(args []string) (*serverFlags, map[string]bool, error) {
 	if err := fs.Parse(args); err != nil {
 		return nil, nil, err
 	}
+	if fs.NArg() > 0 {
+		return nil, nil, fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
 	if f.fixture == "" {
 		return nil, nil, errors.New("--fixture is required")
 	}
@@ -70,6 +73,8 @@ func runServer(args []string) int {
 		fmt.Fprintln(os.Stderr, "server:", err)
 		return exitInput
 	}
+	// §10: the ready file of a previous run goes first, before the server starts.
+	_ = os.Remove(f.readyFile)
 	fx, err := loadFixture(f.fixture)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fixture:", err)
@@ -92,7 +97,6 @@ func runServer(args []string) int {
 		path = fx.Endpoint.Path
 	}
 	ready := map[string]any{"ready": true, "adapter": adapterName, "fixture": fx.ID, "endpoint": fmt.Sprintf("opc.tcp://%s:%d%s", f.advertisedHost, port, path)}
-	_ = os.Remove(f.readyFile)
 	if err := writeReady(f.readyFile, ready); err != nil {
 		fmt.Fprintln(os.Stderr, "ready file:", err)
 		if set["ready-file"] {
