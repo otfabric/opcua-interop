@@ -116,7 +116,8 @@ jobs:
           notes: |
             ### To update
 
-            - **open62541:** `ARG OPEN62541_COMMIT` in `adapters/open62541/Dockerfile` (a release tag).
+            - **open62541:** `ARG OPEN62541_COMMIT` in `adapters/open62541/Dockerfile` (a release tag), `ARG OPEN62541_SHA`
+              (the commit of that tag) and `tag_commit` in `versions.yaml`.
             - **Milo:** `<milo.version>` in `adapters/milo/pom.xml`.
             - **async-opcua:** `async-opcua = "=X.Y.Z"` in `adapters/async-opcua/Cargo.toml`, `Cargo.lock`
               (`cargo update -p async-opcua`) and `STACK_VERSION` in `adapters/async-opcua/src/common.rs`.

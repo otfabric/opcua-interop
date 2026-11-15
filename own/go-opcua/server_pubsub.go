@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	opcua "github.com/otfabric/go-opcua"
@@ -86,24 +88,34 @@ func loadPubSubFile(path string) (*pubsubFile, error) {
 // it are logged: go-opcua retries a failed component itself (§14.10 has the adapter
 // do so for open62541).
 func pubsubOptions() []pubsub.Option {
-	inError := map[pubsub.ComponentID]bool{}
 	return []pubsub.Option{
-		pubsub.WithEventHandler(func(ev pubsub.Event) {
-			if ev.Type != pubsub.EventStateChanged {
-				return
-			}
-			name, state := ev.Component.Name, ev.Component.State
-			switch {
-			case state == ua.PubSubStateError:
-				inError[ev.Component.ID] = true
-				fmt.Fprintf(os.Stderr, "pubsub: %s is in Error: %v\n", name, ev.Err)
-			case inError[ev.Component.ID] && state == ua.PubSubStateOperational:
-				delete(inError, ev.Component.ID)
-				fmt.Fprintf(os.Stderr, "pubsub: %s re-enabled (Operational)\n", name)
-			}
-		}),
+		pubsub.WithEventHandler(stateLog(os.Stderr)),
 		pubsub.WithDiscovery(pubsub.DiscoveryOptions{MinInterval: 500 * time.Millisecond}),
 		pubsub.WithLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: pubsubLogLevel()}))),
+	}
+}
+
+// stateLog is the event handler that writes an Error state and the recovery from it
+// to w. go-opcua calls it from the goroutine that made the change, so from several
+// at once: the components in Error are kept under a lock.
+func stateLog(w io.Writer) func(pubsub.Event) {
+	var mu sync.Mutex
+	inError := map[pubsub.ComponentID]bool{}
+	return func(ev pubsub.Event) {
+		if ev.Type != pubsub.EventStateChanged {
+			return
+		}
+		name, state := ev.Component.Name, ev.Component.State
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case state == ua.PubSubStateError:
+			inError[ev.Component.ID] = true
+			fmt.Fprintf(w, "pubsub: %s is in Error: %v\n", name, ev.Err)
+		case inError[ev.Component.ID] && state == ua.PubSubStateOperational:
+			delete(inError, ev.Component.ID)
+			fmt.Fprintf(w, "pubsub: %s re-enabled (Operational)\n", name)
+		}
 	}
 }
 

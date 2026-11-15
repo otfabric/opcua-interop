@@ -3,9 +3,9 @@
 # truth for a build; scripts/check-versions.sh (make validate) fails when
 # this file disagrees with them.
 # No source archive hash is recorded: package registries and the open62541
-# tag are the pins.
+# tag are the pins; the open62541 build checks that the tag is tag_commit.
 
-interop_version: "0.19.0"
+interop_version: "0.19.1"
 contract_version: "1.0"        # docs/CONTAINER_CONTRACT.md, schemaVersion of every document
 fixture_schema: "1.0"          # fixtures/schema/opcua-fixture.schema.json
 
@@ -20,7 +20,7 @@ implementations:
     upstream: "open62541"
     repository: "https://github.com/open62541/open62541"
     version: "v1.5.9"
-    tag_commit: "05c2b389b65cc35884eb40d800301af1f3d130cf"   # resolved from the tag; the Dockerfile clones the tag
+    tag_commit: "05c2b389b65cc35884eb40d800301af1f3d130cf"   # the commit of the tag: ARG OPEN62541_SHA of the Dockerfile, which stops on another
     license: "MPL-2.0"
     language: "C"
     independent_engine: true
@@ -93,7 +93,7 @@ implementations:
     upstream: "opcua-asyncio (PyPI asyncua)"
     repository: "https://github.com/FreeOpcUa/opcua-asyncio"
     version: "2.1.0"
-    license: "LGPL-3.0"
+    license: "LGPL-3.0-or-later"
     language: "Python"
     independent_engine: true
     roles: [server, client]

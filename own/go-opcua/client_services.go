@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"strings"
 
 	opcua "github.com/otfabric/go-opcua"
@@ -13,7 +14,22 @@ import (
 	"github.com/otfabric/go-opcua/ua"
 )
 
+// orUnknown is the DataValue of a result the response left empty: BadUnknownResponse.
+func orUnknown(dv *ua.DataValue) *ua.DataValue {
+	if dv == nil {
+		return &ua.DataValue{EncodingMask: ua.DataValueStatusCode, Status: ua.StatusBadUnknownResponse}
+	}
+	return dv
+}
+
+// countMismatch is the outcome of a response with another number of results than
+// the request had items: an internal failure.
+func countMismatch(service string, got, want int) outcome {
+	return failure(exitInternal, "internal", fmt.Sprintf("%s returned %d results for %d nodes", service, got, want), ua.StatusBadUnknownResponse)
+}
+
 func readResult(nodeID string, dv *ua.DataValue) map[string]any {
+	dv = orUnknown(dv)
 	r := map[string]any{"nodeId": nodeID, "statusCode": statusOf(dv.Status), "dataType": "Null", "builtInType": 0}
 	if dv.Value != nil && dv.Value.Value() != nil {
 		r["dataType"] = typeName(uint32(dv.Value.Type()))
@@ -46,20 +62,29 @@ func readCommand(fs *flag.FlagSet) command {
 			if err != nil {
 				return classify(err)
 			}
-			results := make([]any, len(resp.Results))
-			bad := ua.StatusOK
-			for i, dv := range resp.Results {
-				results[i] = readResult(nodeIDString(ids[i]), dv)
-				if !isGood(dv.Status) && bad == ua.StatusOK {
-					bad = dv.Status
-				}
-			}
-			if bad != ua.StatusOK {
-				return serviceBad(bad, results)
-			}
-			return outcome{status: ua.StatusOK, results: results}
+			return readResults(ids, resp.Results)
 		},
 	}
+}
+
+// readResults are the results of `read`: one per requested node, in request order.
+func readResults(ids []*ua.NodeID, dvs []*ua.DataValue) outcome {
+	if len(dvs) != len(ids) {
+		return countMismatch("Read", len(dvs), len(ids))
+	}
+	results := make([]any, len(dvs))
+	bad := ua.StatusOK
+	for i, dv := range dvs {
+		dv = orUnknown(dv)
+		results[i] = readResult(nodeIDString(ids[i]), dv)
+		if !isGood(dv.Status) && bad == ua.StatusOK {
+			bad = dv.Status
+		}
+	}
+	if bad != ua.StatusOK {
+		return serviceBad(bad, results)
+	}
+	return outcome{status: ua.StatusOK, results: results}
 }
 
 func writeCommand(fs *flag.FlagSet) command {
@@ -246,26 +271,38 @@ func registerCommand(fs *flag.FlagSet) command {
 				out := classify(err)
 				unregStatus = out.status
 			}
-			results := make([]any, len(ids))
-			bad := unregStatus
-			for i := range ids {
-				r := map[string]any{"nodeId": nodeIDString(ids[i]), "registeredNodeId": nodeIDString(reg.RegisteredNodeIDs[i])}
-				dv := read.Results[i]
-				r["statusCode"] = statusOf(dv.Status)
-				if isGood(dv.Status) {
-					r["dataType"] = typeName(uint32(dv.Value.Type()))
-					r["builtInType"] = int(dv.Value.Type())
-					r["value"] = encodeValue(dv.Value)
-				} else if bad == ua.StatusOK {
-					bad = dv.Status
-				}
-				r["unregisterStatusCode"] = statusOf(unregStatus)
-				results[i] = r
-			}
-			if bad != ua.StatusOK {
-				return serviceBad(bad, results)
-			}
-			return outcome{status: ua.StatusOK, results: results}
+			return registerResults(ids, reg.RegisteredNodeIDs, read.Results, unregStatus)
 		},
 	}
+}
+
+// registerResults are the results of `register-nodes`: one per requested node, in
+// request order, read through its alias. A Good read without a value has the type
+// Null, as in `read`.
+func registerResults(ids, aliases []*ua.NodeID, dvs []*ua.DataValue, unregStatus ua.StatusCode) outcome {
+	if len(aliases) != len(ids) {
+		return failure(exitInternal, "internal", "RegisterNodes returned another number of nodes", ua.StatusBadUnexpectedError)
+	}
+	if len(dvs) != len(ids) {
+		return countMismatch("Read", len(dvs), len(ids))
+	}
+	results := make([]any, len(ids))
+	bad := unregStatus
+	for i := range ids {
+		r := map[string]any{"nodeId": nodeIDString(ids[i]), "registeredNodeId": nodeIDString(aliases[i])}
+		dv := orUnknown(dvs[i])
+		r["statusCode"] = statusOf(dv.Status)
+		if isGood(dv.Status) {
+			typed := readResult("", dv)
+			r["dataType"], r["builtInType"], r["value"] = typed["dataType"], typed["builtInType"], typed["value"]
+		} else if bad == ua.StatusOK {
+			bad = dv.Status
+		}
+		r["unregisterStatusCode"] = statusOf(unregStatus)
+		results[i] = r
+	}
+	if bad != ua.StatusOK {
+		return serviceBad(bad, results)
+	}
+	return outcome{status: ua.StatusOK, results: results}
 }

@@ -101,7 +101,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install jsonschema
+      - run: pip install jsonschema==4.26.0
 
       - name: versions.yaml, fixtures
         run: |
@@ -135,7 +135,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install jsonschema
+      - run: pip install jsonschema==4.26.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -204,14 +204,14 @@ jobs:
       - name: Create the version, minor and major image tags from the amd64 and arm64 images
         run: make publish-manifest VERSION="${VERSION}"
 
+      # shell: bash runs with pipefail, so a failed make fails the step; the
+      # check then wants exactly one digest for every adapter of ADAPTERS.
       - name: Digests of the multi-arch images
         id: digests
+        shell: bash
         run: |
           make -s digests VERSION="${VERSION}" | tee digests.txt
-          while read -r adapter digest; do
-            [[ "${digest}" == sha256:* ]] || { echo "::error::no digest for ${adapter}"; exit 1; }
-            echo "${adapter}=${digest}" >> "$GITHUB_OUTPUT"
-          done < digests.txt
+          scripts/check-digests.sh digests.txt >> "$GITHUB_OUTPUT"
 
       - name: Write manifest.json, checksums.txt and the release notes
         env:
@@ -224,6 +224,9 @@ jobs:
           DOTNET_GDS_DIGEST: ${{ steps.digests.outputs['dotnet-gds'] }}
         run: |
           set -euo pipefail
+          for name in OPEN62541_DIGEST MILO_DIGEST ASYNC_OPCUA_DIGEST DOTNET_DIGEST NODE_OPCUA_DIGEST ASYNCUA_DIGEST DOTNET_GDS_DIGEST; do
+            [[ "${!name}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${name} is '${!name}', not a sha256 digest"; exit 1; }
+          done
           open62541_pin=$(sed -nE 's/^ARG OPEN62541_COMMIT=(.*)$/\1/p' adapters/open62541/Dockerfile | head -1)
           milo_pin=$(sed -nE 's|.*<milo.version>(.*)</milo.version>.*|\1|p' adapters/milo/pom.xml | head -1)
           async_opcua_pin=$(sed -nE 's/^async-opcua = \{ version = "=([0-9.]+)".*/\1/p' adapters/async-opcua/Cargo.toml | head -1)

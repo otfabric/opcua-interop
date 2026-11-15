@@ -36,5 +36,5 @@ The images run **OPC UA reference servers configured for testing, not for protec
 ### Image hardening
 
 - The open62541 image runs as a non-root user (uid 10001). The Milo image runs as root
-- Base images are pinned by tag, not by digest; Dependabot tracks them. open62541 is cloned from GitHub by release tag; Eclipse Milo comes from Maven Central at the version in `adapters/milo/pom.xml`
+- Base images are pinned by digest (every `FROM` line, listed in `versions.yaml` `base_images`; `scripts/check-versions.sh` fails on a `FROM` without one); Dependabot tracks those of the open62541, Milo, async-opcua, node-opcua and asyncua adapters. open62541 is cloned from GitHub by release tag, and the build stops when the tag names another commit than `ARG OPEN62541_SHA` (`versions.yaml` `tag_commit`); Eclipse Milo comes from Maven Central at the version in `adapters/milo/pom.xml`
 - Consumers should pin images by digest

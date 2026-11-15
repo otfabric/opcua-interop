@@ -93,7 +93,7 @@ func (f *discoverFlags) socket() (*net.UDPConn, *net.UDPAddr, error) {
 func (f *discoverFlags) run() outcome {
 	sock, dest, err := f.socket()
 	if err != nil {
-		return failure(exitConnect, "connection", err.Error(), ua.StatusBadCommunicationError)
+		return failure(exitConnect, "transport", err.Error(), ua.StatusBadCommunicationError)
 	}
 	defer sock.Close()
 	info, want := message.InformationDataSetMetaData, message.DiscoveryDataSetMetaData
@@ -111,7 +111,7 @@ func (f *discoverFlags) run() outcome {
 		return failure(exitInternal, "internal", err.Error(), ua.StatusBadEncodingError)
 	}
 	if _, err := sock.WriteToUDP(encoded, dest); err != nil {
-		return failure(exitConnect, "connection", err.Error(), ua.StatusBadCommunicationError)
+		return failure(exitConnect, "transport", err.Error(), ua.StatusBadCommunicationError)
 	}
 	collected := f.collect(sock, want)
 	writers := f.writers

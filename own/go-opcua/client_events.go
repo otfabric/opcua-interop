@@ -311,42 +311,46 @@ type alarmRun struct {
 	notify   chan *opcua.PublishNotificationData
 	deadline <-chan time.Time
 	latest   map[string]*conditionEntry
+	// pending are the events of the last notification not handed out yet, in the
+	// order of the server. Only the subscription sends to notify.
+	pending []*ua.EventFieldList
 }
 
 var errNoEvent = errors.New("the event did not arrive in time")
 
 // next returns the next event of a condition, or nil for one without a ConditionId,
-// with its type.
+// with its type. The events of a notification are handed out one by one, before
+// those of the next notification.
 func (r *alarmRun) next() (*conditionEntry, *ua.NodeID, error) {
-	for {
+	for len(r.pending) == 0 {
 		select {
 		case msg := <-r.notify:
 			if msg.Error != nil {
 				return nil, nil, msg.Error
 			}
-			list, ok := msg.Value.(*ua.EventNotificationList)
-			if !ok || len(list.Events) == 0 {
-				continue
+			if list, ok := msg.Value.(*ua.EventNotificationList); ok {
+				r.pending = append(r.pending, list.Events...)
 			}
-			ev := list.Events[0]
-			// A list with several events is handed out one by one.
-			if len(list.Events) > 1 {
-				rest := &ua.EventNotificationList{Events: list.Events[1:]}
-				r.notify <- &opcua.PublishNotificationData{Value: rest}
-			}
-			var eventType *ua.NodeID
-			if len(ev.EventFields) > 1 {
-				eventType, _ = ev.EventFields[1].Value().(*ua.NodeID)
-			}
-			entry := parseCondition(ev.EventFields)
-			if entry != nil {
-				r.latest[entry.ConditionID] = entry
-			}
-			return entry, eventType, nil
 		case <-r.deadline:
 			return nil, nil, errNoEvent
 		}
 	}
+	ev := r.pending[0]
+	r.pending[0] = nil
+	r.pending = r.pending[1:]
+	var fields []*ua.Variant
+	if ev != nil {
+		fields = ev.EventFields
+	}
+	var eventType *ua.NodeID
+	if len(fields) > 1 {
+		eventType, _ = fields[1].Value().(*ua.NodeID)
+	}
+	entry := parseCondition(fields)
+	if entry != nil {
+		r.latest[entry.ConditionID] = entry
+	}
+	return entry, eventType, nil
 }
 
 // waitFor returns the next event of the condition that matches.
@@ -385,25 +389,33 @@ type actionResult struct {
 	Repeat     *statusJSON     `json:"repeatStatusCode,omitempty"`
 }
 
-// perform calls one action and waits for its event. It says the status the command
-// ends with: OK while nothing failed.
-func (r *alarmRun) perform(ctx context.Context, target *conditionEntry, method uint32, comment string, match func(*conditionEntry) bool) (*actionResult, ua.StatusCode) {
+// perform calls one action and waits for its event. It says the outcome the command
+// ends with, nil while nothing failed: a failed call is classified like any other
+// request (§5), a Bad status of the method is a service failure.
+func (r *alarmRun) perform(ctx context.Context, target *conditionEntry, method uint32, comment string, match func(*conditionEntry) bool) (*actionResult, *outcome) {
 	latest := r.latest[target.ConditionID]
 	status, err := r.action(ctx, target, method, latest.eventBytes, comment)
 	if err != nil {
 		res := classify(err)
-		return &actionResult{StatusCode: statusOf(res.status)}, res.status
+		return &actionResult{StatusCode: statusOf(res.status)}, &res
 	}
 	result := &actionResult{StatusCode: statusOf(status)}
 	if !isGood(status) {
-		return result, status
+		res := serviceBad(status, nil)
+		return result, &res
 	}
 	event, err := r.waitFor(target.ConditionID, match)
 	if err != nil {
-		return result, ua.StatusBadTimeout
+		res := noEvent()
+		return result, &res
 	}
 	result.Event = event
-	return result, ua.StatusOK
+	return result, nil
+}
+
+// noEvent is the outcome of an event that did not arrive within --timeout-ms.
+func noEvent() outcome {
+	return failure(exitTimeout, "timeout", "no event in time", ua.StatusBadTimeout)
 }
 
 func alarmsCommand(fs *flag.FlagSet) command {
@@ -459,23 +471,27 @@ type alarmActions struct {
 }
 
 // refresh is steps 2 and 3 of §1: ConditionRefresh, then the conditions up to the
-// RefreshEnd.
-func (r *alarmRun) refresh(ctx context.Context, c *opcua.Client, sub *opcua.Subscription, result map[string]any) ([]*conditionEntry, ua.StatusCode) {
+// RefreshEnd. It says the outcome the command ends with, nil while nothing failed: a
+// failed ConditionRefresh is classified like any other request (§5).
+func (r *alarmRun) refresh(ctx context.Context, c *opcua.Client, sub *opcua.Subscription, result map[string]any) ([]*conditionEntry, *outcome) {
 	status := ua.StatusOK
+	var stop *outcome
 	if err := c.ConditionRefresh(ctx, sub.SubscriptionID); err != nil {
-		status = classify(err).status
+		res := classify(err)
+		status, stop = res.status, &res
 	}
 	refresh := map[string]any{"statusCode": statusOf(status), "startSeen": false, "endSeen": false}
 	result["refresh"] = refresh
-	if !isGood(status) {
-		return nil, status
+	if stop != nil {
+		return nil, stop
 	}
 	var conditions []*conditionEntry
 	byID := map[string]int{}
 	for {
 		entry, eventType, err := r.next()
 		if err != nil {
-			return conditions, ua.StatusBadTimeout
+			res := noEvent()
+			return conditions, &res
 		}
 		if eventType != nil && eventType.Namespace() == 0 {
 			switch eventType.IntID() {
@@ -484,7 +500,7 @@ func (r *alarmRun) refresh(ctx context.Context, c *opcua.Client, sub *opcua.Subs
 				continue
 			case id.RefreshEndEventType:
 				refresh["endSeen"] = true
-				return conditions, ua.StatusOK
+				return conditions, nil
 			}
 		}
 		if entry == nil {
@@ -501,14 +517,14 @@ func (r *alarmRun) refresh(ctx context.Context, c *opcua.Client, sub *opcua.Subs
 
 // run is everything after the event monitored item exists.
 func (r *alarmRun) run(ctx context.Context, c *opcua.Client, sub *opcua.Subscription, result map[string]any, results []any, do alarmActions) outcome {
-	conditions, status := r.refresh(ctx, c, sub, result)
+	conditions, stop := r.refresh(ctx, c, sub, result)
 	entries := make([]any, len(conditions))
 	for i, entry := range conditions {
 		entries[i] = entry
 	}
 	result["conditions"] = entries
-	if !isGood(status) {
-		return r.failed(status, results)
+	if stop != nil {
+		return withResults(*stop, results)
 	}
 	var target *conditionEntry
 	for _, entry := range conditions {
@@ -530,10 +546,10 @@ func (r *alarmRun) run(ctx context.Context, c *opcua.Client, sub *opcua.Subscrip
 
 	if do.acknowledge {
 		stale := r.latest[target.ConditionID].eventBytes
-		res, status := r.perform(ctx, target, 9111, do.comment, func(e *conditionEntry) bool { return e.Acked != nil && *e.Acked })
+		res, stop := r.perform(ctx, target, 9111, do.comment, func(e *conditionEntry) bool { return e.Acked != nil && *e.Acked })
 		result["acknowledge"] = res
-		if !isGood(status) {
-			return r.failed(status, results)
+		if stop != nil {
+			return withResults(*stop, results)
 		}
 		// The EventId is stale now: what the server says is reported, never judged.
 		if repeat, err := r.action(ctx, target, 9111, stale, do.comment); err == nil {
@@ -542,27 +558,24 @@ func (r *alarmRun) run(ctx context.Context, c *opcua.Client, sub *opcua.Subscrip
 		}
 	}
 	if do.confirm {
-		res, status := r.perform(ctx, target, 9113, do.comment, func(e *conditionEntry) bool { return e.Confirmed != nil && *e.Confirmed })
+		res, stop := r.perform(ctx, target, 9113, do.comment, func(e *conditionEntry) bool { return e.Confirmed != nil && *e.Confirmed })
 		result["confirm"] = res
-		if !isGood(status) {
-			return r.failed(status, results)
+		if stop != nil {
+			return withResults(*stop, results)
 		}
 	}
 	if do.addCom {
-		res, status := r.perform(ctx, target, 9029, do.comment, func(e *conditionEntry) bool { return e.Comment != nil && *e.Comment == do.comment })
+		res, stop := r.perform(ctx, target, 9029, do.comment, func(e *conditionEntry) bool { return e.Comment != nil && *e.Comment == do.comment })
 		result["addComment"] = res
-		if !isGood(status) {
-			return r.failed(status, results)
+		if stop != nil {
+			return withResults(*stop, results)
 		}
 	}
 	return outcome{status: ua.StatusOK, results: results}
 }
 
-func (r *alarmRun) failed(status ua.StatusCode, results []any) outcome {
-	if status == ua.StatusBadTimeout {
-		res := failure(exitTimeout, "timeout", "no event in time", status)
-		res.results = results
-		return res
-	}
-	return serviceBad(status, results)
+// withResults is a failure with the results of the command so far.
+func withResults(res outcome, results []any) outcome {
+	res.results = results
+	return res
 }

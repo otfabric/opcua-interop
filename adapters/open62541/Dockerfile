@@ -13,6 +13,11 @@ ARG DEBIAN_DIGEST=sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700ac
 FROM ${BASE_REGISTRY}/debian:bookworm-slim@${DEBIAN_DIGEST} AS open62541-build
 
 ARG OPEN62541_COMMIT=v1.5.9
+# The commit of that tag (versions.yaml tag_commit; scripts/check-versions.sh
+# compares the two): the build stops when the tag names another commit. An
+# upstream candidate (scripts/candidate.sh) is a tag under evaluation, not a pin,
+# and passes it empty.
+ARG OPEN62541_SHA=05c2b389b65cc35884eb40d800301af1f3d130cf
 ARG OPEN62541_REPO=https://github.com/open62541/open62541
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,6 +32,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 RUN git clone --depth 1 --branch "${OPEN62541_COMMIT}" "${OPEN62541_REPO}" open62541 \
     && cd open62541 \
+    && head="$(git rev-parse HEAD)" \
+    && { [ -z "${OPEN62541_SHA}" ] || [ "${head}" = "${OPEN62541_SHA}" ] \
+         || { echo "open62541 ${OPEN62541_COMMIT} is commit ${head}, not ${OPEN62541_SHA}" >&2; exit 1; }; } \
     && git submodule update --init --depth 1
 
 # Source preparation before the amalgamation is generated (both scripts only
