@@ -421,7 +421,7 @@ container ↔ container (or with `--network host` on Linux).
 The MQTT tests use Eclipse Mosquitto, pinned by its multi-arch index digest:
 
 ```
-eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c
+eclipse-mosquitto:2.0.22@sha256:81a6193ae693942a3231cd3ac52875b02b7e3a19da671b2fb4b55cc874c5b279
 ```
 
 with [`fixtures/pubsub/mosquitto.conf`](../fixtures/pubsub/mosquitto.conf) (`listener 1883 0.0.0.0`,
@@ -430,7 +430,7 @@ with [`fixtures/pubsub/mosquitto.conf`](../fixtures/pubsub/mosquitto.conf) (`lis
 ```sh
 docker run -d --name mosquitto -p 1883:1883 \
   -v "$PWD/fixtures/pubsub/mosquitto.conf:/mosquitto-interop.conf:ro" \
-  eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c \
+  eclipse-mosquitto:2.0.22@sha256:81a6193ae693942a3231cd3ac52875b02b7e3a19da671b2fb4b55cc874c5b279 \
   mosquitto -c /mosquitto-interop.conf
 ```
 

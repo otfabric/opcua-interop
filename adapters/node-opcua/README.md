@@ -1,8 +1,8 @@
 # node-opcua adapter (TypeScript / Node.js)
 
 opcua-interop adapter for [node-opcua](https://github.com/node-opcua/node-opcua)
-(npm package `node-opcua`, pinned exactly to `2.187.12` in `package.json` and
-`package-lock.json`, with `node-opcua-types` `2.187.9`, the version
+(npm package `node-opcua`, pinned exactly to `2.187.31` in `package.json` and
+`package-lock.json`, with `node-opcua-types` `2.187.28`, the version
 node-opcua itself depends on), the OPC UA client and server SDK for Node.js
 by Sterfive. Added in opcua-interop **0.9.0**; it implements
 `docs/CONTAINER_CONTRACT.md` like the open62541, Milo and async-opcua adapters.

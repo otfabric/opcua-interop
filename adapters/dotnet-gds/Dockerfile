@@ -2,7 +2,7 @@
 # (Part 12 pull model: a Global Discovery Server and a GDS client).
 #
 # A separate project from dotnet/ (its own capability document, the GDS server
-# instead of the fixture address space), on UA-.NETStandard 2.0.1 with every
+# instead of the fixture address space), on UA-.NETStandard 2.0.2 with every
 # Opc.Ua package (including Opc.Ua.Gds.Server / Opc.Ua.Gds.Client) pinned to it.
 #
 # The build stage runs on the build platform ($BUILDPLATFORM): the publish
@@ -12,7 +12,7 @@ ARG DOTNET_SDK_VERSION=10.0.402
 ARG DOTNET_RUNTIME_VERSION=10.0.13
 ARG DOTNET_SDK_DIGEST=sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2
 ARG DOTNET_RUNTIME_DIGEST=sha256:6a97a629f6c44e7263b41175e79cb9aeb1df631d3714e74e80a4ddd016258646
-ARG OPCUA_VERSION=2.0.1
+ARG OPCUA_VERSION=2.0.2
 
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:${DOTNET_SDK_VERSION}-noble@${DOTNET_SDK_DIGEST} AS build
 ARG OPCUA_VERSION

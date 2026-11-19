@@ -37,7 +37,7 @@ ADAPTERS ?= open62541 milo async-opcua dotnet node-opcua asyncua dotnet-gds
 INTEROP_ADAPTERS = $(filter-out dotnet-gds,$(ADAPTERS))
 
 # MQTT broker for the PubSub tests (multi-arch index digest of eclipse-mosquitto:2.0.22)
-MOSQUITTO_IMAGE ?= eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c
+MOSQUITTO_IMAGE ?= eclipse-mosquitto:2.0.22@sha256:81a6193ae693942a3231cd3ac52875b02b7e3a19da671b2fb4b55cc874c5b279
 MQTT_PORT ?= 1883
 PORT      ?= 4840
 

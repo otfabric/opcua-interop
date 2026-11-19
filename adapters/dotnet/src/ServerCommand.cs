@@ -28,10 +28,32 @@ namespace OpcUaInterop
 
         public InteropNodeManager Interop { get; private set; }
 
+        // UA-.NETStandard 2.0.2 hosts application node managers only through the
+        // MasterNodeManager's InitialFactories; a preconstructed manager stops the
+        // server from starting.
         protected override IMasterNodeManager CreateMasterNodeManager(IServerInternal server, ApplicationConfiguration configuration)
         {
-            Interop = new InteropNodeManager(server, configuration, m_fixture);
-            return new MasterNodeManager(server, configuration, null, Interop);
+            return new MasterNodeManager(server, configuration, null, [new InteropNodeManagerFactory(this)]);
+        }
+
+        /// <summary>Creates the fixture node manager when the server starts and keeps
+        /// it in <see cref="Interop"/>.</summary>
+        private sealed class InteropNodeManagerFactory : IAsyncNodeManagerFactory
+        {
+            private readonly InteropServer m_owner;
+
+            public InteropNodeManagerFactory(InteropServer owner)
+            {
+                m_owner = owner;
+            }
+
+            public ArrayOf<string> NamespacesUris => [m_owner.m_fixture.Namespaces[0].Uri];
+
+            public ValueTask<IAsyncNodeManager> CreateAsync(IServerInternal server, ApplicationConfiguration configuration, CancellationToken cancellationToken = default)
+            {
+                m_owner.Interop = new InteropNodeManager(server, configuration, m_owner.m_fixture);
+                return new ValueTask<IAsyncNodeManager>(m_owner.Interop);
+            }
         }
 
         protected override void OnServerStarted(IServerInternal server)

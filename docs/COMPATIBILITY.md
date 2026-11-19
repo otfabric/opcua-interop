@@ -17,9 +17,9 @@ below, and the cases it explains count as known differences instead of failures.
 | `open62541` | [open62541](https://github.com/open62541/open62541) | v1.5.9 | commit in `adapters/open62541/Dockerfile` | independent, C |
 | `milo` | [Eclipse Milo](https://github.com/eclipse-milo/milo) | 1.1.8 | Maven Central, `adapters/milo/pom.xml` | independent, Java |
 | `async-opcua` | [async-opcua](https://github.com/FreeOpcUa/async-opcua) | 0.19.0 | crates.io, `adapters/async-opcua/Cargo.lock` | independent, Rust |
-| `dotnet` | [UA-.NETStandard](https://github.com/OPCFoundation/UA-.NETStandard) | 2.0.1 | NuGet, `adapters/dotnet/src/*.csproj` | independent, C# |
-| `dotnet-gds` | the same, GDS packages | 2.0.1 | NuGet, `adapters/dotnet-gds/src/*.csproj` | the engine of `dotnet` |
-| `node-opcua` | [node-opcua](https://github.com/node-opcua/node-opcua) | 2.187.12 | npm, `adapters/node-opcua/package-lock.json` | independent, TypeScript |
+| `dotnet` | [UA-.NETStandard](https://github.com/OPCFoundation/UA-.NETStandard) | 2.0.2 | NuGet, `adapters/dotnet/src/*.csproj` | independent, C# |
+| `dotnet-gds` | the same, GDS packages | 2.0.2 | NuGet, `adapters/dotnet-gds/src/*.csproj` | the engine of `dotnet` |
+| `node-opcua` | [node-opcua](https://github.com/node-opcua/node-opcua) | 2.187.31 | npm, `adapters/node-opcua/package-lock.json` | independent, TypeScript |
 | `asyncua` | [opcua-asyncio](https://github.com/FreeOpcUa/opcua-asyncio) | 2.1.0 | PyPI, hashed `adapters/asyncua/requirements.txt` | independent, Python |
 
 The pins live in the build files and are mirrored in
@@ -41,7 +41,7 @@ except the one marked as depending on timing.
 | Waiver | Stack | What happens | Specification |
 |--------|-------|--------------|---------------|
 | `async-opcua-null-session-nonce` | async-opcua 0.19.0 server | A None/None session of the open62541 client is refused: null ActivateSession nonce. [Evidence](https://github.com/FreeOpcUa/async-opcua/blob/9ad28fc011002398f2e8a95696a50408a14531d9/async-opcua-crypto/src/security_policy.rs#L179-L184) | OPC 10000-4 (v1.05) 5.7.3 ActivateSession |
-| `node-opcua-renewal-old-token` | node-opcua 2.187.12 server | Responses keep the token of the request across a SecureChannel renewal; the open62541 subscription can stall. Depends on publish timing. [Evidence](https://github.com/node-opcua/node-opcua/blob/9c009a2e5f27957885938510e424a8f95a7a633f/packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts#L838-L843) | OPC 10000-6 (v1.05) 6.7.4 |
+| `node-opcua-renewal-old-token` | node-opcua 2.187.31 server | Responses keep the token of the request across a SecureChannel renewal; the open62541 subscription can stall. Depends on publish timing. [Evidence](https://github.com/node-opcua/node-opcua/blob/103ed15d23e473a9dd27d982b56d2530f218373f/packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts#L851-L856) | OPC 10000-6 (v1.05) 6.7.4 |
 | `open62541-chain-leaf-compare` | open62541 v1.5.9 client | The client compares the CreateSession server certificate with the leaf byte for byte, so it refuses a server that sends its chain ([contract 16.3](CONTAINER_CONTRACT.md)). [Evidence](https://github.com/open62541/open62541/blob/05c2b389b65cc35884eb40d800301af1f3d130cf/src/client/ua_client_connect.c#L1692-L1696) | OPC 10000-6 (v1.05) 6.2.6 Certificate Chains |
 | `asyncua-percent-deadband` | asyncua 2.1.0 server | A percent deadband on a node without EURange is accepted ([adapter README](../adapters/asyncua/README.md)). [Evidence](https://github.com/FreeOpcUa/opcua-asyncio/blob/a5a3ce0f6c012e8b09d3e9a948e25a64b2e29b37/asyncua/server/monitored_item_service.py#L298-L300) | OPC 10000-8 (v1.05) 7.2 PercentDeadband |
 | `asyncua-no-history-update` | asyncua 2.1.0 server | HistoryUpdate is refused: the server has no handler for it ([adapter README](../adapters/asyncua/README.md)). [Evidence](https://github.com/FreeOpcUa/opcua-asyncio/blob/a5a3ce0f6c012e8b09d3e9a948e25a64b2e29b37/asyncua/server/uaprocessor.py#L562-L564) | |

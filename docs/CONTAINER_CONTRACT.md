@@ -1912,7 +1912,7 @@ The MQTT-C send and receive buffers are **1024 bytes**: a NetworkMessage
 (including the MQTT header) must stay below about 1000 bytes. The JSON
 message of the example data set (10 fields) is ~690 bytes. `MetaDataQueueName`
 is not used (no metadata publishing). The broker for the tests:
-`eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c`
+`eclipse-mosquitto:2.0.22@sha256:81a6193ae693942a3231cd3ac52875b02b7e3a19da671b2fb4b55cc874c5b279`
 with `fixtures/pubsub/mosquitto.conf` (docs/FIXTURES.md "MQTT broker").
 
 ### 14.5 Message security and keys

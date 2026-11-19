@@ -3,7 +3,7 @@
 #   docker build -f adapters/node-opcua/Dockerfile -t opcua-interop-node-opcua:local .
 #
 # The stack is the node-opcua package from npm, pinned exactly in
-# package.json (2.187.12) and package-lock.json (`npm ci`). node-opcua is pure
+# package.json (2.187.31) and package-lock.json (`npm ci`). node-opcua is pure
 # JavaScript on Node.js' OpenSSL crypto, so the same Dockerfile builds
 # natively for linux/amd64 and linux/arm64 (the node image is multi-arch; the
 # pin is its multi-arch index digest).

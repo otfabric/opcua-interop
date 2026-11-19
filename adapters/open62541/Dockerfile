@@ -9,7 +9,7 @@
 # Docker Hub serves exactly the same images; CI uses one to stay clear of
 # Docker Hub's pull rate limit (see the Makefile).
 ARG BASE_REGISTRY=docker.io/library
-ARG DEBIAN_DIGEST=sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+ARG DEBIAN_DIGEST=sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 FROM ${BASE_REGISTRY}/debian:bookworm-slim@${DEBIAN_DIGEST} AS open62541-build
 
 ARG OPEN62541_COMMIT=v1.5.9
