@@ -12,10 +12,10 @@
     <PredefinedCulturesOnly>false</PredefinedCulturesOnly>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CS1591;CS0618</NoWarn>
-    <!-- UA-.NETStandard 2.0.1 (the GDS packages are Opc.Ua.Gds.Client / Opc.Ua.Gds.Server since 2.0;
+    <!-- UA-.NETStandard 2.0.2 (the GDS packages are Opc.Ua.Gds.Client / Opc.Ua.Gds.Server since 2.0;
          1.5.378 shipped them as Gds.Client.Common / Gds.Server.Common). Every Opc.Ua package is
          pinned to exactly this version. -->
-    <OpcUaVersion Condition="'$(OpcUaVersion)' == ''">2.0.1</OpcUaVersion>
+    <OpcUaVersion Condition="'$(OpcUaVersion)' == ''">2.0.2</OpcUaVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Server" Version="[$(OpcUaVersion)]" />

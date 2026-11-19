@@ -10,7 +10,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CS1591;CS0618</NoWarn>
-    <OpcUaVersion Condition="'$(OpcUaVersion)' == ''">2.0.1</OpcUaVersion>
+    <OpcUaVersion Condition="'$(OpcUaVersion)' == ''">2.0.2</OpcUaVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Server" Version="$(OpcUaVersion)" />

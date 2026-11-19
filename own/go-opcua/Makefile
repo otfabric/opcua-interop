@@ -10,7 +10,7 @@ VERSION ?= $(shell git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -
 REFERENCES ?= open62541 milo async-opcua dotnet node-opcua asyncua dotnet-gds
 BASE_REGISTRY ?= docker.io/library
 # The broker of the PubSub scenarios (docs/CAPABILITIES.md "MQTT broker").
-MOSQUITTO_IMAGE ?= eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c
+MOSQUITTO_IMAGE ?= eclipse-mosquitto:2.0.22@sha256:81a6193ae693942a3231cd3ac52875b02b7e3a19da671b2fb4b55cc874c5b279
 
 # The latest go-opcua release, as the workflow builds it.
 UPSTREAM_VERSION ?= $(shell git ls-remote --tags --refs https://github.com/otfabric/go-opcua.git 'v[0-9]*' | sed 's,.*refs/tags/,,' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | sort -V | tail -1)

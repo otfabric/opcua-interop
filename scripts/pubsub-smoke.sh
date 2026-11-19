@@ -64,7 +64,7 @@ if [[ ${#SCENARIOS[@]} -eq 0 ]]; then
 fi
 
 # Eclipse Mosquitto 2.0.22 (multi-arch index digest), see docs/CAPABILITIES.md "MQTT broker"
-MOSQUITTO_IMAGE="${MOSQUITTO_IMAGE:-eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c}"
+MOSQUITTO_IMAGE="${MOSQUITTO_IMAGE:-eclipse-mosquitto:2.0.22@sha256:81a6193ae693942a3231cd3ac52875b02b7e3a19da671b2fb4b55cc874c5b279}"
 
 FOLLOW_TIMEOUT=20
 

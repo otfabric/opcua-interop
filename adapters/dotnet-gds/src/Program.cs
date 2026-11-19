@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace OpcUaInterop
 {
     /// <summary>
-    /// opcua-interop GDS adapter for the OPC Foundation UA-.NETStandard stack (2.0.1):
+    /// opcua-interop GDS adapter for the OPC Foundation UA-.NETStandard stack (2.0.2):
     ///   server             start the Global Discovery Server (Part 12 pull model)
     ///   client &lt;op&gt;        run one client operation (endpoints, gds-pull; docs/CONTAINER_CONTRACT.md §16)
     ///   validate-fixture   validate a fixture file

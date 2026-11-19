@@ -8,10 +8,10 @@ Test OPC UA libraries against established implementations without integrating th
 | `open62541` | [open62541](https://github.com/open62541/open62541) v1.5.9 | C | yes | yes | `ghcr.io/otfabric/opcua-interop-open62541` |
 | `milo` | [Eclipse Milo](https://github.com/eclipse-milo/milo) 1.1.8 | Java | yes | yes | `ghcr.io/otfabric/opcua-interop-milo` |
 | `async-opcua` | [async-opcua](https://github.com/FreeOpcUa/async-opcua) 0.19.0 | Rust | yes | yes | `ghcr.io/otfabric/opcua-interop-async-opcua` |
-| `dotnet` | [OPC Foundation UA-.NETStandard](https://github.com/OPCFoundation/UA-.NETStandard) 2.0.1 | C# | yes | yes | `ghcr.io/otfabric/opcua-interop-dotnet` |
-| `node-opcua` | [node-opcua](https://github.com/node-opcua/node-opcua) 2.187.12 | TypeScript | yes | yes | `ghcr.io/otfabric/opcua-interop-node-opcua` |
+| `dotnet` | [OPC Foundation UA-.NETStandard](https://github.com/OPCFoundation/UA-.NETStandard) 2.0.2 | C# | yes | yes | `ghcr.io/otfabric/opcua-interop-dotnet` |
+| `node-opcua` | [node-opcua](https://github.com/node-opcua/node-opcua) 2.187.31 | TypeScript | yes | yes | `ghcr.io/otfabric/opcua-interop-node-opcua` |
 | `asyncua` | [opcua-asyncio](https://github.com/FreeOpcUa/opcua-asyncio) 2.1.0 | Python | yes | yes | `ghcr.io/otfabric/opcua-interop-asyncua` |
-| `dotnet-gds` | UA-.NETStandard 2.0.1, Global Discovery Server | C# | yes | yes | `ghcr.io/otfabric/opcua-interop-dotnet-gds` |
+| `dotnet-gds` | UA-.NETStandard 2.0.2, Global Discovery Server | C# | yes | yes | `ghcr.io/otfabric/opcua-interop-dotnet-gds` |
 
 The stacks do not all do the same: ECC policies, LDS and mDNS are served by
 open62541, PubSub by open62541 and UA-.NETStandard, `codec` by open62541, Milo and

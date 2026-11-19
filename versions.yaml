@@ -5,7 +5,7 @@
 # No source archive hash is recorded: package registries and the open62541
 # tag are the pins; the open62541 build checks that the tag is tag_commit.
 
-interop_version: "0.19.1"
+interop_version: "0.19.2"
 contract_version: "1.0"        # docs/CONTAINER_CONTRACT.md, schemaVersion of every document
 fixture_schema: "1.0"          # fixtures/schema/opcua-fixture.schema.json
 
@@ -56,7 +56,7 @@ implementations:
     status: published
     upstream: "OPC Foundation UA-.NETStandard"
     repository: "https://github.com/OPCFoundation/UA-.NETStandard"
-    version: "2.0.1"
+    version: "2.0.2"
     license: "LicenseRef-OPC-Foundation-MIT-1.00"
     language: "C#"
     independent_engine: true
@@ -68,7 +68,7 @@ implementations:
     status: published
     upstream: "OPC Foundation UA-.NETStandard GDS"
     repository: "https://github.com/OPCFoundation/UA-.NETStandard"
-    version: "2.0.1"
+    version: "2.0.2"
     license: "LicenseRef-OPC-Foundation-MIT-1.00"
     language: "C#"
     independent_engine: true
@@ -80,7 +80,7 @@ implementations:
     status: published
     upstream: "node-opcua"
     repository: "https://github.com/node-opcua/node-opcua"
-    version: "2.187.12"
+    version: "2.187.31"
     license: "MIT"
     language: "TypeScript"
     independent_engine: true
@@ -101,18 +101,18 @@ implementations:
       - adapters/asyncua/requirements.in
 
 base_images:
-  debian: "docker.io/library/debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"
+  debian: "docker.io/library/debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc"
   debian_dated: "docker.io/library/debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587"
   rust: "docker.io/library/rust:1.99.0-slim-bookworm@sha256:2c3a22f0a5533ea2dd5a16627bc841228151faa2d4de2644ac9987e4a2f1f2fa"
   maven: "docker.io/library/maven:3.9.16-eclipse-temurin-25@sha256:93b8a14ea2f412782e4e842651273b4d903e35cc496284f178fbbe2d67d00976"
-  temurin_jre: "docker.io/library/eclipse-temurin:25-jre-jammy@sha256:659b528cca74a0edc5c25315ec5819f35bce40bbcec645c4c534987e4c6be7c1"
+  temurin_jre: "docker.io/library/eclipse-temurin:25-jre-jammy@sha256:a4e9fb35b48412cafbf036dabe201f22ee5e96f789e975bd6866ba0cbec45d17"
   dotnet_sdk: "mcr.microsoft.com/dotnet/sdk:10.0.402-noble@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2"
   dotnet_runtime: "mcr.microsoft.com/dotnet/runtime:10.0.13-alpine3.24@sha256:6a97a629f6c44e7263b41175e79cb9aeb1df631d3714e74e80a4ddd016258646"
   dotnet_aspnet: "mcr.microsoft.com/dotnet/aspnet:10.0.13-alpine3.24@sha256:ecf8dcbaab8ebc4bdfb2322d6fe4217bbb118894310ebb6d53c580874ab4b27d"
-  golang: "docker.io/library/golang:1.27.2-trixie@sha256:e58d6f83b3416618d8bcac2b3dde1b7f7e3c4a77d25e88637f8bbae81536c48d"
+  golang: "docker.io/library/golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e"
   node: "docker.io/library/node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53"
   python: "docker.io/library/python:3.15.0-slim-trixie@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58"
-  mosquitto: "docker.io/library/eclipse-mosquitto:2.0.22@sha256:09b62ff32c2e7b64d4b431b9a89236073289b68db273de2b089edeb9b0d92b5c"
+  mosquitto: "docker.io/library/eclipse-mosquitto:2.0.22@sha256:81a6193ae693942a3231cd3ac52875b02b7e3a19da671b2fb4b55cc874c5b279"
 
 # OT Fabric's own stacks. Not independent implementations, not in a release of
 # this repository or its manifest: see own/<library>/README.md.

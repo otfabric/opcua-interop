@@ -85,6 +85,29 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.19.2
+
+**Date:** 2026-11-19
+**Previous release:** v0.19.1
+
+### Changed
+
+- The container contract (1.0) and the fixtures are unchanged.
+- dotnet and dotnet-gds: UA-.NETStandard 2.0.2 (was 2.0.1). 2.0.2 hosts application node managers only through the `InitialFactories` of `MasterNodeManager`: a preconstructed manager stops the server with "Hosted application NodeManagers must be registered through InitialFactories". The dotnet server now registers its fixture node manager with a factory.
+- node-opcua: 2.187.31 (was 2.187.12), with `node-opcua-types` 2.187.28 and `node-opcua-server-configuration` 2.187.31. The known deviation `node-opcua-renewal-old-token` still reproduces: the code that answers with the token of the request is unchanged, and the waiver and its evidence now name 2.187.31.
+- Base images, the same tags at their current digests: `debian:bookworm-slim`, `eclipse-mosquitto:2.0.22`, `eclipse-temurin:25-jre-jammy` and `golang:1.27.2-trixie`.
+- open62541 stays at v1.5.9. v1.5.10 serves RegisterServer and RegisterServer2 only on a channel that authenticates the client with a certificate, and only when that certificate's application URI is the registered serverUri (upstream security fix, advisory open62541-SA-2026-0051). The LDS scenarios register over SecurityMode None today, and go-opcua's interop suite does the same, so moving to v1.5.10 needs secure registration in the adapters and in go-opcua first. In the v1.5.10 candidate, the deviation `open62541-access-status` no longer reproduces.
+
+### Own image (`own/go-opcua`, not part of this release)
+
+These reach users with the next manual build of `opcua-interop-otfabric`:
+
+- go-opcua v1.34.0 (was v1.33.0).
+
+Every adapter reports version 0.19.2 (`make check-release VERSION=v0.19.2`).
+
+---
+
 ## v0.19.1
 
 **Date:** 2026-11-16
