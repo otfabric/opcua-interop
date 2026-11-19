@@ -80,7 +80,7 @@ implementations:
     status: published
     upstream: "node-opcua"
     repository: "https://github.com/node-opcua/node-opcua"
-    version: "2.187.31"
+    version: "2.187.32"
     license: "MIT"
     language: "TypeScript"
     independent_engine: true

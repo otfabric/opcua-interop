@@ -18,9 +18,9 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "node-opcua": "2.187.31",
-    "node-opcua-server-configuration": "2.187.31",
-    "node-opcua-types": "2.187.28"
+    "node-opcua": "2.187.32",
+    "node-opcua-server-configuration": "2.187.32",
+    "node-opcua-types": "2.187.32"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
