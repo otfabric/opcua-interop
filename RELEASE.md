@@ -85,6 +85,23 @@ digest (`Makefile`, `compose.yaml`, `scripts/pubsub-smoke.sh`).
 
 ---
 
+## v0.20.0
+
+**Date:** 2026-11-19
+**Previous release:** v0.19.2
+
+### Changed
+
+- open62541: v1.5.10 (was v1.5.9). Its Local Discovery Server serves RegisterServer and RegisterServer2 only on a channel with a client certificate, and only when that certificate's application URI is the registered serverUri: otherwise `BadSecurityModeInsufficient` or `BadCertificateUriInvalid` (upstream security fix, advisory open62541-SA-2026-0051). The adapter no longer patches `checkConditionRefreshArguments`: v1.5.10 accepts the IntegerId SubscriptionId of ConditionRefresh(2) itself, and `fix_condition_refresh_args.py` is gone. The other source preparations still apply to v1.5.10 unchanged.
+- Secure registration with an LDS (container contract, additive). With `--certificate` / `--private-key`, `server --register-with` of the open62541, Milo and asyncua adapters registers over Basic256Sha256 / SignAndEncrypt with the server's application certificate, and checks the LDS certificate against the `--pki-dir` trust list; without them it registers over None / None as before. `client register-server` and `client find-servers-on-network` of these three adapters secure their channel with the global security flags (the open62541 adapter did so already). The async-opcua, UA-.NETStandard and node-opcua adapters still register over None / None.
+- The LDS scenarios (`scripts/features.sh`) start the registering servers with their server identity of the test PKI and register made-up servers under the URI of the client certificate the channel is secured with (`urn:otfabric:opcua-interop:client:<adapter>`), as an open62541 v1.5.10 LDS requires.
+- The known deviation `open62541-access-status` is gone: v1.5.10 no longer answers a Value the AccessLevel does not allow with BadUserAccessDenied.
+- Adapter dependencies: async-opcua `arc-swap` 1.9.5 (was 1.9.3) and `log` 0.4.35 (was 0.4.34); Milo `jackson-databind` 2.23.0 (was 2.22.4).
+
+Every adapter reports version 0.20.0 (`make check-release VERSION=v0.20.0`).
+
+---
+
 ## v0.19.2
 
 **Date:** 2026-11-19

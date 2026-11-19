@@ -2,7 +2,7 @@
  * PubSub message security policies PubSub-Aes128-CTR and PubSub-Aes256-CTR
  * (OPC UA Part 14 §7.2.2.4.3, Part 7) on OpenSSL.
  *
- * open62541 v1.5.9 ships these two UA_PubSubSecurityPolicy implementations
+ * open62541 v1.5.10 ships these two UA_PubSubSecurityPolicy implementations
  * only for the mbedTLS backend (plugins/crypto/mbedtls/
  * securitypolicy_pubsub_aes{128,256}ctr.c); with UA_ENABLE_ENCRYPTION=OPENSSL
  * UA_PubSubSecurityPolicy_Aes128Ctr / _Aes256Ctr are declared but not

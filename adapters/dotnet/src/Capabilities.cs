@@ -7,7 +7,7 @@ namespace OpcUaInterop
     /// <summary>print-capabilities (docs/CAPABILITIES.md, schemas/capabilities.schema.json).</summary>
     internal static class Capabilities
     {
-        public const string AdapterVersion = "0.19.2";
+        public const string AdapterVersion = "0.20.0";
 
         /// <summary>The UA-.NETStandard package version the adapter runs on.</summary>
         public static string StackVersion

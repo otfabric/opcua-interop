@@ -1,7 +1,7 @@
 /*
  * `client push` (CONTAINER_CONTRACT §1 "push flags", §4 `push`, §15): push
  * certificate management (Part 12 §7) against the ServerConfiguration object
- * of the server. open62541 v1.5.9 has no push client API, so every step is a
+ * of the server. open62541 v1.5.10 has no push client API, so every step is a
  * plain UA_Client_call on the standard NodeIds of ServerConfiguration and of
  * the TrustList of the selected CertificateGroup, on one session (the
  * transaction of Part 12 §7.10.2 is the session's).

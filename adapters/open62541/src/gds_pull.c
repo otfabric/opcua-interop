@@ -1,7 +1,7 @@
 /*
  * `client gds-pull` (CONTAINER_CONTRACT §16.2): the GDS pull model of Part 12
  * §6.6 / §7.9 against the Directory object of a Global Discovery Server.
- * open62541 v1.5.9 has no GDS client: the Directory methods are plain
+ * open62541 v1.5.10 has no GDS client: the Directory methods are plain
  * UA_Client_call requests on the standard NodeIds of the GDS namespace (its
  * index from the server's NamespaceArray), ApplicationRecordDataType (a
  * GDS-namespace structure the stack does not know) is encoded and decoded

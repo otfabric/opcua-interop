@@ -163,6 +163,9 @@ public class ServerCommand {
 
         DefaultCertificateManager certManager;
         String applicationUri = fixture.server.applicationUri;
+        // --register-with over Basic256Sha256 / SignAndEncrypt with the server
+        // certificate, the LDS certificate checked against the server's trust list.
+        DiscoveryOps.Security registrationSecurity = null;
 
         if (serverCert != null && serverKeyPair != null) {
             // Build an in-memory PKCS12 keystore from the loaded PEM cert/key
@@ -202,6 +205,8 @@ public class ServerCommand {
             };
 
             var certValidator = new DefaultServerCertificateValidator(trustListMgr, quarantine);
+            registrationSecurity = new DiscoveryOps.Security(SecurityPolicy.Basic256Sha256,
+                    MessageSecurityMode.SignAndEncrypt, serverCert, serverKeyPair, certValidator);
             var appGroup = DefaultApplicationGroup.createAndInitialize(
                     trustListMgr, certStore, certFactory, certValidator);
             certManager = new DefaultCertificateManager(quarantine, appGroup);
@@ -304,7 +309,7 @@ public class ServerCommand {
                 fixture.server.productUri,
                 "OTFabric",
                 "opcua-interop-milo",
-                "0.19.2",
+                "0.20.0",
                 "1.1.8",
                 DateTime.now());
 
@@ -353,6 +358,7 @@ public class ServerCommand {
 
         /* ── Registration with a Local Discovery Server ─────────────────── */
         final String lds = registerWith;
+        final DiscoveryOps.Security regSecurity = registrationSecurity;
         final RegisteredServer registration = lds == null ? null : new RegisteredServer(
                 applicationUri, fixture.server.productUri,
                 new LocalizedText[] {LocalizedText.english(fixture.server.applicationName)},
@@ -366,7 +372,7 @@ public class ServerCommand {
         if (lds != null) {
             final String mdnsName = fixture.server.applicationName;
             registrar.scheduleWithFixedDelay(() -> {
-                try (DiscoveryOps.Channel ch = DiscoveryOps.open(lds, 5000)) {
+                try (DiscoveryOps.Channel ch = DiscoveryOps.open(lds, 5000, regSecurity)) {
                     DiscoveryOps.RegisterResult res = DiscoveryOps.register(
                             ch, registration, mdnsName, new String[] {"NA"}, "auto", 5000);
                     LOG.info("Registered with {} via {}: {}", lds, res.service, res.status);
@@ -387,7 +393,7 @@ public class ServerCommand {
                         registration.getServerUri(), registration.getProductUri(),
                         registration.getServerNames(), registration.getServerType(), null,
                         registration.getDiscoveryUrls(), null, false);
-                try (DiscoveryOps.Channel ch = DiscoveryOps.open(lds, 2000)) {
+                try (DiscoveryOps.Channel ch = DiscoveryOps.open(lds, 2000, regSecurity)) {
                     DiscoveryOps.RegisterResult res = DiscoveryOps.register(
                             ch, offline, fixture.server.applicationName, new String[] {"NA"}, "auto", 2000);
                     LOG.info("Unregistered from {} via {}: {}", lds, res.service, res.status);

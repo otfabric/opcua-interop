@@ -2109,22 +2109,7 @@ public class ClientCommand {
 
                 // Trust list for server certificate validation
                 if (!trustFiles.isEmpty()) {
-                    // Write trusted certs to a temp directory for FileBasedTrustListManager
-                    Path trustTempDir = Files.createTempDirectory("milo-client-trust-");
-                    Path trustedCertsDir = trustTempDir.resolve("trusted/certs");
-                    Files.createDirectories(trustedCertsDir);
-                    Files.createDirectories(trustTempDir.resolve("trusted/crl"));
-                    Files.createDirectories(trustTempDir.resolve("issuers/certs"));
-                    Files.createDirectories(trustTempDir.resolve("rejected/certs"));
-                    for (int i = 0; i < trustFiles.size(); i++) {
-                        byte[] certBytes = Files.readAllBytes(Paths.get(trustFiles.get(i)));
-                        Files.write(trustedCertsDir.resolve("trust-" + i + ".crt"), certBytes);
-                    }
-                    var tlm = FileBasedTrustListManager.createAndInitialize(trustTempDir);
-                    var quarantine = FileBasedCertificateQuarantine.create(
-                            trustTempDir.resolve("rejected/certs"));
-                    var validator = new DefaultServerCertificateValidator(tlm, quarantine);
-                    cfgBuilder.setCertificateValidator(validator);
+                    cfgBuilder.setCertificateValidator(trustListValidator(trustFiles));
                 }
             } catch (Exception e) {
                 throw new TransportException("failed to load client certificate/key: " + e.getMessage());
@@ -2167,7 +2152,7 @@ public class ClientCommand {
         String[] caps = findAllArgs(args, "--capability").toArray(new String[0]);
 
         Object resp;
-        try (DiscoveryOps.Channel ch = DiscoveryOps.open(endpointUrl, connectTimeoutMs(args))) {
+        try (DiscoveryOps.Channel ch = DiscoveryOps.open(endpointUrl, connectTimeoutMs(args), discoverySecurity(args))) {
             resp = DiscoveryOps.findServersOnNetwork(ch, start, max, caps, rto);
         }
         if (resp instanceof StatusCode sc) {
@@ -2248,7 +2233,7 @@ public class ClientCommand {
             urls.toArray(new String[0]), findArg(args, "--semaphore-file"), online);
 
         DiscoveryOps.RegisterResult res;
-        try (DiscoveryOps.Channel ch = DiscoveryOps.open(endpointUrl, connectTimeoutMs(args))) {
+        try (DiscoveryOps.Channel ch = DiscoveryOps.open(endpointUrl, connectTimeoutMs(args), discoverySecurity(args))) {
             res = DiscoveryOps.register(ch, rs, mdnsName != null ? mdnsName : name, caps,
                                         service, requestTimeoutMs(args));
         }
@@ -2591,6 +2576,51 @@ public class ClientCommand {
     }
 
     // ── Security helpers (shared with ServerCommand logic) ────────────────
+
+    /** A validator of server certificates against the --trust-list files. */
+    private static DefaultServerCertificateValidator trustListValidator(List<String> trustFiles) throws Exception {
+        // Write trusted certs to a temp directory for FileBasedTrustListManager
+        Path trustTempDir = Files.createTempDirectory("milo-client-trust-");
+        Path trustedCertsDir = trustTempDir.resolve("trusted/certs");
+        Files.createDirectories(trustedCertsDir);
+        Files.createDirectories(trustTempDir.resolve("trusted/crl"));
+        Files.createDirectories(trustTempDir.resolve("issuers/certs"));
+        Files.createDirectories(trustTempDir.resolve("rejected/certs"));
+        for (int i = 0; i < trustFiles.size(); i++) {
+            byte[] certBytes = Files.readAllBytes(Paths.get(trustFiles.get(i)));
+            Files.write(trustedCertsDir.resolve("trust-" + i + ".crt"), certBytes);
+        }
+        var tlm = FileBasedTrustListManager.createAndInitialize(trustTempDir);
+        var quarantine = FileBasedCertificateQuarantine.create(trustTempDir.resolve("rejected/certs"));
+        return new DefaultServerCertificateValidator(tlm, quarantine);
+    }
+
+    /**
+     * The security of a discovery channel from the global flags (--security-policy,
+     * --security-mode, --certificate, --private-key, --trust-list); null for None.
+     */
+    static DiscoveryOps.Security discoverySecurity(String[] args) throws Exception {
+        String policyName = findArg(args, "--security-policy");
+        String modeName   = findArg(args, "--security-mode");
+        MessageSecurityMode mode = toMiloSecurityMode(modeName == null ? "None" : modeName);
+        if (mode == MessageSecurityMode.None) return null;
+        String certFile = findArg(args, "--certificate");
+        String keyFile  = findArg(args, "--private-key");
+        if (certFile == null || keyFile == null) {
+            throw new InputException("--certificate and --private-key are required with --security-mode " + modeName);
+        }
+        X509Certificate cert;
+        PrivateKey key;
+        try {
+            cert = loadCertificate(certFile);
+            key  = loadPrivateKey(keyFile);
+        } catch (Exception e) {
+            throw new TransportException("failed to load client certificate/key: " + e.getMessage());
+        }
+        List<String> trustFiles = findAllArgs(args, "--trust-list");
+        return new DiscoveryOps.Security(toMiloSecurityPolicy(policyName == null ? "None" : policyName), mode,
+                cert, new KeyPair(cert.getPublicKey(), key), trustFiles.isEmpty() ? null : trustListValidator(trustFiles));
+    }
 
     private static X509Certificate loadCertificate(String path) throws Exception {
         byte[] raw = Files.readAllBytes(Paths.get(path));

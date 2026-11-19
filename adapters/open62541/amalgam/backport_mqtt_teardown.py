@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Backport: no double free when an MQTT broker connection drops while one
-of its topic connections is already shutting down (open62541 v1.5.9).
+of its topic connections is already shutting down (open62541 v1.5.10).
 
 MQTT_shutdownConnection (arch/common/eventloop_mqtt.c) marks a topic
 connection CLOSING and schedules removeTopicConnectionDelayed for the next
@@ -16,7 +16,7 @@ removal"); this script applies the topic-connection part of that fix:
   * removeTopicConnectionDelayed frees a detached topic connection, and runs
     the normal removal otherwise.
 
-Only the exact v1.5.9 code is patched; other versions are left as they are
+Only the exact v1.5.10 code is patched; other versions are left as they are
 (with a warning).
 
 usage: backport_mqtt_teardown.py <open62541 source root>
@@ -64,7 +64,7 @@ replacements = [
 
 for old, new in replacements:
     if text.count(old) != 1:
-        print("backport_mqtt_teardown: %s does not match v1.5.9, not patched"
+        print("backport_mqtt_teardown: %s does not match v1.5.10, not patched"
               % path, file=sys.stderr)
         sys.exit(0)
 

@@ -555,7 +555,8 @@ fault (typically `BadServiceUnsupported`) in `serviceResult`.
 | `--max-records <n>` | `MaxRecordsToReturn` (0 = no limit) | 0 |
 | `--capability <cap>` | `ServerCapabilityFilter` entry (repeatable) | none |
 
-Runs on a SecureChannel without a Session. A server without an mDNS-enabled LDS
+Runs on a SecureChannel without a Session, secured as for `register-server`
+below. A server without an mDNS-enabled LDS
 answers with a service fault (`BadNotImplemented` / `BadServiceUnsupported`) →
 exit 4.
 
@@ -577,10 +578,19 @@ exit 4.
 | `--mdns-name <name>` | `MdnsDiscoveryConfiguration.MdnsServerName` (RegisterServer2) | the server name |
 | `--capability <cap>` | `MdnsDiscoveryConfiguration.ServerCapabilities` entry (repeatable) | none |
 
-Runs on a SecureChannel without a Session (the open62541 adapter honours the
-global security flags for the channel; the Milo adapter always uses
-None/None). Unregister with the same `--server-uri` and `--mdns-name` that were
+Runs on a SecureChannel without a Session. The open62541, Milo and asyncua
+adapters (0.20.0) secure the channel with the global security flags
+(`--security-policy`, `--security-mode`, `--certificate`, `--private-key`,
+`--trust-list`); async-opcua, UA-.NETStandard and node-opcua always use
+None/None. Unregister with the same `--server-uri` and `--mdns-name` that were
 registered.
+
+An LDS may authenticate registrations: open62541 since v1.5.10 serves
+RegisterServer and RegisterServer2 only on a channel with a client certificate
+(`BadSecurityModeInsufficient` otherwise) whose application URI is
+`--server-uri` (`BadCertificateUriInvalid` otherwise; advisory
+open62541-SA-2026-0051). Register there with Sign or SignAndEncrypt and the
+URI of `--certificate` as `--server-uri`.
 
 ### `codec` flags
 
@@ -1444,7 +1454,7 @@ DataValue documents (`null` when the stack cannot produce one), `binary` /
 
 **Stack limits (reported, not worked around):**
 
-| | open62541 v1.5.9 | Eclipse Milo 1.1.8 | UA-.NETStandard 2.0.1 (v0.9.0) |
+| | open62541 v1.5.10 | Eclipse Milo 1.1.8 | UA-.NETStandard 2.0.1 (v0.9.0) |
 |---|---|---|---|
 | JSON flavour | 1.05, one mode (`compact`); `useReversible` has no effect | 1.05, `compact` and `verbose` (`verbose` adds `Status.Symbol`) | 1.05, `compact` and `verbose` |
 | JSON DataValue | Variant members flattened: `{"UaType":6,"Value":7,…}` | Variant nested: `{"Value":{"UaType":6,"Value":7},…}`; does not decode the flattened form | Variant members flattened, like open62541 |
@@ -1636,7 +1646,7 @@ supplied. The server must exit with code 6.
 | `--lds-cleanup-timeout <s>` | Seconds after which a registration that was not renewed is dropped (> 10) | 3600 |
 | `--mdns-name <name>` | open62541: announce the server via mDNS under `<name>` (also the `MdnsServerName` sent in RegisterServer2). Milo: refused (exit 2) | off (`--lds`: `opcua-interop-lds`) |
 | `--mdns-capability <cap>` | mDNS / RegisterServer2 server capability (repeatable) | `NA` (`--lds`: `LDS`) |
-| `--register-with <lds-url>` | Register with an LDS: RegisterServer2, falling back to RegisterServer; repeated periodically; unregistered (`IsOnline=false`) on SIGTERM | — |
+| `--register-with <lds-url>` | Register with an LDS: RegisterServer2, falling back to RegisterServer; repeated periodically; unregistered (`IsOnline=false`) on SIGTERM. open62541, Milo and asyncua (0.20.0): with `--certificate` / `--private-key` over Basic256Sha256 / SignAndEncrypt with the server's application certificate (the LDS certificate checked against the `--pki-dir` trust list), without them None/None; the LDS needs that endpoint. async-opcua, UA-.NETStandard, node-opcua: None/None | — |
 | `--register-interval-ms <n>` | Re-registration period | 30000 |
 | `--https-port <n>` | UA-.NETStandard: also listen for `opc.https://<advertised-host>:<n><endpoint-path>` (Part 6 §7.4, https-uabinary, Kestrel). Needs `--certificate` / `--private-key`: the application certificate serves TLS. Without mutual TLS the stack offers SecurityPolicy None only and requires a UserName token (Anonymous is filtered out of HTTPS endpoints) | 0 (off) |
 | `--wss-port <n>` | UA-.NETStandard: also listen for `opc.wss://<advertised-host>:<n><endpoint-path>` (Part 6 §7.5, wss-uasc-uabinary, sub-protocol `opcua+uacp`). Needs `--certificate` / `--private-key`; SecurityPolicy None only (TLS protects the channel), Anonymous and UserName | 0 (off) |
@@ -1731,13 +1741,13 @@ The open62541 image is built with `UA_ENABLE_PUBSUB`,
 `UA_ENABLE_PUBSUB_SKS`, `UA_ENABLE_PUBSUB_FILE_CONFIG`, `UA_ENABLE_MQTT` and
 the JSON encoding, still as the single-file amalgamation. Three adapter-side
 additions make that work and are the only places where the adapter goes beyond
-stock v1.5.9 (all in `adapters/open62541/`):
+stock v1.5.10 (all in `adapters/open62541/`):
 
 | What | Why |
 |------|-----|
 | `amalgam/inline_mqtt.py` | `tools/amalgamate.py` drops the two quoted `#include` lines through which `arch/common/eventloop_mqtt.c` pulls in the MQTT-C submodule, so the amalgamation does not compile with `UA_ENABLE_MQTT`. The script inlines `deps/mqtt-c/include/mqtt.h` and `src/mqtt.c` before the amalgamation is generated. No behaviour change |
-| `amalgam/backport_json_reader.py` | In v1.5.9 `UA_DataSetReader_checkIdentifier` is an unimplemented TODO for JSON and rejects **every** JSON NetworkMessage, so no open62541 subscriber could receive `pubsub-mqtt-json`. The script applies the matching logic of upstream master: PublisherId compared by value across the numeric widths (JSON carries numeric PublisherIds as strings), DataSetWriterId matched against the decoded JSON DataSetMessages (0 = any) |
-| `src/pubsub_security.c` | v1.5.9 implements the PubSub message security policies `PubSub-Aes128-CTR` / `PubSub-Aes256-CTR` for mbedTLS only; the adapter is built on OpenSSL (ECC SecureChannel policies). The file is an OpenSSL port of the mbedTLS plugins (HMAC-SHA256 signature, AES-CTR with KeyNonce‖MessageNonce‖counter starting at 1, P_SHA256 key derivation) installed as `pubSubConfig.securityPolicies` |
+| `amalgam/backport_json_reader.py` | In v1.5.10 `UA_DataSetReader_checkIdentifier` is an unimplemented TODO for JSON and rejects **every** JSON NetworkMessage, so no open62541 subscriber could receive `pubsub-mqtt-json`. The script applies the matching logic of upstream master: PublisherId compared by value across the numeric widths (JSON carries numeric PublisherIds as strings), DataSetWriterId matched against the decoded JSON DataSetMessages (0 = any) |
+| `src/pubsub_security.c` | v1.5.10 implements the PubSub message security policies `PubSub-Aes128-CTR` / `PubSub-Aes256-CTR` for mbedTLS only; the adapter is built on OpenSSL (ECC SecureChannel policies). The file is an OpenSSL port of the mbedTLS plugins (HMAC-SHA256 signature, AES-CTR with KeyNonce‖MessageNonce‖counter starting at 1, P_SHA256 key derivation) installed as `pubSubConfig.securityPolicies` |
 
 ### 14.1 `server --pubsub-config <file>`
 
@@ -1802,7 +1812,7 @@ DataEncoding ("compact"/non-reversible field names as in the NodeSet:
 - **ExtensionObjects** (`Address`, `TransportSettings`, `MessageSettings`,
   `DataSetSource`, `SubscribedDataSet`): `{"UaTypeId": "<DataType NodeId>",
   "UaBody": { …fields… }}`. The 1.05 in-situ form `{"UaTypeId": "…", …fields…}`
-  is accepted too (the adapter rewrites it to `UaBody`, open62541 v1.5.9 only
+  is accepted too (the adapter rewrites it to `UaBody`, open62541 v1.5.10 only
   decodes that), and a `UaTypeId` naming the DefaultBinary / DefaultXml
   encoding NodeId is mapped to the DataType NodeId.
 - **NodeIds** are strings; `nsu=<uri>;…` is resolved against the server's
@@ -1840,7 +1850,7 @@ The adapter builds the configuration with the open62541 API
 `_addWriterGroup`, `_addDataSetWriter`, `_addReaderGroup`,
 `_addDataSetReader`, `_setDataSetReaderTargetVariables`, then the
 `_enable…` calls) rather than `UA_Server_loadPubSubConfigFromByteString`,
-whose v1.5.9 implementation drops the WriterGroup / ReaderGroup
+whose v1.5.10 implementation drops the WriterGroup / ReaderGroup
 `SecurityGroupId`, the ReaderGroup and DataSetReader `TransportSettings` (the
 MQTT QueueName of a subscriber) and ignores errors of nested components.
 "Passed" = handed to open62541 unchanged; what open62541 then does with it is
@@ -1850,13 +1860,13 @@ noted.
 |-----------|----------|---------|
 | PubSubConfigurationDataType | `PublishedDataSets`, `Connections`, `Enabled` (false: everything is created but nothing enabled) | — |
 | PublishedDataSetDataType | `Name`, `DataSetSource` (**PublishedDataItemsDataType only**; PublishedEvents → error `BadNotImplemented`), `DataSetMetaData.Fields[i]`: `Name` (field name = JSON key), `FieldFlags` bit 0 (PromotedField), `MaxStringLength`, `Description`, `DataSetFieldId`; `DataSetMetaData.ConfigurationVersion` → field configuration version | `DataSetFolder`, `ExtensionFields`, the other `DataSetMetaData` members (types are taken from the published Variables; open62541 generates the DataSetMetaData and its ConfigurationVersion itself) |
-| PublishedVariableDataType | `PublishedVariable`, `AttributeId` (0 → Value), `IndexRange` (applied when sampling); `SamplingIntervalHint`, `DeadbandType`, `DeadbandValue`, `SubstituteValue`, `MetaDataProperties` passed (not evaluated by v1.5.9: every publish reads the current value) | — |
-| PubSubConnectionDataType | `Name`, `Enabled`, `PublisherId`, `TransportProfileUri`, `Address` (NetworkAddressUrlDataType: `Url`, `NetworkInterface`), `ConnectionProperties`, `TransportSettings` (passed), `WriterGroups`, `ReaderGroups`. `mqtt://` URLs are rewritten to `opc.mqtt://` (the only MQTT scheme v1.5.9 parses); `mqtts://` → error | — |
-| WriterGroupDataType | `Name`, `Enabled`, `WriterGroupId`, `PublishingInterval`, `SecurityMode`, `SecurityGroupId`, `GroupProperties`, `TransportSettings` (DatagramWriterGroupTransport2DataType `Address` for UDP unicast, BrokerWriterGroupTransportDataType `QueueName` for MQTT), `MessageSettings` (UADP: `NetworkMessageContentMask`, `GroupVersion`; JSON: the type selects the JSON encoding), `DataSetWriters`. `KeepAliveTime`, `Priority` passed (unused by v1.5.9). Up to 255 DataSetMessages per NetworkMessage | `SecurityKeyServices`, `MaxNetworkMessageSize`, `LocaleIds`, `HeaderLayoutUri`; JSON `NetworkMessageContentMask` (v1.5.9 always writes the full NetworkMessage header and the `Messages` array) |
+| PublishedVariableDataType | `PublishedVariable`, `AttributeId` (0 → Value), `IndexRange` (applied when sampling); `SamplingIntervalHint`, `DeadbandType`, `DeadbandValue`, `SubstituteValue`, `MetaDataProperties` passed (not evaluated by v1.5.10: every publish reads the current value) | — |
+| PubSubConnectionDataType | `Name`, `Enabled`, `PublisherId`, `TransportProfileUri`, `Address` (NetworkAddressUrlDataType: `Url`, `NetworkInterface`), `ConnectionProperties`, `TransportSettings` (passed), `WriterGroups`, `ReaderGroups`. `mqtt://` URLs are rewritten to `opc.mqtt://` (the only MQTT scheme v1.5.10 parses); `mqtts://` → error | — |
+| WriterGroupDataType | `Name`, `Enabled`, `WriterGroupId`, `PublishingInterval`, `SecurityMode`, `SecurityGroupId`, `GroupProperties`, `TransportSettings` (DatagramWriterGroupTransport2DataType `Address` for UDP unicast, BrokerWriterGroupTransportDataType `QueueName` for MQTT), `MessageSettings` (UADP: `NetworkMessageContentMask`, `GroupVersion`; JSON: the type selects the JSON encoding), `DataSetWriters`. `KeepAliveTime`, `Priority` passed (unused by v1.5.10). Up to 255 DataSetMessages per NetworkMessage | `SecurityKeyServices`, `MaxNetworkMessageSize`, `LocaleIds`, `HeaderLayoutUri`; JSON `NetworkMessageContentMask` (v1.5.10 always writes the full NetworkMessage header and the `Messages` array) |
 | DataSetWriterDataType | `Name`, `Enabled`, `DataSetWriterId`, `DataSetFieldContentMask` (0 = Variant, `RawData` 0x20, else DataValue with the selected StatusCode / timestamps / picoseconds), `KeyFrameCount`, `DataSetName` (→ PublishedDataSet; empty = heartbeat writer), `DataSetWriterProperties`, `MessageSettings` (UADP / JSON `DataSetMessageContentMask`), `TransportSettings` (passed) | UADP `ConfiguredSize` / `NetworkMessageNumber` / `DataSetOffset` (fixed layouts: open62541 warns and resets them) |
 | ReaderGroupDataType | `Name`, `Enabled`, `SecurityMode`, `SecurityGroupId`, `GroupProperties`, `TransportSettings` if a BrokerDataSetReaderTransportDataType, `DataSetReaders`. The encoding (JSON / UADP) follows the connection's TransportProfileUri (`pubsub-mqtt-json`) or a JsonDataSetReaderMessageDataType on the first reader. MQTT: the group subscribes one topic — its own BrokerDataSetReaderTransportDataType, else the readers' (all must name the same `QueueName`) | `SecurityKeyServices`, `MaxNetworkMessageSize`, `MessageSettings` |
-| DataSetReaderDataType | `Name`, `Enabled`, `PublisherId` (an empty Variant leaves the reader at Byte 0: v1.5.9 has no "any publisher" — set it), `WriterGroupId`, `DataSetWriterId`, `DataSetMetaData` (field count, names for JSON, types for RawData; `MaxStringLength` is required for String/ByteString with RawData), `DataSetFieldContentMask`, `MessageReceiveTimeout` (ms; 0 = none, §14.10), `MessageSettings`, `TransportSettings` (passed; MQTT QueueName see ReaderGroup), `SubscribedDataSet` = TargetVariablesDataType | `KeyFrameCount`, `HeaderLayoutUri`, `SecurityMode` / `SecurityGroupId` / `SecurityKeyServices` (security is per ReaderGroup), `DataSetReaderProperties`; `SubscribedDataSetMirrorDataType` → error `BadNotImplemented` |
-| FieldTargetDataType | `TargetNodeId`, `AttributeId`, `ReceiverIndexRange` (v1.5.9 uses it as the IndexRange of the write), `WriteIndexRange` (passed). TargetVariables[i] receives DataSetMetaData.Fields[i] (position, not `DataSetFieldId`) | `DataSetFieldId`, `OverrideValueHandling`, `OverrideValue` |
+| DataSetReaderDataType | `Name`, `Enabled`, `PublisherId` (an empty Variant leaves the reader at Byte 0: v1.5.10 has no "any publisher" — set it), `WriterGroupId`, `DataSetWriterId`, `DataSetMetaData` (field count, names for JSON, types for RawData; `MaxStringLength` is required for String/ByteString with RawData), `DataSetFieldContentMask`, `MessageReceiveTimeout` (ms; 0 = none, §14.10), `MessageSettings`, `TransportSettings` (passed; MQTT QueueName see ReaderGroup), `SubscribedDataSet` = TargetVariablesDataType | `KeyFrameCount`, `HeaderLayoutUri`, `SecurityMode` / `SecurityGroupId` / `SecurityKeyServices` (security is per ReaderGroup), `DataSetReaderProperties`; `SubscribedDataSetMirrorDataType` → error `BadNotImplemented` |
+| FieldTargetDataType | `TargetNodeId`, `AttributeId`, `ReceiverIndexRange` (v1.5.10 uses it as the IndexRange of the write), `WriteIndexRange` (passed). TargetVariables[i] receives DataSetMetaData.Fields[i] (position, not `DataSetFieldId`) | `DataSetFieldId`, `OverrideValueHandling`, `OverrideValue` |
 
 Reader matching (UADP): a NetworkMessage is accepted when its PublisherId (if
 present) equals the reader's (same integer width!), its WriterGroupId (if the
@@ -1872,7 +1882,7 @@ PublisherId is compared by value, `DataSetWriterId` 0 accepts any writer.
 | MQTT UADP | `…/pubsub-mqtt-uadp` | `mqtt://<broker>:<port>` (or `opc.mqtt://`) | WriterGroup BrokerWriterGroupTransportDataType `QueueName` = topic; DataSetReader (or ReaderGroup) BrokerDataSetReaderTransportDataType `QueueName` |
 | MQTT JSON | `…/pubsub-mqtt-json` | same | same; JSON message settings |
 
-**How open62541 v1.5.9 opens UDP sockets** (`ua_pubsub_connection.c`):
+**How open62541 v1.5.10 opens UDP sockets** (`ua_pubsub_connection.c`):
 
 - Connection `Url` host `localhost` or empty → *receive-all*: a socket bound to
   `<port>` on all interfaces (IPv4 and IPv6), and **no** connection-level send
@@ -1904,7 +1914,7 @@ host sender → `127.0.0.1:4841` → container `opc.udp://0.0.0.0:4841` with
 container unicast and multicast by `scripts/pubsub-smoke.sh` (`make smoke-pubsub`;
 `make smoke-pubsub-dotnet` runs the same scenarios on the dotnet adapter, §14.13).
 
-**MQTT** (v1.5.9 MQTT-C client): MQTT 3.1.1, clean session, empty client id
+**MQTT** (v1.5.10 MQTT-C client): MQTT 3.1.1, clean session, empty client id
 (the broker assigns one), keep-alive 400 s, QoS 0 publish and subscribe, no
 retain, no TLS, and the PubSubConnection `ConnectionProperties` /
 `authenticationProfileUri` are not used for MQTT credentials (anonymous only).
@@ -1943,7 +1953,7 @@ connection, writers / readers under their group; each has a `Status` object
 with `State` (Int32 PubSubState: 0 Disabled, 1 Paused, 2 Operational, 3 Error,
 4 PreOperational) and the `Enable` (i=14645) / `Disable` (i=14646) methods).
 `SupportedTransportProfiles` (i=17481) lists the three profiles above.
-Method argument conventions of open62541 v1.5.9 (call on the object noted;
+Method argument conventions of open62541 v1.5.10 (call on the object noted;
 ExtensionObject arguments are binary-encoded with the DefaultBinary encoding
 NodeId, e.g. PubSubConnectionDataType i=15694):
 
@@ -1964,9 +1974,9 @@ NodeId, e.g. PubSubConnectionDataType i=15694):
 | AddVariables / RemoveVariables (i=14555 / i=14558) | PublishedDataItems object | — | — | Bound to a no-op that returns Good (not implemented) |
 | ReserveIds (i=25474) | PublishSubscribe.PubSubConfiguration (i=25451) | String TransportProfileUri, UInt16 #WriterGroupIds, UInt16 #DataSetWriterIds | Variant DefaultPublisherId (ApplicationUri String for MQTT profiles, else UInt64), UInt16[], UInt16[] | |
 | Enable / Disable (i=14645 / i=14646) | a component's `Status` object (or PublishSubscribe.Status i=17405) | — | — | Enable only from Disabled, Disable only when not Disabled (`BadInvalidState`). A reader in Error must be disabled and enabled again |
-| GetSecurityKeys (i=15215) | i=14443 | String SecurityGroupId, UInt32 StartingTokenId (0 = current), UInt32 RequestedKeyCount | String SecurityPolicyUri, UInt32 FirstTokenId, ByteString[] Keys, Duration TimeToNextKey, Duration KeyLifetime | **SignAndEncrypt session required** (`BadSecurityModeInsufficient` otherwise); unknown group `BadNotFound`; returns current + RequestedKeyCount future keys (capped). v1.5.9 bug: `TimeToNextKey` is a large negative number (it subtracts a monotonic clock from a wall-clock base time) — use KeyLifetime |
+| GetSecurityKeys (i=15215) | i=14443 | String SecurityGroupId, UInt32 StartingTokenId (0 = current), UInt32 RequestedKeyCount | String SecurityPolicyUri, UInt32 FirstTokenId, ByteString[] Keys, Duration TimeToNextKey, Duration KeyLifetime | **SignAndEncrypt session required** (`BadSecurityModeInsufficient` otherwise); unknown group `BadNotFound`; returns current + RequestedKeyCount future keys (capped). v1.5.10 bug: `TimeToNextKey` is a large negative number (it subtracts a monotonic clock from a wall-clock base time) — use KeyLifetime |
 | SetSecurityKeys (i=17364) | i=14443 | String SecurityGroupId, String SecurityPolicyUri, UInt32 CurrentTokenId, ByteString CurrentKey, ByteString[] FutureKeys, Duration TimeToNextKey, Duration KeyLifetime | — | SignAndEncrypt required; the group must exist locally (a WriterGroup / ReaderGroup with that SecurityGroupId) |
-| AddSecurityGroup (i=15444 on PublishSubscribe.SecurityGroups i=15443; i=15461 on SecurityGroupFolderType) | SecurityGroups folder | String SecurityGroupName, Duration KeyLifetime (Double accepted), String SecurityPolicyUri, UInt32 MaxFutureKeyCount, UInt32 MaxPastKeyCount | String SecurityGroupId (= the name), NodeId SecurityGroupNodeId | **Adapter binding**: v1.5.9 has no callback for this method; the adapter binds it to `UA_Server_addSecurityGroup`. Not restricted to encrypted sessions |
+| AddSecurityGroup (i=15444 on PublishSubscribe.SecurityGroups i=15443; i=15461 on SecurityGroupFolderType) | SecurityGroups folder | String SecurityGroupName, Duration KeyLifetime (Double accepted), String SecurityPolicyUri, UInt32 MaxFutureKeyCount, UInt32 MaxPastKeyCount | String SecurityGroupId (= the name), NodeId SecurityGroupNodeId | **Adapter binding**: v1.5.10 has no callback for this method; the adapter binds it to `UA_Server_addSecurityGroup`. Not restricted to encrypted sessions |
 | RemoveSecurityGroup (i=15447; i=15464 on SecurityGroupFolderType) | SecurityGroups folder | NodeId SecurityGroupNodeId | — | Adapter binding to `UA_Server_removeSecurityGroup` |
 | LoadPubSubConfigurationFile ("PubSub configuration", ns=0 numeric id assigned at startup) / DeletePubSubConfiguration | i=14443 | ByteString (UABinaryFileDataType holding a PubSubConfigurationDataType) / — | — | open62541 extensions from `UA_ENABLE_PUBSUB_FILE_CONFIG` |
 
@@ -2216,7 +2226,7 @@ JSON example — description
 encodes to
 `{"MessageId":"m-1","MessageType":"ua-data","PublisherId":"pub-a","Messages":[{"DataSetWriterId":7,"SequenceNumber":9,"MetaDataVersion":{"MajorVersion":1,"MinorVersion":2},"Timestamp":"2026-10-23T10:00:00Z","Status":{},"MessageType":"ua-keyframe","Payload":{"Temp":{"UaType":11,"Value":21.5,"SourceTimestamp":"2026-10-23T09:59:59.5Z"}}}]}`.
 
-### 14.10 open62541 v1.5.9 behaviour and limits
+### 14.10 open62541 v1.5.10 behaviour and limits
 
 | Feature | Status |
 |---------|--------|
@@ -2224,7 +2234,7 @@ encodes to
 | JSON over MQTT | ✓ publish; subscribe with the backport above. JSON over UDP is not a Part 14 profile (not offered) |
 | Field encodings | Variant, DataValue, RawData (RawData subscribing needs `MaxStringLength` for String / ByteString fields) |
 | KeyFrames | ✓ |
-| DeltaFrames | UADP encode / decode ✓ (not RawData). Published only with `"deltaFrames": true`; v1.5.9 then sends KeyFrameCount DeltaFrames after each KeyFrame (one more than Part 14 — even KeyFrameCount 1 alternates Key / Delta). **The v1.5.9 DataSetReader discards DeltaFrames** ("Only keyframes are supported"), hence off by default |
+| DeltaFrames | UADP encode / decode ✓ (not RawData). Published only with `"deltaFrames": true`; v1.5.10 then sends KeyFrameCount DeltaFrames after each KeyFrame (one more than Part 14 — even KeyFrameCount 1 alternates Key / Delta). **The v1.5.10 DataSetReader discards DeltaFrames** ("Only keyframes are supported"), hence off by default |
 | KeepAlive DataSetMessages | codec ✓; a writer with an empty `DataSetName` sends heartbeat KeyFrames with 0 fields |
 | Event DataSetMessages, PublishedEvents | ✗ (`BadNotImplemented`) |
 | Chunked NetworkMessages | ✗ (flag only) |
@@ -2238,7 +2248,7 @@ encodes to
 | Security | UADP only, PubSub-Aes128-CTR / PubSub-Aes256-CTR (OpenSSL port) |
 | SKS | server (`GetSecurityKeys`, `SetSecurityKeys`), pull client, push target; `AddSecurityGroup` / `RemoveSecurityGroup` via the adapter binding; `TimeToNextKey` from GetSecurityKeys is wrong (negative) |
 | MQTT | QoS 0, anonymous, no TLS, 1024-byte buffers |
-| `UA_NetworkMessage_encodeJson` | needs encoding metadata for every DataSetWriterId (v1.5.9 dereferences NULL otherwise); the codec always provides it |
+| `UA_NetworkMessage_encodeJson` | needs encoding metadata for every DataSetWriterId (v1.5.10 dereferences NULL otherwise); the codec always provides it |
 
 ### 14.11 `print-capabilities` → `pubsub`
 
@@ -2485,10 +2495,10 @@ a test adds such a user to a copy of the baseline fixture, e.g.
 { "username": "sec-admin", "password": "sec-admin-password", "roles": ["AuthenticatedUser", "SecurityAdmin"] }
 ```
 
-| | open62541 1.5.9 | UA-.NETStandard 2.0.1 | node-opcua 2.187.12 |
+| | open62541 1.5.10 | UA-.NETStandard 2.0.1 | node-opcua 2.187.12 |
 |---|---|---|---|
 | Implementation | `UA_ENABLE_GDS_PUSHMANAGEMENT` (in-memory certificate group of `UA_ServerConfig_setDefaultWithSecurityPolicies`) | the stack's ConfigurationNodeManager | `installPushCertificateManagementOnServer` (node-opcua-server-configuration), `closeChannelsOnApplyChanges: false` |
-| Access | any session on a SignAndEncrypt channel (no roles in v1.5.9) | SecurityAdmin (fixture roles), SignAndEncrypt; others `BadUserAccessDenied` | as UA-.NETStandard |
+| Access | any session on a SignAndEncrypt channel (no roles in v1.5.10) | SecurityAdmin (fixture roles), SignAndEncrypt; others `BadUserAccessDenied` | as UA-.NETStandard |
 | CertificateTypes | RsaMin, RsaSha256 | RsaMin (empty slot), RsaSha256 | RsaSha256 |
 | SupportedPrivateKeyFormats | PEM, DER | PFX, PEM | PEM |
 | ApplyChanges without a pending change | `BadNothingToDo` | Good | `BadNothingToDo` |
@@ -2518,7 +2528,7 @@ Since adapter 0.15.0 `client push`, with every flag of §1 "push flags" and the
 open62541 and UA-.NETStandard (`dotnet`) (clientOperations `push`,
 clientFeatures `push-groups`, `push-certificates`,
 `push-transaction-diagnostics`). None of opcua-asyncio 2.1.0, async-opcua
-0.19, Milo 1.1.8 or open62541 v1.5.9 has a push client, and UA-.NETStandard's
+0.19, Milo 1.1.8 or open62541 v1.5.10 has a push client, and UA-.NETStandard's
 (ServerPushConfigurationClient) is not used, so these adapters send plain Call requests on the standard NodeIds of
 ServerConfiguration and of the group's TrustList (OpenWithMasks / Read /
 Close), on one session, and decode the TrustListDataType and the
@@ -2844,7 +2854,7 @@ exit 3, bad input exit 2 (§5).
   |---|---|---|---|
   | UA-.NETStandard (dotnet, dotnet-gds), Eclipse Milo 1.1.8, go-opcua | connects | connects | parse the leaf and keep the rest as intermediates |
   | asyncua (opcua-asyncio 2.1.0) | connects since adapter 0.16.0 | connects | the stack takes chains (`asyncua/client/client.py:56` `_first_cert_from_chain`, used at `:292` and `:790`; `crypto/uacrypto.py:60` `x509_from_der`), but adapter 0.15.0 passed the endpoint's ServerCertificate to `Client.set_security(server_certificate=…)`, which loads it as one certificate (`crypto/uacrypto.py:57`, cryptography `ParseError { kind: ExtraData }`). Adapter 0.16.0 passes the leaf. |
-  | open62541 v1.5.9 | `BadCertificateInvalid` after CreateSession | connects | the channel keeps the leaf of the endpoint's certificate (`src/client/ua_client_connect.c:1899-1902`, `getLeafCertificate`), then CreateSession compares the response's ServerCertificate with it byte for byte (`ua_client_connect.c:1694`): chain ≠ leaf. A stack limitation; no client option skips the comparison. |
+  | open62541 v1.5.10 | `BadCertificateInvalid` after CreateSession | connects | the channel keeps the leaf of the endpoint's certificate (`src/client/ua_client_connect.c:1899-1902`, `getLeafCertificate`), then CreateSession compares the response's ServerCertificate with it byte for byte (`ua_client_connect.c:1694`): chain ≠ leaf. A stack limitation; no client option skips the comparison. |
   | async-opcua 0.19.0 | `BadCertificateInvalid` (X509Error) | `BadCertificateInvalid` (X509Error) | `X509::from_der` parses exactly one certificate and rejects trailing data (`async-opcua-crypto/src/x509.rs:423-427`); it parses the endpoint's ServerCertificate (`async-opcua-client/src/transport/channel.rs:342`), the OpenSecureChannel SenderCertificate (`async-opcua-core/src/comms/secure_channel.rs:794`, 1848 bytes also with `--no-certificate-chain`) and the CreateSession ServerCertificate, which must also equal the endpoint's byte for byte (`async-opcua-client/src/session/services/session.rs:208-213`). A stack limitation with no hook; it fails against every UA-.NETStandard 2.0.1 server whose certificate has an issuer in its stores (adapters/async-opcua/README.md, deviation 10). |
 
   The default stays the chain. `scripts/smoke.sh dotnet-gds` runs `gds-pull`
@@ -2973,7 +2983,7 @@ at `NumValuesPerNode` with a continuation point. The adapter declares
 
 ### 17.5 Client notes
 
-- open62541 1.5.9 uses the raw HistoryRead / HistoryUpdate services:
+- open62541 1.5.10 uses the raw HistoryRead / HistoryUpdate services:
   `UA_Client_HistoryRead_events` stops on `GoodNoData`. open62541 has no event
   store, so its server has no fixture.
 - Milo 1.1.8 prints status names with an underscore (`Good_EntryInserted`), as

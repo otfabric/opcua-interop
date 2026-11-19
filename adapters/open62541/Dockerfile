@@ -12,12 +12,12 @@ ARG BASE_REGISTRY=docker.io/library
 ARG DEBIAN_DIGEST=sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 FROM ${BASE_REGISTRY}/debian:bookworm-slim@${DEBIAN_DIGEST} AS open62541-build
 
-ARG OPEN62541_COMMIT=v1.5.9
+ARG OPEN62541_COMMIT=v1.5.10
 # The commit of that tag (versions.yaml tag_commit; scripts/check-versions.sh
 # compares the two): the build stops when the tag names another commit. An
 # upstream candidate (scripts/candidate.sh) is a tag under evaluation, not a pin,
 # and passes it empty.
-ARG OPEN62541_SHA=05c2b389b65cc35884eb40d800301af1f3d130cf
+ARG OPEN62541_SHA=93c3bdfc9ea4718b503c6cbf57876237addd0f2c
 ARG OPEN62541_REPO=https://github.com/open62541/open62541
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -38,14 +38,14 @@ RUN git clone --depth 1 --branch "${OPEN62541_COMMIT}" "${OPEN62541_REPO}" open6
     && git submodule update --init --depth 1
 
 # Source preparation before the amalgamation is generated (both scripts only
-# touch the exact v1.5.9 code and print a warning for anything else):
+# touch the exact v1.5.10 code and print a warning for anything else):
 #  * inline_mqtt.py — MQTT (UA_ENABLE_MQTT) pulls the MQTT-C submodule into
 #    arch/common/eventloop_mqtt.c with two quoted #include lines, which
 #    tools/amalgamate.py drops; inline them so the amalgamation is complete.
-#  * backport_json_reader.py — v1.5.9 DataSetReaders reject every JSON
+#  * backport_json_reader.py — v1.5.10 DataSetReaders reject every JSON
 #    NetworkMessage (an unimplemented TODO in UA_DataSetReader_checkIdentifier);
 #    apply the PublisherId / DataSetWriterId matching of upstream master.
-#  * backport_mqtt_teardown.py — v1.5.9 double-frees an MQTT topic connection
+#  * backport_mqtt_teardown.py — v1.5.10 double-frees an MQTT topic connection
 #    whose broker connection drops while it is already shutting down (a
 #    refused or lost broker while a WriterGroup goes to Error); apply the
 #    delayed-removal fix of upstream master.
@@ -53,21 +53,17 @@ RUN git clone --depth 1 --branch "${OPEN62541_COMMIT}" "${OPEN62541_REPO}" open6
 #    functions of src/server/ua_server_ns0_gds.c clash with static functions
 #    of the same name in other files of the single-file amalgamation; rename
 #    them.
-#  * fix_condition_refresh_args.py — with PubSub's generated IntegerId type
-#    the v1.5.9 A&C ConditionRefresh(2) callbacks reject every SubscriptionId
-#    (Bad_InvalidArgument); accept IntegerId (an alias of UInt32) as well.
 COPY adapters/open62541/amalgam/inline_mqtt.py adapters/open62541/amalgam/backport_json_reader.py \
-     adapters/open62541/amalgam/backport_mqtt_teardown.py adapters/open62541/amalgam/fix_condition_refresh_args.py \
-     adapters/open62541/amalgam/fix_gds_amalgamation.py /src/prepare/
+     adapters/open62541/amalgam/backport_mqtt_teardown.py adapters/open62541/amalgam/fix_gds_amalgamation.py \
+     /src/prepare/
 RUN python3 /src/prepare/inline_mqtt.py /src/open62541 \
     && python3 /src/prepare/backport_json_reader.py /src/open62541 \
     && python3 /src/prepare/backport_mqtt_teardown.py /src/open62541 \
-    && python3 /src/prepare/fix_condition_refresh_args.py /src/open62541 \
     && python3 /src/prepare/fix_gds_amalgamation.py /src/open62541
 
 # Only the amalgamation target is built: the adapter compiles open62541.c itself,
 # and with UA_ENABLE_AMALGAMATION + mDNS (mdnsd) the non-amalgamated object
-# library of v1.5.9 does not compile (ua_discovery_mdns.c skips the xht.h /
+# library of v1.5.10 does not compile (ua_discovery_mdns.c skips the xht.h /
 # sdtxt.h includes under UA_ENABLE_AMALGAMATION).
 #
 # PubSub (Part 14): UADP + JSON NetworkMessages over opc.udp:// and mqtt://
@@ -75,9 +71,9 @@ RUN python3 /src/prepare/inline_mqtt.py /src/open62541 \
 # Security Key Service (GetSecurityKeys / SetSecurityKeys, SKS pull client;
 # AddSecurityGroup is bound by the adapter) and the PubSubConfiguration file
 # loader. ServerConfiguration push certificate management (Part 12 §7,
-# UA_ENABLE_GDS_PUSHMANAGEMENT). Alarms & Conditions (Part 9, EXPERIMENTAL in v1.5.9; needs the full
+# UA_ENABLE_GDS_PUSHMANAGEMENT). Alarms & Conditions (Part 9, EXPERIMENTAL in v1.5.10; needs the full
 # namespace zero, which the adapter builds anyway) for the Alarms fixture. The PubSub-Aes128/256-CTR message
-# security policies of v1.5.9 only exist for mbedTLS; the adapter carries an
+# security policies of v1.5.10 only exist for mbedTLS; the adapter carries an
 # OpenSSL implementation of them (src/pubsub_security.c).
 WORKDIR /src/open62541/build
 RUN cmake .. \

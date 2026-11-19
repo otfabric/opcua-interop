@@ -200,7 +200,7 @@ static int security_policy_known(const char *name) {
 /* -------------------------------------------------------------------------
  * ECC SecurityPolicies
  *
- * open62541 v1.5.9 (OpenSSL backend) only puts the AEAD ECC policies and the
+ * open62541 v1.5.10 (OpenSSL backend) only puts the AEAD ECC policies and the
  * Curve25519/448 policies into its default set; ECC_nistP256 / ECC_nistP384 /
  * ECC_brainpoolP256r1 / ECC_brainpoolP384r1 have to be added explicitly. A
  * policy can only be instantiated with a certificate of its own curve.

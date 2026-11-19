@@ -5,7 +5,7 @@
 # No source archive hash is recorded: package registries and the open62541
 # tag are the pins; the open62541 build checks that the tag is tag_commit.
 
-interop_version: "0.19.2"
+interop_version: "0.20.0"
 contract_version: "1.0"        # docs/CONTAINER_CONTRACT.md, schemaVersion of every document
 fixture_schema: "1.0"          # fixtures/schema/opcua-fixture.schema.json
 
@@ -19,8 +19,8 @@ implementations:
     status: published
     upstream: "open62541"
     repository: "https://github.com/open62541/open62541"
-    version: "v1.5.9"
-    tag_commit: "05c2b389b65cc35884eb40d800301af1f3d130cf"   # the commit of the tag: ARG OPEN62541_SHA of the Dockerfile, which stops on another
+    version: "v1.5.10"
+    tag_commit: "93c3bdfc9ea4718b503c6cbf57876237addd0f2c"   # the commit of the tag: ARG OPEN62541_SHA of the Dockerfile, which stops on another
     license: "MPL-2.0"
     language: "C"
     independent_engine: true

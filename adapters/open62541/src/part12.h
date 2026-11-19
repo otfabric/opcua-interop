@@ -2,7 +2,7 @@
 
 /*
  * Helpers shared by `client push` (Part 12 §7, CONTAINER_CONTRACT §15) and
- * `client gds-pull` (Part 12 §6 / §7.9, §16.2). open62541 v1.5.9 has neither
+ * `client gds-pull` (Part 12 §6 / §7.9, §16.2). open62541 v1.5.10 has neither
  * a push nor a GDS client API, so both commands are plain method calls
  * (UA_Client_call) built on these helpers: a JSON builder for the result
  * item, argument / file parsing, Variant constructors, browse path
@@ -13,7 +13,7 @@
 
 #include <stddef.h>
 
-/* BadNamespaceUriInvalid (Part 4) is not in the v1.5.9 status code table. */
+/* BadNamespaceUriInvalid (Part 4) is not in the v1.5.10 status code table. */
 #ifndef UA_STATUSCODE_BADNAMESPACEURIINVALID
 #define UA_STATUSCODE_BADNAMESPACEURIINVALID ((UA_StatusCode)0x80530000U)
 #endif

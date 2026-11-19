@@ -41,7 +41,7 @@ void pubsub_server_cleanup(void);
 /*
  * Normalise OPC UA 1.05 JSON ExtensionObjects for open62541's decoder (shared
  * with the codec): an object with "UaTypeId" and the structure fields in-situ
- * (the 1.05 compact form, which open62541 v1.5.9 encodes but cannot decode) is
+ * (the 1.05 compact form, which open62541 v1.5.10 encodes but cannot decode) is
  * rewritten to {"UaTypeId":…,"UaBody":{fields}}; a UaTypeId that names a
  * DataTypeEncoding (DefaultBinary / DefaultXml / DefaultJson) is replaced by
  * the DataType NodeId. Returns a malloc'd JSON text, or NULL on parse error.

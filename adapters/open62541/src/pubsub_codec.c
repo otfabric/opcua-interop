@@ -1053,7 +1053,7 @@ static int pubsub_decode(int argc, char **argv, Mapping map, const char *action)
         printf(",\"networkMessage\":");
         print_description(&nm, map, &meta, map == MAP_JSON ? (const UA_String *const *)jn.names : NULL,
                           map == MAP_JSON ? jn.counts : NULL);
-        /* The stack's own re-encoding of what it decoded. The v1.5.9 JSON
+        /* The stack's own re-encoding of what it decoded. The v1.5.10 JSON
          * encoder dereferences the EncodingMetaData of every DataSetWriterId
          * (NULL -> crash), so JSON always gets one entry per message, with
          * the field names from --metadata or from the decoded Payload keys. */

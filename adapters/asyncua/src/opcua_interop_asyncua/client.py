@@ -165,7 +165,9 @@ class Conn:
         except (OSError, ValueError):
             return None
 
-    async def connect(self) -> "Conn":
+    async def secured_client(self) -> Client:
+        """A client with the endpoint's SecurityPolicy, mode, application
+        certificate and server-certificate check of the flags (not connected)."""
         eps = await self.endpoints()
         policy_cls = POLICIES[self.policy]
         mode = MODES[self.mode]
@@ -178,8 +180,6 @@ class Conn:
                 f"no endpoint with SecurityPolicy={self.policy} and MessageSecurityMode={self.mode} at {self.endpoint}"
             )
         c = self._new_client()
-        if self.lifetime > 0:
-            c.secure_channel_timeout = self.lifetime
         if self.cert and self.key:
             uri = self.app_uri_flag or await self._cert_uri()
             if uri:
@@ -199,6 +199,12 @@ class Conn:
                 raise AdapterError(f"cannot use the client certificate / key: {e}")
             if self.trust:
                 c.certificate_validator = await pki.client_validator(self.trust)
+        return c
+
+    async def connect(self) -> "Conn":
+        c = await self.secured_client()
+        if self.lifetime > 0:
+            c.secure_channel_timeout = self.lifetime
         if self.username is not None:
             c.set_user(self.username)
             c.set_password(self.password or "")
@@ -1490,8 +1496,9 @@ async def cmd_node_management(args: Args, r: Result) -> int:
 
 
 async def _sessionless(conn: Conn, op):
-    c = conn._new_client()
+    """op on a SecureChannel without a Session, with the security flags of conn."""
     try:
+        c = conn._new_client() if conn.policy == "None" else await conn.secured_client()
         return await asyncio.wait_for(c._with_temp_channel(lambda: op(c)), conn.cto + conn.rto)
     except (OSError, ConnectionError) as e:
         raise TransportError(f"cannot connect to {conn.endpoint}: {e}")

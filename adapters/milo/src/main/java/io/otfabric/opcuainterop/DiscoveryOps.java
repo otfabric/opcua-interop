@@ -6,6 +6,8 @@ import org.eclipse.milo.opcua.stack.core.StatusCodes;
 import org.eclipse.milo.opcua.stack.core.UaException;
 import org.eclipse.milo.opcua.stack.core.UaServiceFaultException;
 import org.eclipse.milo.opcua.stack.core.encoding.DefaultEncodingContext;
+import org.eclipse.milo.opcua.stack.core.encoding.EncodingContext;
+import org.eclipse.milo.opcua.stack.core.security.CertificateValidator;
 import org.eclipse.milo.opcua.stack.core.security.SecurityPolicy;
 import org.eclipse.milo.opcua.stack.core.types.UaRequestMessageType;
 import org.eclipse.milo.opcua.stack.core.types.UaResponseMessageType;
@@ -22,9 +24,14 @@ import org.eclipse.milo.opcua.stack.core.types.structured.RegisterServer2Request
 import org.eclipse.milo.opcua.stack.core.types.structured.RegisterServer2Response;
 import org.eclipse.milo.opcua.stack.core.types.structured.RegisterServerRequest;
 import org.eclipse.milo.opcua.stack.core.types.structured.RegisteredServer;
+import org.eclipse.milo.opcua.stack.transport.client.ClientApplicationContext;
 import org.eclipse.milo.opcua.stack.transport.client.tcp.OpcTcpClientTransport;
 import org.eclipse.milo.opcua.stack.transport.client.tcp.OpcTcpClientTransportConfig;
 
+import java.security.KeyPair;
+import java.security.cert.X509Certificate;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -33,7 +40,8 @@ import static org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned.
 
 /**
  * Discovery service set calls against a Local Discovery Server, on a
- * SecureChannel (SecurityPolicy None) without a Session.
+ * SecureChannel without a Session: SecurityPolicy None, or the policy, mode
+ * and application certificate of a {@link Security}.
  *
  * Milo's SDK ships {@link DiscoveryClient#registerServer}; RegisterServer2 and
  * FindServersOnNetwork are sent as plain request messages on the same
@@ -80,19 +88,79 @@ final class DiscoveryOps {
         }
     }
 
+    /**
+     * The security of a discovery channel: the SecurityPolicy, the mode, the
+     * application certificate and key the channel is opened with, and the
+     * validator of the LDS certificate.
+     */
+    record Security(SecurityPolicy policy, MessageSecurityMode mode, X509Certificate certificate,
+                    KeyPair keyPair, CertificateValidator validator) {}
+
     static Channel open(String url, long timeoutMs) throws Exception {
+        return open(url, timeoutMs, null);
+    }
+
+    /**
+     * Opens a channel to {@code url}. With a {@code security} other than None the
+     * endpoint of that policy and mode is taken from GetEndpoints (its server
+     * certificate) and the channel is opened with the certificate of
+     * {@code security}.
+     */
+    static Channel open(String url, long timeoutMs, Security security) throws Exception {
         EndpointDescription endpoint = new EndpointDescription(
             url, null, null, MessageSecurityMode.None, SecurityPolicy.None.getUri(), null,
             Stack.TCP_UASC_UABINARY_TRANSPORT_URI, ubyte(0));
+        boolean secure = security != null && security.mode() != MessageSecurityMode.None;
+        if (secure) {
+            List<EndpointDescription> eps;
+            try {
+                eps = DiscoveryClient.getEndpoints(url).get(timeoutMs, TimeUnit.MILLISECONDS);
+            } catch (ExecutionException e) {
+                throw new UaException(StatusCodes.Bad_ConnectionRejected, e.getCause());
+            }
+            EndpointDescription match = eps.stream()
+                .filter(e -> security.policy().getUri().equals(e.getSecurityPolicyUri())
+                          && security.mode().equals(e.getSecurityMode()))
+                .findFirst()
+                .orElseThrow(() -> new UaException(StatusCodes.Bad_SecurityPolicyRejected,
+                    "no endpoint with SecurityPolicy=" + security.policy() + " and MessageSecurityMode="
+                        + security.mode() + " at " + url));
+            // The discovery URL, not the advertised one, reaches the LDS.
+            endpoint = new EndpointDescription(url, match.getServer(), match.getServerCertificate(),
+                match.getSecurityMode(), match.getSecurityPolicyUri(), match.getUserIdentityTokens(),
+                match.getTransportProfileUri(), match.getSecurityLevel());
+        }
         OpcTcpClientTransport transport =
             new OpcTcpClientTransport(OpcTcpClientTransportConfig.newBuilder().build());
         DiscoveryClient client = new DiscoveryClient(endpoint, transport);
         try {
-            client.connectAsync().get(timeoutMs, TimeUnit.MILLISECONDS);
+            if (secure) {
+                transport.connect(context(endpoint, security)).get(timeoutMs, TimeUnit.MILLISECONDS);
+            } else {
+                client.connectAsync().get(timeoutMs, TimeUnit.MILLISECONDS);
+            }
         } catch (ExecutionException e) {
             throw new UaException(StatusCodes.Bad_ConnectionRejected, e.getCause());
         }
         return new Channel(client, transport);
+    }
+
+    /** The application context of a secured discovery channel (DiscoveryClient's has no key pair). */
+    private static ClientApplicationContext context(EndpointDescription endpoint, Security security) {
+        return new ClientApplicationContext() {
+            @Override public EndpointDescription getEndpoint() { return endpoint; }
+            @Override public Optional<KeyPair> getKeyPair() { return Optional.of(security.keyPair()); }
+            @Override public Optional<X509Certificate> getCertificate() { return Optional.of(security.certificate()); }
+            @Override public Optional<X509Certificate[]> getCertificateChain() {
+                return Optional.of(new X509Certificate[] {security.certificate()});
+            }
+            @Override public CertificateValidator getCertificateValidator() {
+                return security.validator() != null ? security.validator()
+                    : new CertificateValidator.InsecureCertificateValidator();
+            }
+            @Override public EncodingContext getEncodingContext() { return DefaultEncodingContext.INSTANCE; }
+            @Override public UInteger getRequestTimeout() { return uint(60_000); }
+        };
     }
 
     /** Sends a request; a ServiceFault is returned as its status code. */

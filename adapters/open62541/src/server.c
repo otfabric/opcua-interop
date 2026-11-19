@@ -1026,7 +1026,7 @@ static UA_StatusCode interop_add_event_type(UA_Server *server, UA_NodeId *outTyp
 
 /* -------------------------------------------------------------------------
  * Alarms & Conditions fixture (serverFeatures "alarms", EXPERIMENTAL in
- * open62541 v1.5.9): s=Alarms / s=Alarms.Source / s=Alarms.InteropAlarm
+ * open62541 v1.5.10): s=Alarms / s=Alarms.Source / s=Alarms.InteropAlarm
  * (AlarmConditionType with ConfirmedState) / s=Alarms.Reset. Acknowledge,
  * Confirm, AddComment, Enable, Disable and ConditionRefresh(2) are the
  * stack's own method callbacks.
@@ -1073,7 +1073,7 @@ static UA_StatusCode alarm_arm(UA_Server *server) {
     UA_UInt16 severity = 500;
     UA_Variant_setScalar(&value, &severity, &UA_TYPES[UA_TYPES_UINT16]);
     sc |= UA_Server_setConditionField(server, g_alarmCondition, &value, UA_QUALIFIEDNAME(0, "Severity"));
-    /* false does not trigger an event in v1.5.9 */
+    /* false does not trigger an event in v1.5.10 */
     sc |= alarm_set_id(server, "AckedState", false);
     sc |= alarm_set_id(server, "ConfirmedState", false);
     sc |= alarm_set_id(server, "ActiveState", false);
@@ -1265,14 +1265,49 @@ static void reverse_state_cb(UA_Server *server, UA_UInt64 handle,
 
 #ifdef UA_ENABLE_DISCOVERY
 
+/* The credentials of --register-with (CONTAINER_CONTRACT, server flags): with
+ * an RSA application certificate the registration channel is Basic256Sha256 /
+ * SignAndEncrypt with that certificate, otherwise None / None. open62541 since
+ * v1.5.10 serves RegisterServer(2) only on a channel whose client certificate
+ * carries the registered serverUri (open62541-SA-2026-0051). */
+static UA_ByteString g_regCert, g_regKey;
+static UA_ByteString *g_regTrust;
+static size_t g_regTrustCount;
+static char *g_regAppUri;
+
+static UA_StatusCode registration_config(UA_ClientConfig *cc) {
+    memset(cc, 0, sizeof(*cc));
+#ifdef UA_ENABLE_ENCRYPTION
+    if (g_regCert.length > 0) {
+        UA_StatusCode sc = UA_ClientConfig_setDefaultEncryption(
+            cc, g_regCert, g_regKey, g_regTrust, g_regTrustCount, NULL, 0);
+        if (sc != UA_STATUSCODE_GOOD) {
+            UA_ClientConfig_clear(cc);
+            return sc;
+        }
+        cc->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+        UA_String_clear(&cc->securityPolicyUri);
+        cc->securityPolicyUri =
+            UA_STRING_ALLOC("http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256");
+        if (g_regAppUri) {
+            UA_String_clear(&cc->clientDescription.applicationUri);
+            cc->clientDescription.applicationUri = UA_STRING_ALLOC(g_regAppUri);
+        }
+        return UA_STATUSCODE_GOOD;
+    }
+#endif
+    UA_StatusCode sc = UA_ClientConfig_setDefault(cc);
+    cc->securityMode = UA_MESSAGESECURITYMODE_NONE;
+    return sc;
+}
+
 static void register_with_lds(UA_Server *server, void *data) {
     const char *url = (const char *)data;
     UA_ClientConfig cc;
-    memset(&cc, 0, sizeof(cc));
-    UA_ClientConfig_setDefault(&cc);
-    cc.securityMode = UA_MESSAGESECURITYMODE_NONE;
-    UA_StatusCode sc = UA_Server_registerDiscovery(
-        server, &cc, UA_STRING((char *)(uintptr_t)url), UA_STRING_NULL);
+    UA_StatusCode sc = registration_config(&cc);
+    if (sc == UA_STATUSCODE_GOOD)
+        sc = UA_Server_registerDiscovery(
+            server, &cc, UA_STRING((char *)(uintptr_t)url), UA_STRING_NULL);
     if (sc != UA_STATUSCODE_GOOD)
         fprintf(stderr, "[open62541] warn: register with %s: %s\n", url, UA_StatusCode_name(sc));
 }
@@ -1396,6 +1431,19 @@ int server_run(const ServerArgs *args) {
             NULL, 0,
             NULL, 0);
 
+#ifdef UA_ENABLE_DISCOVERY
+        /* Kept for --register-with (registration_config). */
+        if (have_rsa && args->registerWith && *args->registerWith) {
+            g_regCert = cert;
+            g_regKey = key;
+            g_regTrust = trust_list;
+            g_regTrustCount = trust_count;
+            cert = UA_BYTESTRING_NULL;
+            key = UA_BYTESTRING_NULL;
+            trust_list = NULL;
+            trust_count = 0;
+        }
+#endif
         UA_ByteString_clear(&cert);
         UA_ByteString_clear(&key);
         for (size_t i = 0; i < trust_count; i++)
@@ -1594,6 +1642,9 @@ int server_run(const ServerArgs *args) {
         cfg->applicationDescription.discoveryUrls[i] = UA_STRING_ALLOC(adv_url);
     }
     if (fixture->applicationUri) {
+#ifdef UA_ENABLE_DISCOVERY
+        g_regAppUri = fixture->applicationUri;
+#endif
         UA_String_clear(&cfg->applicationDescription.applicationUri);
         cfg->applicationDescription.applicationUri =
             UA_STRING_ALLOC(fixture->applicationUri);
@@ -1910,7 +1961,7 @@ int server_run(const ServerArgs *args) {
     }
 
 #ifdef UA_ENABLE_DISCOVERY
-    /* (UA_Server_setRegisterServerCallback is declared by v1.5.9 but not
+    /* (UA_Server_setRegisterServerCallback is declared by v1.5.10 but not
      * implemented, so registrations are not logged here.) */
     if (args->registerWith && *args->registerWith) {
         UA_UInt64 regCbId = 0;
@@ -1945,11 +1996,10 @@ int server_run(const ServerArgs *args) {
     if (args->registerWith && *args->registerWith) {
         /* Unregister (isOnline=false) and give the async exchange a moment. */
         UA_ClientConfig cc;
-        memset(&cc, 0, sizeof(cc));
-        UA_ClientConfig_setDefault(&cc);
-        cc.securityMode = UA_MESSAGESECURITYMODE_NONE;
-        UA_StatusCode dsc = UA_Server_deregisterDiscovery(
-            server, &cc, UA_STRING(args->registerWith));
+        UA_StatusCode dsc = registration_config(&cc);
+        if (dsc == UA_STATUSCODE_GOOD)
+            dsc = UA_Server_deregisterDiscovery(
+                server, &cc, UA_STRING(args->registerWith));
         fprintf(stderr, "[open62541] info: unregister from %s: %s\n",
                 args->registerWith, UA_StatusCode_name(dsc));
         struct timespec t0, t1;
@@ -1991,6 +2041,14 @@ int server_run(const ServerArgs *args) {
     }
 
     free(nsMap);
+#ifdef UA_ENABLE_DISCOVERY
+    g_regAppUri = NULL;
+    UA_ByteString_clear(&g_regCert);
+    UA_ByteString_clear(&g_regKey);
+    for (size_t i = 0; i < g_regTrustCount; i++)
+        UA_ByteString_clear(&g_regTrust[i]);
+    free(g_regTrust);
+#endif
     fixture_free(fixture);
     return 0;
 }

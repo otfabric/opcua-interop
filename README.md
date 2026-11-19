@@ -5,7 +5,7 @@ Test OPC UA libraries against established implementations without integrating th
 
 | Adapter | Implementation | Language | Server | Client | Image |
 |---------|----------------|----------|:------:|:------:|-------|
-| `open62541` | [open62541](https://github.com/open62541/open62541) v1.5.9 | C | yes | yes | `ghcr.io/otfabric/opcua-interop-open62541` |
+| `open62541` | [open62541](https://github.com/open62541/open62541) v1.5.10 | C | yes | yes | `ghcr.io/otfabric/opcua-interop-open62541` |
 | `milo` | [Eclipse Milo](https://github.com/eclipse-milo/milo) 1.1.8 | Java | yes | yes | `ghcr.io/otfabric/opcua-interop-milo` |
 | `async-opcua` | [async-opcua](https://github.com/FreeOpcUa/async-opcua) 0.19.0 | Rust | yes | yes | `ghcr.io/otfabric/opcua-interop-async-opcua` |
 | `dotnet` | [OPC Foundation UA-.NETStandard](https://github.com/OPCFoundation/UA-.NETStandard) 2.0.2 | C# | yes | yes | `ghcr.io/otfabric/opcua-interop-dotnet` |

@@ -171,7 +171,7 @@ in `fixtures/pubsub/` use these nodes (docs/CONTAINER_CONTRACT.md §14).
 Alarms & Conditions (OPC UA Part 9) fixture, since adapter 0.12.0. Only the
 servers that declare `"alarms"` in `print-capabilities` → `serverFeatures`
 build it: UA-.NETStandard, node-opcua and open62541 (experimental A&C of
-v1.5.9). The nodes are **not** in `fixture.json` — every adapter realises the
+v1.5.10). The nodes are **not** in `fixture.json` — every adapter realises the
 `fixture.json` nodes generically, and the condition needs the stack's own A&C
 model — so they are created in code; adapters without the feature simply have
 no `s=Alarms` folder.
@@ -342,7 +342,7 @@ started with `--pubsub-config <file>`; both read the same file. Eclipse Milo
 declares `print-capabilities` → `pubsub.supported: false` (as do async-opcua,
 node-opcua and asyncua). The complete contract — file format, honoured
 fields, information-model method conventions, codec description format, the
-open62541 v1.5.9 limits and the UA-.NETStandard 2.0.1 differences — is
+open62541 v1.5.10 limits and the UA-.NETStandard 2.0.1 differences — is
 [`docs/CONTAINER_CONTRACT.md` §14](CONTAINER_CONTRACT.md#14-pubsub-opc-ua-part-14).
 
 | | open62541 adapter | UA-.NETStandard adapter (§14.13) |
@@ -437,7 +437,7 @@ docker run -d --name mosquitto -p 1883:1883 \
 (also `make run-mosquitto` and the `mosquitto` service in `compose.yaml`).
 Connections use `mqtt://<broker>:1883` (rewritten to open62541's
 `opc.mqtt://`); topics are the `QueueName` of BrokerWriterGroupTransportDataType
-/ BrokerDataSetReaderTransportDataType. open62541 v1.5.9 speaks MQTT 3.1.1 with
+/ BrokerDataSetReaderTransportDataType. open62541 v1.5.10 speaks MQTT 3.1.1 with
 QoS 0, anonymously, without TLS, and its MQTT buffers limit a NetworkMessage
 to about 1000 bytes.
 

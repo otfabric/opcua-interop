@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Inline the MQTT-C sources into open62541's MQTT EventLoop plugin.
 
-open62541 v1.5.9 builds MQTT support (UA_ENABLE_MQTT) by textually including
+open62541 v1.5.10 builds MQTT support (UA_ENABLE_MQTT) by textually including
 the MQTT-C submodule from arch/common/eventloop_mqtt.c:
 
     #include "../../deps/mqtt-c/include/mqtt.h"

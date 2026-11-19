@@ -1,4 +1,4 @@
-# open62541 adapter (open62541 v1.5.9)
+# open62541 adapter (open62541 v1.5.10)
 
 The adapter contract is docs/CONTAINER_CONTRACT.md; this file lists what is
 specific to the open62541 adapter.
@@ -7,7 +7,7 @@ specific to the open62541 adapter.
 
 - Sent with the raw `UA_Client_Service_historyRead` / `UA_Client_Service_historyUpdate`
   (ReadEventDetails, UpdateEventDetails, DeleteEventDetails built from the flags).
-  `UA_Client_HistoryRead_events` of v1.5.9 is not used: it follows continuation
+  `UA_Client_HistoryRead_events` of v1.5.10 is not used: it follows continuation
   points by itself and stops on any status other than Good, `GoodNoData` included,
   so `--num-values`, `--continuation-point` and `--scenario continue` could not be
   honoured with it.
@@ -29,7 +29,7 @@ specific to the open62541 adapter.
   without `"type"` is a String (JSON string), Boolean, Double (JSON number) or
   LocalizedText (`{"text"}`); typed values use the §12 literal parser, plus
   `{"locale","text"}` for LocalizedText and `{"ns","name"}` for QualifiedName.
-- The open62541 server has no event store (v1.5.9 ships none), so the adapter's
+- The open62541 server has no event store (v1.5.10 ships none), so the adapter's
   server serves no `History.Events` fixture and does not advertise the
   `history-events` server features.
 - `opcua-interop-open62541 test` runs the unit tests of the select-path, filter,

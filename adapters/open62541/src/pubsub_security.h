@@ -4,7 +4,7 @@
 
 /*
  * OpenSSL implementation of the PubSub message security policies
- * PubSub-Aes128-CTR and PubSub-Aes256-CTR (open62541 v1.5.9 only provides
+ * PubSub-Aes128-CTR and PubSub-Aes256-CTR (open62541 v1.5.10 only provides
  * them for mbedTLS). See pubsub_security.c.
  */
 
