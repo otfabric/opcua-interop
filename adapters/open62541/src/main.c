@@ -55,7 +55,7 @@
  * ---------------------------------------------------------------------- */
 
 /* PubSub (Part 14). See docs/CONTAINER_CONTRACT.md §14 for what each entry
- * means and the open62541 v1.5.9 limits behind the lists. */
+ * means and the open62541 v1.5.10 limits behind the lists. */
 static void print_pubsub_capabilities(void) {
     printf("  \"pubsub\": {\n");
     printf("    \"supported\": true,\n");
@@ -98,8 +98,8 @@ static void print_pubsub_capabilities(void) {
 static int cmd_print_capabilities(void) {
     printf("{\n");
     printf("  \"schemaVersion\": \"1.0\",\n");
-    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.19.2\"},\n");
-    printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.9\"},\n");
+    printf("  \"adapter\": {\"name\": \"open62541\", \"version\": \"0.20.0\"},\n");
+    printf("  \"stack\": {\"name\": \"open62541\", \"version\": \"1.5.10\"},\n");
     printf("  \"fixtureSchemaVersions\": [\"1.0\"],\n");
     printf("  \"roles\": [\"client\", \"server\"],\n");
     printf("  \"transports\": [\"opc.tcp\"],\n");
@@ -127,7 +127,7 @@ static int cmd_print_capabilities(void) {
     printf("    \"register-server\",\n");
     printf("    \"codec\",\n");
     /* Part 12 push management and GDS pull model as plain Calls (push.c,
-     * gds_pull.c): open62541 v1.5.9 has no push or GDS client API. */
+     * gds_pull.c): open62541 v1.5.10 has no push or GDS client API. */
     printf("    \"push\",\n");
     printf("    \"gds-pull\"\n");
     printf("  ],\n");
@@ -158,7 +158,7 @@ static int cmd_print_capabilities(void) {
     printf("    \"node-management\",\n");
     printf("    \"pubsub\",\n");
 #ifdef UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS
-    /* Alarms fixture (Part 9) on the EXPERIMENTAL v1.5.9 A&C server */
+    /* Alarms fixture (Part 9) on the EXPERIMENTAL v1.5.10 A&C server */
     printf("    \"alarms\",\n");
 #endif
 #ifdef UA_ENABLE_GDS_PUSHMANAGEMENT

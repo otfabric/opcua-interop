@@ -12,7 +12,7 @@
  * strings (byte-exact); the OPC UA Binary encoding of the same value is added
  * as Base64 so a consumer can compare bit-exactly.
  *
- * open62541 v1.5.9 implements the OPC UA 1.05 JSON encoding ("UaType" /
+ * open62541 v1.5.10 implements the OPC UA 1.05 JSON encoding ("UaType" /
  * "Value" / "Dimensions"); its `useReversible` option has no effect in that
  * encoder, so there is a single JSON mode ("compact").
  */
@@ -38,7 +38,7 @@ static int usage_error(const char *msg) {
 }
 
 /*
- * What open62541 v1.5.9's XML codec does not implement. The library reports
+ * What open62541 v1.5.10's XML codec does not implement. The library reports
  * these by OR-ing status codes together (yielding unrelated names such as
  * BadContentFilterInvalid), so the known gaps are answered here with a clean
  * BadNotImplemented.

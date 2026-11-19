@@ -74,7 +74,7 @@ class CheckVersions(unittest.TestCase):
         self.assertIn("FROM ${RUNTIME_IMAGE} is not pinned by digest", res.stdout)
 
     def test_another_open62541_commit_fails(self):
-        self.replace(OPEN62541, "ARG OPEN62541_SHA=05c2b389b65cc35884eb40d800301af1f3d130cf\n",
+        self.replace(OPEN62541, "ARG OPEN62541_SHA=93c3bdfc9ea4718b503c6cbf57876237addd0f2c\n",
                      "ARG OPEN62541_SHA=0000000000000000000000000000000000000000\n")
         res = self.run_check()
         self.assertNotEqual(res.returncode, 0, res.stdout)

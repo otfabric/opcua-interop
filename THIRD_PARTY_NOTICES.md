@@ -4,7 +4,7 @@ The repository's own adapters, fixtures, scripts and documentation are MIT ([LIC
 
 | Image | Upstream | Pin | Upstream licence | Source |
 |---|---|---|---|---|
-| `opcua-interop-open62541` | open62541 | v1.5.9 | MPL-2.0 | https://github.com/open62541/open62541 |
+| `opcua-interop-open62541` | open62541 | v1.5.10 | MPL-2.0 | https://github.com/open62541/open62541 |
 | `opcua-interop-milo` | Eclipse Milo | 1.1.8 | EPL-2.0 | https://github.com/eclipse-milo/milo |
 | `opcua-interop-async-opcua` | async-opcua | 0.19.0 | MPL-2.0 | https://github.com/FreeOpcUa/async-opcua |
 | `opcua-interop-dotnet` | OPC Foundation UA-.NETStandard | 2.0.1 | OPC Foundation MIT License 1.00 (`requireLicenseAcceptance` on NuGet) | https://github.com/OPCFoundation/UA-.NETStandard |

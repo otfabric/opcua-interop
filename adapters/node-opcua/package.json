@@ -1,6 +1,6 @@
 {
   "name": "opcua-interop-node-opcua",
-  "version": "0.19.2",
+  "version": "0.20.0",
   "private": true,
   "description": "opcua-interop adapter for node-opcua (client + server, CONTAINER_CONTRACT v1.0)",
   "license": "MIT",
@@ -18,9 +18,9 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "node-opcua": "2.187.31",
-    "node-opcua-server-configuration": "2.187.31",
-    "node-opcua-types": "2.187.28"
+    "node-opcua": "2.187.32",
+    "node-opcua-server-configuration": "2.187.32",
+    "node-opcua-types": "2.187.32"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

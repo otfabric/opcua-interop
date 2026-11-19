@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Backport: let open62541 v1.5.9 DataSetReaders accept JSON NetworkMessages.
+"""Backport: let open62541 v1.5.10 DataSetReaders accept JSON NetworkMessages.
 
-In v1.5.9, UA_DataSetReader_checkIdentifier (src/pubsub/ua_pubsub_reader.c)
+In v1.5.10, UA_DataSetReader_checkIdentifier (src/pubsub/ua_pubsub_reader.c)
 has an unimplemented TODO for ReaderGroups with JSON encoding and returns
 BadNotFound for *every* JSON NetworkMessage, so a JSON subscriber (e.g.
 pubsub-mqtt-json) decodes messages and then drops them ("Message received that
 could not be processed"). Upstream master fixed this (2026-09, "fix(pubsub)"
 series on ua_pubsub_reader.c); this script applies the same matching logic to
-the v1.5.9 sources before the amalgamation is generated:
+the v1.5.10 sources before the amalgamation is generated:
 
   * the PublisherId is compared by value across the numeric widths for JSON
     (the JSON mapping carries every numeric PublisherId as a string, so the
@@ -16,7 +16,7 @@ the v1.5.9 sources before the amalgamation is generated:
   * the DataSetWriterIds decoded from the JSON DataSetMessages are matched
     against the reader's DataSetWriterId (0 accepts any writer).
 
-Nothing else changes: UADP matching is untouched. Only the exact v1.5.9 code
+Nothing else changes: UADP matching is untouched. Only the exact v1.5.10 code
 is patched; other versions are left as they are (with a warning).
 
 usage: backport_json_reader.py <open62541 source root>
@@ -97,7 +97,7 @@ new_json = """    if(rg->config.encodingMimeType == UA_PUBSUB_ENCODING_JSON) {
         return UA_STATUSCODE_BADNOTFOUND;
     }"""
 
-# Applied only to the exact v1.5.9 code. A newer upstream (the Upstream
+# Applied only to the exact v1.5.10 code. A newer upstream (the Upstream
 # workflow builds the latest release) that already contains the fix,
 # or changed this code, is left alone; scripts/pubsub-smoke.sh (mqtt-json)
 # shows whether JSON subscribing works there.
@@ -107,7 +107,7 @@ for old, new in ((old_check, new_check), (old_json, new_json)):
         text = text.replace(old, new, 1)
         applied += 1
 if applied != 2:
-    print("backport_json_reader.py: WARNING: v1.5.9 code not found in %s (%d/2 hunks "
+    print("backport_json_reader.py: WARNING: v1.5.10 code not found in %s (%d/2 hunks "
           "applied) - not patched" % (path, applied))
     sys.exit(0)
 

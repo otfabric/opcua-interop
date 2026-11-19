@@ -22,7 +22,12 @@ run_lds_features() {
         --lds --reverse-connect "opc.tcp://${rclient}:4855" || return 0
     local member_img="${o}" member_extra=(--mdns-name smoke-member) member_name=open62541
     if [[ -n "${milo}" ]]; then member_img="${milo}"; member_extra=(); member_name=milo; fi
-    server_up "${member}" "${member_img}" --register-with "${lds_url}" --register-interval-ms 2000 \
+    # The member registers with its server certificate (Basic256Sha256 / SignAndEncrypt):
+    # open62541 since v1.5.10 serves RegisterServer(2) only on a channel whose client
+    # certificate carries the registered serverUri.
+    server_up "${member}" "${member_img}" --certificate "/pki/${member_name}-server/cert.crt" \
+        --private-key "/pki/${member_name}-server/cert.key" --pki-dir "/pki/${member_name}-server/pki" \
+        --register-with "${lds_url}" --register-interval-ms 2000 \
         ${member_extra[@]+"${member_extra[@]}"} || { stop_server "${lds}"; return 0; }
 
     local rsa=(--certificate /pki/open62541-client/cert.crt --private-key /pki/open62541-client/cert.key --trust-list /pki/ca/ca.crt)
@@ -73,21 +78,25 @@ run_lds_features() {
     out=$(run_client "${o}" find-servers --endpoint "${lds_url}")
     check "features.lds-findservers-lists-the-registered-${member_name}-server" "${o}" "${member_name}" \
         "[.results[].discoveryUrls[]] | index(\"${member_url}\") != null" "${out}"
-    local c
+    local c uri reg
     for c in "${o}" ${milo:+"${milo}"}; do
         out=$(run_client "${c}" find-servers-on-network --endpoint "${lds_url}")
         check features.findserversonnetwork-lds-record-registered-server "${c}" LDS \
             ".success == true and ([.results[] | select(.serverCapabilities | index(\"LDS\"))] | length) >= 1
              and ([.results[] | select(.discoveryUrl | test(\"${member}\"))] | length) >= 1" "${out}"
-        out=$(run_client "${c}" register-server --endpoint "${lds_url}" --server-uri "urn:smoke:${c}" --server-name "smoke ${c}" \
-                --discovery-url "opc.tcp://smoke-${c}:4999" --mdns-name "smoke-${c}")
+        # The registered serverUri is the URI of the client certificate the channel is
+        # secured with (see the member above).
+        uri="urn:otfabric:opcua-interop:client:${c}"
+        reg=(--security-policy Basic256Sha256 --security-mode SignAndEncrypt --certificate "/pki/${c}-client/cert.crt"
+             --private-key "/pki/${c}-client/cert.key" --trust-list /pki/ca/ca.crt --server-uri "${uri}"
+             --discovery-url "opc.tcp://smoke-${c}:4999" --mdns-name "smoke-${c}")
+        out=$(run_client "${c}" register-server --endpoint "${lds_url}" "${reg[@]}" --server-name "smoke ${c}")
         check features.register-server-registerserver2 "${c}" LDS '.success == true and .results[0].service == "RegisterServer2"' "${out}"
         out=$(run_client "${o}" find-servers --endpoint "${lds_url}")
-        check features.registration-visible-in-findservers "${c}" LDS "[.results[].applicationUri] | index(\"urn:smoke:${c}\") != null" "${out}"
-        run_client "${c}" register-server --endpoint "${lds_url}" --server-uri "urn:smoke:${c}" \
-            --discovery-url "opc.tcp://smoke-${c}:4999" --mdns-name "smoke-${c}" --online false >/dev/null
+        check features.registration-visible-in-findservers "${c}" LDS "[.results[].applicationUri] | index(\"${uri}\") != null" "${out}"
+        run_client "${c}" register-server --endpoint "${lds_url}" "${reg[@]}" --online false >/dev/null
         out=$(run_client "${o}" find-servers --endpoint "${lds_url}")
-        check features.unregistered-server-is-gone "${c}" LDS "[.results[].applicationUri] | index(\"urn:smoke:${c}\") == null" "${out}"
+        check features.unregistered-server-is-gone "${c}" LDS "[.results[].applicationUri] | index(\"${uri}\") == null" "${out}"
     done
     out=$(run_client "${o}" register-server --endpoint "${member_url}" --server-uri urn:smoke:x --discovery-url opc.tcp://x:1)
     check "features.register-server-against-a-non-lds-${member_name}-reports-the" "${o}" "${member_name}" \
@@ -129,7 +138,8 @@ run_chain() {
 }
 
 # run_register_with <asyncua> <open62541>: the asyncua server registers with an
-# open62541 LDS, the asyncua client calls FindServersOnNetwork and RegisterServer2 there.
+# open62541 LDS (with its server certificate), the asyncua client calls
+# FindServersOnNetwork and RegisterServer2 (with its client certificate) there.
 run_register_with() {
     local a="$1" o="$2" lds="lds-${RUN_ID}" srv="reg-${RUN_ID}" out i registered=0 lds_url url
     lds_url=$(url_of "${lds}"); url=$(url_of "${srv}")
@@ -149,11 +159,13 @@ run_register_with() {
     else fail "${a} server is not listed by the ${o} LDS after 30 polls: ${out:0:400}"; fi
     out=$(run_client "${a}" find-servers-on-network --endpoint "${lds_url}")
     check secure.findserversonnetwork-lds-record "${a}" LDS '.success == true and ([.results[] | select(.serverCapabilities | index("LDS"))] | length) >= 1' "${out}"
-    out=$(run_client "${a}" register-server --endpoint "${lds_url}" --server-uri urn:smoke:asyncua --server-name "smoke asyncua" \
-            --discovery-url opc.tcp://smoke-asyncua:4999 --mdns-name smoke-asyncua)
+    out=$(run_client "${a}" register-server --endpoint "${lds_url}" --security-policy Basic256Sha256 --security-mode SignAndEncrypt \
+            --certificate "/pki/${a}-client/cert.crt" --private-key "/pki/${a}-client/cert.key" --trust-list /pki/ca/ca.crt \
+            --server-uri "urn:otfabric:opcua-interop:client:${a}" --server-name "smoke ${a}" \
+            --discovery-url "opc.tcp://smoke-${a}:4999" --mdns-name "smoke-${a}")
     check secure.register-server-registerserver2 "${a}" LDS '.success == true and .results[0].service == "RegisterServer2"' "${out}"
     out=$(run_client "${o}" find-servers --endpoint "${lds_url}")
-    check secure.registration-visible-in-findservers "${a}" LDS '[.results[].applicationUri] | index("urn:smoke:asyncua") != null' "${out}"
+    check secure.registration-visible-in-findservers "${a}" LDS "[.results[].applicationUri] | index(\"urn:otfabric:opcua-interop:client:${a}\") != null" "${out}"
     stop_server "${lds}" "${srv}"
 }
 

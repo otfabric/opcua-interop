@@ -19,7 +19,7 @@
  * The configuration is decoded with UA_decodeJson into a
  * UA_PubSubConfigurationDataType and then built component by component with
  * the open62541 server API (UA_Server_addPubSubConnection, ...). That is used
- * instead of UA_Server_loadPubSubConfigFromByteString because the v1.5.9
+ * instead of UA_Server_loadPubSubConfigFromByteString because the v1.5.10
  * loader drops fields the interop tests need (WriterGroup/ReaderGroup
  * SecurityGroupId, ReaderGroup and DataSetReader TransportSettings — i.e. the
  * MQTT QueueName of a subscriber —, the DataSetWriter TransportSettings) and
@@ -352,7 +352,7 @@ static UA_StatusCode split_key(UA_PubSubSecurityPolicy *sp, const UA_ByteString 
 
 /* -------------------------------------------------------------------------
  * AddSecurityGroup / RemoveSecurityGroup (not bound to a callback by
- * open62541 v1.5.9 — the adapter binds them to UA_Server_addSecurityGroup /
+ * open62541 v1.5.10 — the adapter binds them to UA_Server_addSecurityGroup /
  * UA_Server_removeSecurityGroup)
  * ---------------------------------------------------------------------- */
 
@@ -706,7 +706,7 @@ static int add_published_datasets(UA_Server *server, const UA_PubSubConfiguratio
         char *name = ua_to_cstr(&p->name);
         if (!eo_is(&p->dataSetSource, UA_TYPES_PUBLISHEDDATAITEMSDATATYPE)) {
             set_err(errBuf, errLen, "PublishedDataSet '%s': only PublishedDataItemsDataType "
-                    "sources are supported (PublishedEvents is not implemented by open62541 1.5.9)",
+                    "sources are supported (PublishedEvents is not implemented by open62541 1.5.10)",
                     name, UA_STATUSCODE_BADNOTIMPLEMENTED);
             free(name);
             return -1;
@@ -1017,7 +1017,7 @@ static int add_reader_group(UA_Server *server, const UA_NodeId connId,
             tv = (const UA_TargetVariablesDataType *)d->subscribedDataSet.content.decoded.data;
         } else if (eo_is(&d->subscribedDataSet, UA_TYPES_SUBSCRIBEDDATASETMIRRORDATATYPE)) {
             set_err(errBuf, errLen, "DataSetReader '%s': SubscribedDataSetMirror is not implemented "
-                    "by open62541 1.5.9; use TargetVariables", dname,
+                    "by open62541 1.5.10; use TargetVariables", dname,
                     UA_STATUSCODE_BADNOTIMPLEMENTED);
             UA_PublisherId_clear(&dc.publisherId);
             free(dname); free(name);
@@ -1080,7 +1080,7 @@ static int add_connections(UA_Server *server, const UA_PubSubConfigurationDataTy
             return -1;
         }
         /* Part 14 names the MQTT scheme mqtt:// (mqtts:// with TLS);
-         * open62541 v1.5.9 only parses opc.mqtt://. Translate. */
+         * open62541 v1.5.10 only parses opc.mqtt://. Translate. */
         UA_NetworkAddressUrlDataType addrCopy;
         UA_NetworkAddressUrlDataType_copy(
             (const UA_NetworkAddressUrlDataType *)conn->address.content.decoded.data, &addrCopy);
@@ -1095,7 +1095,7 @@ static int add_connections(UA_Server *server, const UA_PubSubConfigurationDataTy
                    strncmp((const char *)addrCopy.url.data, "mqtts://", 8) == 0) {
             UA_NetworkAddressUrlDataType_clear(&addrCopy);
             set_err(errBuf, errLen, "PubSubConnection '%s': mqtts:// (MQTT over TLS) is not "
-                    "supported by open62541 1.5.9", name, UA_STATUSCODE_BADNOTSUPPORTED);
+                    "supported by open62541 1.5.10", name, UA_STATUSCODE_BADNOTSUPPORTED);
             free(name);
             return -1;
         }
@@ -1313,7 +1313,7 @@ int pubsub_server_apply(UA_Server *server, const PubSubOptions *opt,
     const cJSON *jsks = cJSON_GetObjectItemCaseSensitive(root, "sksClient");
     int serveSks = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "serveSks"));
 
-    /* Delta frames (server-wide in open62541). Off by default: v1.5.9 sends a
+    /* Delta frames (server-wide in open62541). Off by default: v1.5.10 sends a
      * DeltaFrame after every KeyFrame even with KeyFrameCount = 1, and its own
      * DataSetReader discards DeltaFrames ("Only keyframes are supported"). */
     UA_Server_getConfig(server)->pubSubConfig.enableDeltaFrames =

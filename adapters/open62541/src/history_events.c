@@ -3,7 +3,7 @@
  * HistoryRead with ReadEventDetails (Part 11 §6.5.2) and HistoryUpdate with
  * UpdateEventDetails (§6.9.4) / DeleteEventDetails (§6.9.7), sent with the raw
  * UA_Client_Service_historyRead / _historyUpdate. UA_Client_HistoryRead_events
- * of open62541 v1.5.9 follows continuation points itself and stops on any
+ * of open62541 v1.5.10 follows continuation points itself and stops on any
  * status other than Good (GoodNoData included), so the adapter pages itself.
  */
 

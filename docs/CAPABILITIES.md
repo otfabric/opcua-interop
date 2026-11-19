@@ -15,7 +15,7 @@ Section numbers are those of [CONTAINER_CONTRACT.md](CONTAINER_CONTRACT.md).
 
 | Adapter | Language | Stack | Why included |
 |---|---|---|---|
-| open62541 | C | open62541 v1.5.9 (OpenSSL crypto backend, mDNS via mdnsd, PubSub with MQTT and SKS) | Native/embedded diversity, OPC UA Binary, certified example-server history |
+| open62541 | C | open62541 v1.5.10 (OpenSSL crypto backend, mDNS via mdnsd, PubSub with MQTT and SKS) | Native/embedded diversity, OPC UA Binary, certified example-server history |
 | Eclipse Milo | Java | Eclipse Milo v1.1.8 (+ `milo-encoding-json`, `milo-encoding-xml`) | JVM/enterprise diversity, independent serialization and security code paths |
 | async-opcua | Rust | async-opcua 0.19.0 (crates.io, RustCrypto) | Memory-safe Rust stack, independent encoder/decoder and crypto (no OpenSSL); see [`adapters/async-opcua/README.md`](../adapters/async-opcua/README.md) |
 | UA-.NETStandard (`dotnet`) | C# | OPC Foundation UA-.NETStandard 2.0.1 (NuGet `OPCFoundation.NetStandard.Opc.Ua.*`) on .NET 10 | The OPC Foundation reference implementation, the stack most commercial servers and clients build on |
@@ -100,7 +100,7 @@ that pushes by itself.
 
 `transports` in `print-capabilities` lists the endpoint schemes the adapter
 dials and serves: `["opc.tcp"]`, UA-.NETStandard (adapter 0.11.0)
-`["opc.tcp", "opc.https", "opc.wss"]`. open62541 1.5.9 has no WebSocket or
+`["opc.tcp", "opc.https", "opc.wss"]`. open62541 1.5.10 has no WebSocket or
 HTTPS transport (the libwebsockets provider `UA_ENABLE_LWS` is on master
 only), Milo 1.1.8 has incubating, unpublished client transports only, and
 async-opcua, node-opcua and asyncua implement `opc.tcp` only.
@@ -123,7 +123,7 @@ adapters below:
 `alarms --node i=2253 --condition-name InteropAlarm --acknowledge --confirm --add-comment`
 from every adapter client, after `s=Alarms.Reset`):
 
-| | UA-.NETStandard 2.0.1 | node-opcua 2.187.12 | open62541 1.5.9 |
+| | UA-.NETStandard 2.0.1 | node-opcua 2.187.12 | open62541 1.5.10 |
 |---|---|---|---|
 | Condition | AlarmConditionType `s=Alarms.InteropAlarm`, ConfirmedState | AlarmConditionType `s=Alarms.InteropAlarm`, ConfirmedState | AlarmConditionType `s=Alarms.InteropAlarm`, ConfirmedState (always added by the stack) |
 | Server → Alarms.Source | HasNotifier (root notifier) | HasEventSource (node-opcua rejects a condition source that is only a HasNotifier target) | HasNotifier |
@@ -134,11 +134,10 @@ from every adapter client, after `s=Alarms.Reset`):
 
 All three set Comment to the Acknowledge / Confirm comment. open62541 runs the
 alarm fixture only because the image enables
-`UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS` (experimental in 1.5.9, full
-namespace zero); the adapter patches v1.5.9's `checkConditionRefreshArguments`
-to accept the UInt32 SubscriptionId the Call service converts to IntegerId
-(`adapters/open62541/amalgam/fix_condition_refresh_args.py`; unpatched ConditionRefresh
-returns `BadInvalidArgument`). Eclipse Milo 1.1.8 has no condition state
+`UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS` (experimental in 1.5.10, full
+namespace zero). v1.5.10's `checkConditionRefreshArguments` accepts the
+IntegerId SubscriptionId of ConditionRefresh(2) itself; up to v1.5.9 the adapter
+patched it (unpatched ConditionRefresh returned `BadInvalidArgument`). Eclipse Milo 1.1.8 has no condition state
 machine (the Acknowledge / Confirm / AddComment / Enable / Disable methods of
 `opc-ua-sdk/sdk-server/.../model/objects/AcknowledgeableConditionType` /
 `ConditionType` are abstract generated stubs, and

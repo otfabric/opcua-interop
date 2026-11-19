@@ -10,7 +10,8 @@ import signal
 from datetime import datetime, timezone
 from pathlib import Path
 
-from asyncua import Server, ua
+from asyncua import Client, Server, ua
+from asyncua.crypto import security_policies, uacrypto
 from asyncua.crypto.permission_rules import User, UserRole
 
 from . import fixture as fx
@@ -184,14 +185,22 @@ async def run(argv: list[str]) -> int:
 
     reg_task = None
     if register_with:
-        reg_task = asyncio.create_task(_register_loop(server, register_with, register_interval_ms))
+        reg_sec = None
+        if have_cert:
+            reg_sec = {
+                "uri": app_uri,
+                "cert": cert_file,
+                "key": key_file,
+                "validator": await pki.client_validator([str(Path(pki_dir) / "trusted" / "certs")]),
+            }
+        reg_task = asyncio.create_task(_register_loop(server, register_with, register_interval_ms, reg_sec))
 
     await stop.wait()
     log("shutdown signal received")
     if reg_task:
         reg_task.cancel()
         try:
-            await asyncio.wait_for(server.unregister_from_discovery(register_with), 3)
+            await asyncio.wait_for(_register_once(server, register_with, reg_sec, online=False), 3)
             log(f"unregistered from {register_with}")
         except Exception as e:  # noqa: BLE001
             log(f"warn: unregistration from {register_with} failed: {e}")
@@ -207,12 +216,38 @@ async def run(argv: list[str]) -> int:
     return 0
 
 
-async def _register_loop(server: Server, url: str, interval_ms: int) -> None:
-    """--register-with: asyncua's own registration (Server.register_to_discovery,
-    RegisterServer with IsOnline=true), repeated every interval."""
+async def _register_once(server: Server, url: str, sec: dict | None, online: bool = True) -> None:
+    """One RegisterServer of the server (asyncua's Client.register_server /
+    unregister_server) on a channel without a session: Basic256Sha256 /
+    SignAndEncrypt with the server certificate when the server has one (sec),
+    None / None otherwise. Server.register_to_discovery always uses None, which
+    an LDS that authenticates registrations refuses."""
+    c = Client(url)
+    c.name = c.description = "opcua-interop asyncua server registration"
+    if sec:
+        c.application_uri = sec["uri"]
+        await c.set_security(
+            security_policies.SecurityPolicyBasic256Sha256,
+            uacrypto.CertProperties(sec["cert"], extension=file_format(sec["cert"])),
+            uacrypto.CertProperties(sec["key"], extension=file_format(sec["key"])),
+            mode=ua.MessageSecurityMode.SignAndEncrypt,
+        )
+        c.certificate_validator = sec["validator"]
+    await c.connect_sessionless()
+    try:
+        if online:
+            await c.register_server(server)
+        else:
+            await c.unregister_server(server)
+    finally:
+        await c.disconnect_sessionless()
+
+
+async def _register_loop(server: Server, url: str, interval_ms: int, sec: dict | None) -> None:
+    """--register-with: RegisterServer with IsOnline=true, repeated every interval."""
     while True:
         try:
-            await asyncio.wait_for(server.register_to_discovery(url, period=0), 5)
+            await asyncio.wait_for(_register_once(server, url, sec), 5)
             log(f"registered with {url} via RegisterServer")
         except Exception as e:  # noqa: BLE001
             log(f"warn: registration with {url} failed: {e!r}")
